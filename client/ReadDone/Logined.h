@@ -314,7 +314,7 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKe
   goto StateDone_gt;
 }
 default:{
-  WriteInformation("unknown read came %lx:%s\n", BasePacket->Command, ((ProtocolC_t<> *)&Protocol_S2C)[BasePacket->Command].sn);
+  WriteInformation("unknown read came %lx:%s\n", BasePacket->Command, ((__dme_t<> *)&Protocol_S2C)[BasePacket->Command].sn);
   PR_abort();
   goto StateDone_gt;
 }

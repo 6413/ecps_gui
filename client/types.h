@@ -188,23 +188,23 @@ struct ITCBasePacket_t{
   ChannelUnique_t ChannelUnique;
 };
 
-struct ITC_Protocol_t : _ProtocolC_common_t<ITC_Protocol_t>{
-  _ProtocolC_t(CloseChannel,);
-  _ProtocolC_t(Channel_ScreenShare_Share_MouseCoordinate,
+struct ITC_Protocol_t : __dme_inherit<ITC_Protocol_t>{
+  __dme(CloseChannel,);
+  __dme(Channel_ScreenShare_Share_MouseCoordinate,
     fan::vec2ui Position;
   );
-  _ProtocolC_t(Channel_ScreenShare_View_MouseCoordinate,
+  __dme(Channel_ScreenShare_View_MouseCoordinate,
     fan::vec2si Position;
   );
-  _ProtocolC_t(Channel_ScreenShare_View_MouseMotion,
+  __dme(Channel_ScreenShare_View_MouseMotion,
     fan::vec2si Motion;
   );
-  _ProtocolC_t(Channel_ScreenShare_View_MouseButton,
+  __dme(Channel_ScreenShare_View_MouseButton,
     uint8_t key;
     bool state;
     fan::vec2si pos;
   );
-  _ProtocolC_t(Channel_ScreenShare_View_KeyboardKey,
+  __dme(Channel_ScreenShare_View_KeyboardKey,
     uint16_t Scancode;
     uint8_t State;
   );
