@@ -17,7 +17,7 @@ fan::vec2i ViewMouseCoordinate = fan::vec2i(-1);
 
 loco_t loco{{.vsync = false}};
 fan::opengl::viewport_t viewport;
-loco_t::matrices_t matrices;
+loco_t::camera_t camera;
 loco_t::texturepack_t TexturePack;
 loco_t::texturepack_t::ti_t TextureCursor;
 fan::vec2 FrameRenderSize;
@@ -287,7 +287,7 @@ void OpenFrameAndCursor(){
   {
     loco_t::pixel_format_renderer_t::properties_t properties;
     properties.viewport = &viewport;
-    properties.matrices = &matrices;
+    properties.camera = &camera;
     properties.position = fan::vec3(0, 0, 0);
     properties.size = fan::vec2(1, 1);
     loco.pixel_format_renderer.push_back(&FrameCID, properties);
@@ -296,7 +296,7 @@ void OpenFrameAndCursor(){
     loco_t::sprite_t::properties_t properties;
 
     properties.viewport = &viewport;
-    properties.matrices = &matrices;
+    properties.camera = &camera;
 
     properties.load_tp(&TextureCursor);
 

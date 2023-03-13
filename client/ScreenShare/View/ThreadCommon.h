@@ -264,7 +264,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         CursorSize);
     }
   );
-  This->loco.open_matrices(&This->matrices, fan::vec2(-1, +1), fan::vec2(-1, +1));
+  This->loco.open_camera(&This->camera, fan::vec2(-1, +1), fan::vec2(-1, +1));
   This->TexturePack.open_compiled(&This->loco, "tpack");
   {
     bool r = This->TexturePack.qti("cursor", &This->TextureCursor);
