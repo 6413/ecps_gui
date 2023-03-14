@@ -13,8 +13,8 @@ struct{
       .CodecStandard = ETC_VCODECSTD_H264,
       .UsageType = ETC_VEDC_EncoderSetting_UsageType_Realtime,
       .RateControl{
-        .Type = ETC_VEDC_EncoderSetting_RateControlType_TBR,
-        .TBR = { .bps = 0x200000 }
+        .Type = ETC_VEDC_EncoderSetting_RateControlType_VBR,
+        .VBR = { .bps = 0x200000 }
       },
       .InputFrameRate = 0x1e
     }
