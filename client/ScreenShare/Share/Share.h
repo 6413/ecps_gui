@@ -145,7 +145,7 @@ struct Channel_ScreenShare_Share_t{
 
     f32_t Delay = (f32_t)Share->m_NetworkFlow.FrameList.Usage() / Share->ThreadCommon->EncoderSetting.EncoderSetting.Setting.InputFrameRate;
     if(Delay >= 0.4){
-      WriteInformation("[CLIENT] [WARNING] %s %s:%u Delay is above ~0.4s\r\n", __FUNCTION__, __FILE__, __LINE__);
+      WriteInformation("[CLIENT] [WARNING] %s %s:%u Delay is above ~0.4s %lu %f\r\n", __FUNCTION__, __FILE__, __LINE__, Share->m_NetworkFlow.FrameList.Usage(), Share->ThreadCommon->EncoderSetting.EncoderSetting.Setting.InputFrameRate);
       if(Share->m_NetworkFlow.Bucket == Share->m_NetworkFlow.BucketSize){
         WriteInformation("  Bucket == BucketSize, maybe decrease Interval and increase BucketSize?\r\n");
       }
