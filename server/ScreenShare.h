@@ -60,7 +60,7 @@ ScreenShare_SessionQuit
     /* bad */
     return;
   }
-  if(Session->ChannelList.IsNodeReferenceUnlinked(SessionChannelID)){
+  if(Session->ChannelList.IsNodeReferenceRecycled(SessionChannelID)){
     /* bad */
     return;
   }

@@ -5,7 +5,7 @@ bool IsChannelInvalid(Protocol_ChannelID_t ID){
   if(g_pile->ChannelList.IsNRSentienel(ID)){
     return true;
   }
-  if(g_pile->ChannelList.IsNodeReferenceUnlinked(ID)){
+  if(g_pile->ChannelList.IsNodeReferenceRecycled(ID)){
     return true;
   }
   return false;
@@ -19,7 +19,7 @@ bool IsChannelSessionInvalid(Protocol_ChannelID_t ChannelID, Protocol_ChannelSes
   if(Channel->SessionList.IsNRSentienel(ChannelSessionID)){
     return true;
   }
-  if(Channel->SessionList.IsNodeReferenceUnlinked(ChannelSessionID)){
+  if(Channel->SessionList.IsNodeReferenceRecycled(ChannelSessionID)){
     return true;
   }
   return false;

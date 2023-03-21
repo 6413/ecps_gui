@@ -7,7 +7,7 @@ bool IsInvalid(Protocol_SessionID_t SessionID){
   if(g_pile->SessionList.IsNRSentienel(SessionID)){
     return true;
   }
-  if(g_pile->SessionList.IsNodeReferenceUnlinked(SessionID)){
+  if(g_pile->SessionList.IsNodeReferenceRecycled(SessionID)){
     return true;
   }
 
