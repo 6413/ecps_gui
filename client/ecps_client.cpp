@@ -1,8 +1,9 @@
 #define ETC_VEDC_Encode_DefineEncoder_OpenH264
 #define ETC_VEDC_Encode_DefineEncoder_x264
+#define ETC_VEDC_Encode_DefineEncoder_nvenc
 
 #define ETC_VEDC_Decoder_DefineCodec_OpenH264
-//#define ETC_VEDC_Decoder_DefineCodec_cuvid
+#define ETC_VEDC_Decoder_DefineCodec_cuvid
 
 
 #include "types.h"

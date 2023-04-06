@@ -60,6 +60,7 @@
 #define loco_yuv420p
 #define loco_pixel_format_renderer
 #define loco_sprite
+#define loco_no_inline
 #ifdef __GPU_CUDA
   #define loco_cuda
 #endif
