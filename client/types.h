@@ -4,7 +4,6 @@
 
 #define _INCLUDE_TOKEN(p0, p1) <p0/p1>
 
-#include <WITCH/WITCH.h>
 #ifdef ETC_VEDC_Decoder_DefineCodec_cuvid
   // #define __GPU_USE_FAKE_CUDA
   // #define __GPU_USE_FAKE_CUVID

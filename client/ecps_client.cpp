@@ -1,10 +1,15 @@
+#include <WITCH/WITCH.h>
+
 #define ETC_VEDC_Encode_DefineEncoder_OpenH264
 #define ETC_VEDC_Encode_DefineEncoder_x264
-#define ETC_VEDC_Encode_DefineEncoder_nvenc
+#if defined(WOS_WINDOWS)
+  #define ETC_VEDC_Encode_DefineEncoder_nvenc
+#endif
 
 #define ETC_VEDC_Decoder_DefineCodec_OpenH264
-#define ETC_VEDC_Decoder_DefineCodec_cuvid
-
+#if defined(WOS_WINDOWS)
+  #define ETC_VEDC_Decoder_DefineCodec_cuvid
+#endif
 
 #include "types.h"
 
