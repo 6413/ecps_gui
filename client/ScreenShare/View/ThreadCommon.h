@@ -64,13 +64,13 @@ static bool ThreadDecode_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
       This->DecoderUserProperties.Mutex.Unlock();
     }
 
-    sint32_t r = ETC_VEDC_Decoder_Write(&This->Decoder, Data, Size);
+    sintptr_t r = ETC_VEDC_Decoder_Write(&This->Decoder, Data, Size);
 
     This->Decoder_Mutex.Unlock();
 
-    if(r != 0){
+    if(r != Size){
       WriteInformation(
-        "[CLIENT] [WARNING] %s %s:%lu ETC_VEDC_Decoder_Write didnt return 0\r\n",
+        "[CLIENT] [WARNING] %s %s:%lu ETC_VEDC_Decoder_Write didnt return Size\r\n",
         __FUNCTION__, __FILE__, __LINE__);
       goto gt_NoFrame;
     }
