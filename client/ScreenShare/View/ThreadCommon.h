@@ -152,7 +152,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         /* TODO hardcoded pixel format because fan uses different pixel format lib */
         This->ReadMethodData.CudaArrayFrame.cuda_textures.resize(
           &This->loco,
-          &This->FrameCID,
+          This->FrameCID,
           fan::pixel_format::nv12,
           fan::vec2ui(ImageProperties.SizeX, ImageProperties.SizeY));
 
@@ -200,9 +200,9 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
           case ETC_PIXF_YUVNV12:{pixel_format = fan::pixel_format::nv12; break;}
         }
         f32_t sx = (f32_t)Frame.Properties.SizeX / Frame.Properties.Stride[0];
-        This->loco.pixel_format_renderer.set(&This->FrameCID, &loco_t::pixel_format_renderer_t::vi_t::tc_size, fan::vec2(sx, 1));
+        This->loco.pixel_format_renderer.set(This->FrameCID, &loco_t::pixel_format_renderer_t::vi_t::tc_size, fan::vec2(sx, 1));
         This->loco.pixel_format_renderer.reload(
-          &This->FrameCID,
+          This->FrameCID,
           pixel_format,
           (void **)Frame.Data,
           fan::vec2ui(Frame.Properties.Stride[0], Frame.Properties.SizeY));
@@ -246,9 +246,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
   This->HostMouseCoordinate.had = 0;
   This->HostMouseCoordinate.got = 0;
 
-  This->viewport.open(This->loco.get_context());
+  This->viewport.open();
   This->viewport.set(
-    This->loco.get_context(),
     0,
     This->loco.get_window()->get_size(),
     This->loco.get_window()->get_size());
@@ -256,12 +255,9 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     [](const fan::window_t::resize_cb_data_t &p) {
       loco_t *loco = loco_t::get_loco(p.window);
       auto This = OFFSETLESS(loco, ThreadWindow_t, loco);
-      This->viewport.set(loco->get_context(), 0, p.size, p.window->get_size());
+      This->viewport.set(0, p.size, p.window->get_size());
       fan::vec2 CursorSize = fan::vec2(16) / p.window->get_size();
-      This->loco.sprite.set(
-        &This->CursorCID,
-        &loco_t::sprite_t::vi_t::size,
-        CursorSize);
+      This->CursorCID.set_size(CursorSize);
     }
   );
   This->loco.open_camera(&This->camera, fan::vec2(-1, +1), fan::vec2(-1, +1));

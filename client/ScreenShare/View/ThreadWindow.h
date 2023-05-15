@@ -22,8 +22,8 @@ loco_t::texturepack_t TexturePack;
 loco_t::texturepack_t::ti_t TextureCursor;
 fan::vec2 FrameRenderSize;
 fan::vec2ui FrameSize = 1;
-fan::opengl::cid_t FrameCID;
-fan::opengl::cid_t CursorCID;
+loco_t::shape_t FrameCID;
+loco_t::shape_t CursorCID;
 
 fan::window_t::keys_callback_NodeReference_t KeyboardKeyCallbackID;
 fan::window_t::buttons_callback_NodeReference_t MouseButtonCallbackID;
@@ -55,7 +55,7 @@ void NewReadMethod(ETC_VEDC_Decoder_ReadType Type){
   switch(LastReadMethod){
     #ifdef __GPU_CUDA
       case ETC_VEDC_Decoder_ReadType_CudaArrayFrame:{
-        ReadMethodData.CudaArrayFrame.cuda_textures.close(&this->loco, &this->FrameCID);
+        ReadMethodData.CudaArrayFrame.cuda_textures.close(gloco, this->FrameCID);
         break;
       }
     #endif
@@ -290,7 +290,7 @@ void OpenFrameAndCursor(){
     properties.camera = &camera;
     properties.position = fan::vec3(0, 0, 0);
     properties.size = fan::vec2(1, 1);
-    loco.pixel_format_renderer.push_back(&FrameCID, properties);
+    FrameCID = properties;
   }
   {
     loco_t::sprite_t::properties_t properties;
@@ -303,7 +303,7 @@ void OpenFrameAndCursor(){
     properties.position = fan::vec3(0, 0, 1);
     properties.size = fan::vec2(16) / loco.get_window()->get_size();
 
-    loco.sprite.push_back(&CursorCID, properties);
+    CursorCID = properties;
   }
 }
 
@@ -317,11 +317,8 @@ void HandleCursor(){
     HostMouseCoordinate.had.x = HostMouseCoordinate.got.x;
     HostMouseCoordinate.had.y = HostMouseCoordinate.got.y;
     fan::vec3 CursorPosition = fan::vec3((fan::vec2)HostMouseCoordinate.had / FrameSize * FrameRenderSize * 2 - 1, 1);
-    CursorPosition += loco.sprite.get(&CursorCID, &loco_t::sprite_t::vi_t::size);
-    loco.sprite.set(
-      &CursorCID,
-      &loco_t::sprite_t::vi_t::position,
-      CursorPosition);
+    CursorPosition += CursorCID.get_size();
+    CursorCID.set_position(CursorPosition);
   }
 
   TH_unlock(&HostMouseCoordinate.Mutex);
