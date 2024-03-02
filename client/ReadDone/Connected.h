@@ -1,12 +1,13 @@
 case Protocol_S2C_t::AN(&Protocol_S2C_t::Response_Login):{
   auto Request = (Protocol_S2C_t::Response_Login_t::dt *)RestPacket;
 
-  auto mout = MAP_out(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
-  if(mout.data == 0){
+  /* TODO check IDMap even before this file to prevent code spam */
+  /* TODO check if that id was for create channel */
+  if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
     PR_abort();
     goto StateDone_gt;
   }
-  MAP_rm(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
+  IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
 
   g_pile->SessionID = Request->SessionID;
   g_pile->AccountID = Request->AccountID;

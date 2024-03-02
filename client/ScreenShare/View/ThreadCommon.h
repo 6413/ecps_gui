@@ -198,6 +198,11 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         switch(Frame.Properties.PixelFormat){
           case ETC_PIXF_YUV420p:{pixel_format = fan::pixel_format::yuv420p; break;}
           case ETC_PIXF_YUVNV12:{pixel_format = fan::pixel_format::nv12; break;}
+          default:{
+            /* not supported pixel format... at least yet.*/
+            __abort();
+            break;
+          }
         }
         f32_t sx = (f32_t)Frame.Properties.SizeX / Frame.Properties.Stride[0];
         This->loco.pixel_format_renderer.set(This->FrameCID, &loco_t::pixel_format_renderer_t::vi_t::tc_size, fan::vec2(sx, 1));

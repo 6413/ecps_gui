@@ -69,8 +69,10 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
 
         uint32_t ID = g_pile->TCP.IDSequence++;
 
-        uint32_t filler = 0;
-        MAP_in(&g_pile->TCP.IDMap, &ID, sizeof(uint32_t), &filler, sizeof(filler));
+        { /* TODO use actual output instead of filler */
+          uint8_t filler = 0;
+          IDMap_InNew(&g_pile->TCP.IDMap, &ID, &filler);
+        }
 
         TCP_WriteCommand(
           ID,
@@ -95,11 +97,13 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
 
         uint32_t ID = g_pile->TCP.IDSequence++;
 
-        uint32_t filler = 0;
-        MAP_in(&g_pile->TCP.IDMap, &ID, sizeof(uint32_t), &filler, sizeof(filler));
+        { /* TODO use actual output instead of filler */
+          uint8_t filler = 0;
+          IDMap_InNew(&g_pile->TCP.IDMap, &ID, &filler);
+        }
 
         Channel_Common_t Output(ChannelState_t::WaittingForInformation, rest.ChannelID);
-        MAP_in(&g_pile->ChannelMap, &rest.ChannelID, sizeof(Protocol_ChannelID_t), &Output, sizeof(Output));
+        ChannelMap_InNew(&g_pile->ChannelMap, &rest.ChannelID, &Output);
 
         TCP_WriteCommand(
           ID,

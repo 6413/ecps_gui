@@ -13,18 +13,19 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::InformInvalidIdentify):{
 case Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_OK):{
   auto Request = (Protocol_S2C_t::CreateChannel_OK_t::dt *)RestPacket;
 
-  auto mout = MAP_out(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
-  if(mout.data == 0){
+  /* TODO check IDMap even before this file to prevent code spam */
+  /* TODO check if that id was for create channel */
+  if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
     PR_abort();
     goto StateDone_gt;
   }
-  MAP_rm(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
+  IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
 
   switch(Request->Type){
     case Protocol::ChannelType_ScreenShare_e:{
       Channel_Common_t cc(ChannelState_t::ScreenShare, Request->ChannelID, Request->ChannelSessionID);
       cc.m_StateData = new Channel_ScreenShare_t(0);
-      MAP_in(&g_pile->ChannelMap, &Request->ChannelID, sizeof(Protocol_ChannelID_t), &cc, sizeof(cc));
+      ChannelMap_InNew(&g_pile->ChannelMap, &Request->ChannelID, &cc);
       break;
     }
   }
@@ -37,12 +38,13 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_OK):{
 case Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_Error):{
   auto Request = (Protocol_S2C_t::CreateChannel_Error_t::dt *)RestPacket;
 
-  auto mout = MAP_out(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
-  if(mout.data == 0){
+  /* TODO check IDMap even before this file to prevent code spam */
+  /* TODO check if that id was for create channel */
+  if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
     PR_abort();
     goto StateDone_gt;
   }
-  MAP_rm(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
+  IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
 
   WriteInformation("[SERVER] CreateChannel_Error ID %lx\n", BasePacket->ID);
   WriteInformation("  Reason %lx:%s\n", (uint32_t)Request->Reason, Protocol::JoinChannel_Error_Reason_String[(uint32_t)Request->Reason]);
@@ -52,18 +54,19 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_Error):{
 case Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK):{
   auto Request = (Protocol_S2C_t::JoinChannel_OK_t::dt *)RestPacket;
 
-  auto mout = MAP_out(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
-  if(mout.data == 0){
+  /* TODO check IDMap even before this file to prevent code spam */
+  /* TODO check if that id was for create channel */
+  if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
     PR_abort();
     goto StateDone_gt;
   }
-  MAP_rm(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
+  IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
 
   switch(Request->Type){
     case Protocol::ChannelType_ScreenShare_e:{
       Channel_Common_t cc(ChannelState_t::ScreenShare, Request->ChannelID, Request->ChannelSessionID);
       cc.m_StateData = new Channel_ScreenShare_t(0);
-      MAP_in(&g_pile->ChannelMap, &Request->ChannelID, sizeof(Protocol_ChannelID_t), &cc, sizeof(cc));
+      ChannelMap_InNew(&g_pile->ChannelMap, &Request->ChannelID, &cc);
       break;
     }
   }
@@ -76,12 +79,13 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK):{
 case Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_Error):{
   auto Request = (Protocol_S2C_t::JoinChannel_Error_t::dt *)RestPacket;
 
-  auto mout = MAP_out(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
-  if(mout.data == 0){
+  /* TODO check IDMap even before this file to prevent code spam */
+  /* TODO check if that id was for create channel */
+  if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
     PR_abort();
     goto StateDone_gt;
   }
-  MAP_rm(&g_pile->TCP.IDMap, &BasePacket->ID, sizeof(uint32_t));
+  IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
 
   WriteInformation("[SERVER] JoinChannel_Error ID %lx\n", BasePacket->ID);
   WriteInformation("  Reason %lx:%s\n", (uint32_t)Request->Reason, Protocol::JoinChannel_Error_Reason_String[(uint32_t)Request->Reason]);
@@ -92,12 +96,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_View_InformationToV
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewSetFlag_t::dt *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
-  auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-  if(mout.data == 0){
+  auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+  if(cc == NULL){
     // TODO communication problem
     goto StateDone_gt;
   }
-  auto cc = (Channel_Common_t *)mout.data;
   switch(cc->GetState()){
     case ChannelState_t::ScreenShare:{
       Channel_ScreenShare_t *sd = (Channel_ScreenShare_t *)cc->m_StateData;
@@ -123,12 +126,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_View_InformationToV
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   Channel_ScreenShare_View_t *View;
   {
-    auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-    if(mout.data == 0){
+    auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+    if(cc == NULL){
       // TODO communication problem
       goto StateDone_gt;
     }
-    auto cc = (Channel_Common_t *)mout.data;
     switch(cc->GetState()){
       case ChannelState_t::ScreenShare_View:{
         break;
@@ -162,12 +164,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMo
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   Channel_ScreenShare_Share_t *Share;
   {
-    auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-    if(mout.data == 0){
+    auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+    if(cc == NULL){
       // TODO communication problem
       goto StateDone_gt;
     }
-    auto cc = (Channel_Common_t *)mout.data;
     switch(cc->GetState()){
       case ChannelState_t::ScreenShare_Share:{
         break;
@@ -198,12 +199,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMo
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   Channel_ScreenShare_Share_t *Share;
   {
-    auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-    if(mout.data == 0){
+    auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+    if(cc == NULL){
       // TODO communication problem
       goto StateDone_gt;
     }
-    auto cc = (Channel_Common_t *)mout.data;
     switch(cc->GetState()){
       case ChannelState_t::ScreenShare_Share:{
         break;
@@ -234,12 +234,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMo
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   Channel_ScreenShare_Share_t *Share;
   {
-    auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-    if(mout.data == 0){
+    auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+    if(cc == NULL){
       // TODO communication problem
       goto StateDone_gt;
     }
-    auto cc = (Channel_Common_t *)mout.data;
     switch(cc->GetState()){
       case ChannelState_t::ScreenShare_Share:{
         break;
@@ -278,12 +277,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKe
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   Channel_ScreenShare_Share_t *Share;
   {
-    auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-    if(mout.data == 0){
+    auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+    if(cc == NULL){
       // TODO communication problem
       goto StateDone_gt;
     }
-    auto cc = (Channel_Common_t *)mout.data;
     switch(cc->GetState()){
       case ChannelState_t::ScreenShare_Share:{
         break;

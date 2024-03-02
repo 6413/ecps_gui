@@ -25,31 +25,12 @@
 #include _WITCH_PATH(VEC/VEC.h)
 #include _WITCH_PATH(MD/Mice.h)
 #include _WITCH_PATH(MD/Keyboard/Keyboard.h)
-#include _WITCH_PATH(MAP/MAP.h)
-
-#include _WITCH_PATH(TRT/CON0.h)
-
-#define TRT_BME_set_Prefix SleepyMutex
-#define TRT_BME_set_Language 1
-#define TRT_BME_set_MutexType 0
-#include _WITCH_PATH(TRT/BME/BME.h)
-#define TRT_BME_set_Prefix SleepyCMutex
-#define TRT_BME_set_Language 1
-#define TRT_BME_set_MutexType 0
-#define TRT_BME_set_Conditional
-#include _WITCH_PATH(TRT/BME/BME.h)
-#define TRT_BME_set_Prefix FastMutex
-#define TRT_BME_set_Language 1
-#define TRT_BME_set_MutexType 1
-#include _WITCH_PATH(TRT/BME/BME.h)
-
-#include _WITCH_PATH(ETC/VEDC/Encode.h)
-#include _WITCH_PATH(ETC/VEDC/Decoder.h)
+#include _WITCH_PATH(T/T.h)
 
 #ifdef WOS_WINDOWS
   #define FAN_INCLUDE_PATH C:/libs/fan/include
 #else
-  #define FAN_INCLUDE_PATH /usr/include
+  #define FAN_INCLUDE_PATH /usr/local/include
 #endif
 #include _INCLUDE_TOKEN(FAN_INCLUDE_PATH,fan/types/types.h)
 
@@ -66,29 +47,6 @@
 #include _FAN_PATH(graphics/loco.h)
 
 #include "../prot.h"
-
-#ifndef set_debug
-  #define set_debug
-#endif
-
-#ifdef fan_compiler_visual_studio
-  /* TODO durum isnt some of that linkings needs to be in fan side? */
-
-  #pragma comment(lib, "Dbghelp.lib")
-#endif
-
-enum class PileState_t{
-  NotConnected,
-  Connecting,
-  Connected,
-  Logined
-};
-
-enum class TCPPeerState_t{
-  Idle,
-  Waitting_BasePacket,
-  Waitting_Data
-};
 
 enum class ChannelState_t{
   WaittingForInformation,
@@ -126,6 +84,59 @@ public:
   Channel_Common_t(){}
 };
 
+#define MAP_set_Prefix ChannelMap
+#define MAP_set_InputType Protocol_ChannelID_t
+#define MAP_set_OutputType Channel_Common_t
+#include _WITCH_PATH(MAP/MAP.h)
+
+/* TODO use actual output instead of 1 byte filler */
+#define MAP_set_Prefix IDMap
+#define MAP_set_InputType uint32_t
+#define MAP_set_OutputType uint8_t
+#include _WITCH_PATH(MAP/MAP.h)
+
+#include _WITCH_PATH(TRT/CON0.h)
+
+#define TRT_BME_set_Prefix SleepyMutex
+#define TRT_BME_set_Language 1
+#define TRT_BME_set_MutexType 0
+#include _WITCH_PATH(TRT/BME/BME.h)
+#define TRT_BME_set_Prefix SleepyCMutex
+#define TRT_BME_set_Language 1
+#define TRT_BME_set_MutexType 0
+#define TRT_BME_set_Conditional
+#include _WITCH_PATH(TRT/BME/BME.h)
+#define TRT_BME_set_Prefix FastMutex
+#define TRT_BME_set_Language 1
+#define TRT_BME_set_MutexType 1
+#include _WITCH_PATH(TRT/BME/BME.h)
+
+#include _WITCH_PATH(ETC/VEDC/Encode.h)
+#include _WITCH_PATH(ETC/VEDC/Decoder.h)
+
+#ifndef set_debug
+  #define set_debug
+#endif
+
+#ifdef fan_compiler_visual_studio
+  /* TODO durum isnt some of that linkings needs to be in fan side? */
+
+  #pragma comment(lib, "Dbghelp.lib")
+#endif
+
+enum class PileState_t{
+  NotConnected,
+  Connecting,
+  Connected,
+  Logined
+};
+
+enum class TCPPeerState_t{
+  Idle,
+  Waitting_BasePacket,
+  Waitting_Data
+};
+
 struct TCPMain_SockData_t{
   NET_TCP_layerid_t ReadLayerID;
 };
@@ -158,7 +169,7 @@ struct pile_t{
 
   struct{
     uint32_t IDSequence = 0;
-    MAP_t IDMap;
+    IDMap_t IDMap;
     NET_TCP_t *tcp;
     NET_TCP_extid_t extid;
     NET_TCP_peer_t *peer;
@@ -174,7 +185,7 @@ struct pile_t{
     EV_timer_t KeepAliveTimer;
   }UDP;
 
-  MAP_t ChannelMap;
+  ChannelMap_t ChannelMap;
 
   uint8_t Input[0x1000];
   uintptr_t InputSize = 0;

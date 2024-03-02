@@ -37,7 +37,7 @@ void TCP_write_DynamicPointer(NET_TCP_peer_t *peer, void *Data, uintptr_t Size){
   NET_TCP_write_loop(
     peer,
     NET_TCP_GetWriteQueuerReferenceFirst(peer),
-    NET_TCP_QueueType_DynamicPointer_e,
+    NET_TCP_QueueType_DynamicPointer,
     &Queue);
 }
 
@@ -198,8 +198,10 @@ TCPMain_state_cb(
 
     uint32_t ID = g_pile->TCP.IDSequence++;
 
-    uint32_t filler = 0;
-    MAP_in(&g_pile->TCP.IDMap, &ID, sizeof(uint32_t), &filler, sizeof(filler));
+    { /* TODO use actual output instead of filler */
+      uint8_t filler = 0;
+      IDMap_InNew(&g_pile->TCP.IDMap, &ID, &filler);
+    }
 
     TCP_WriteCommand(
       ID,
@@ -232,12 +234,12 @@ uint32_t TCPMain_read_cb(
   uintptr_t ReadSize;
   uint8_t _EventReadBuffer[4096];
   switch(*type){
-    case NET_TCP_QueueType_DynamicPointer_e:{
+    case NET_TCP_QueueType_DynamicPointer:{
       ReadData = (uint8_t *)Queue->DynamicPointer.ptr;
       ReadSize = Queue->DynamicPointer.size;
       break;
     }
-    case NET_TCP_QueueType_PeerEvent_e:{
+    case NET_TCP_QueueType_PeerEvent:{
       IO_fd_t peer_fd;
       EV_event_get_fd(&peer->event, &peer_fd);
       IO_ssize_t len = IO_read(&peer_fd, _EventReadBuffer, sizeof(_EventReadBuffer));
@@ -249,7 +251,7 @@ uint32_t TCPMain_read_cb(
       ReadSize = len;
       break;
     }
-    case NET_TCP_QueueType_CloseHard_e:{
+    case NET_TCP_QueueType_CloseHard:{
       return 0;
     }
     default:{
@@ -484,12 +486,11 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       Channel_ScreenShare_View_t *View;
       Protocol_ChannelID_t ChannelID = CommandData->ChannelID;
       {
-        auto mout = MAP_out(&g_pile->ChannelMap, &ChannelID, sizeof(Protocol_ChannelID_t));
-        if(mout.data == 0){
+        auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+        if(cc == NULL){
           PR_abort();
           return;
         }
-        auto cc = (Channel_Common_t *)mout.data;
         switch(cc->GetState()){
           case ChannelState_t::ScreenShare_View:{
             break;
@@ -579,13 +580,13 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
     auto BasePacket = (ITCBasePacket_t *)&g_pile->ITC.bvec.ptr[i];
     i += sizeof(ITCBasePacket_t);
 
-    auto mout = MAP_out(&g_pile->ChannelMap, &BasePacket->ChannelID, sizeof(Protocol_ChannelID_t));
-    if(mout.data == 0){
+    auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &BasePacket->ChannelID);
+    if(cc == NULL){
       i += ITC_Protocol.NA(BasePacket->Command)->m_DSS;
       continue;
     }
-    auto ChannelCommon = (Channel_Common_t *)mout.data;
-    if(ChannelCommon->m_ChannelUnique != BasePacket->ChannelUnique){
+
+    if(cc->m_ChannelUnique != BasePacket->ChannelUnique){
       i += ITC_Protocol.NA(BasePacket->Command)->m_DSS;
       continue;
     }
@@ -597,11 +598,11 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
       }
       case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate):{
         auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate_t::dt *)&BasePacket[1];
-        auto Share = (Channel_ScreenShare_Share_t *)ChannelCommon->m_StateData;
+        auto Share = (Channel_ScreenShare_Share_t *)cc->m_StateData;
 
         Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate_t::dt dt;
-        dt.ChannelID = ChannelCommon->m_ChannelID;
-        dt.ChannelSessionID = ChannelCommon->m_ChannelSessionID;
+        dt.ChannelID = cc->m_ChannelID;
+        dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.pos = CommandData->Position;
         TCP_WriteCommand(
           0,
@@ -612,13 +613,13 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
       }
       case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate):{
         auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate_t::dt *)&BasePacket[1];
-        auto View = (Channel_ScreenShare_View_t *)ChannelCommon->m_StateData;
+        auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
         Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate_t::dt dt;
-        dt.ChannelID = ChannelCommon->m_ChannelID;
-        dt.ChannelSessionID = ChannelCommon->m_ChannelSessionID;
+        dt.ChannelID = cc->m_ChannelID;
+        dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.pos = CommandData->Position;
         TCP_WriteCommand(
           0,
@@ -628,13 +629,13 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
       }
       case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion):{
         auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion_t::dt *)&BasePacket[1];
-        auto View = (Channel_ScreenShare_View_t *)ChannelCommon->m_StateData;
+        auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
         Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion_t::dt dt;
-        dt.ChannelID = ChannelCommon->m_ChannelID;
-        dt.ChannelSessionID = ChannelCommon->m_ChannelSessionID;
+        dt.ChannelID = cc->m_ChannelID;
+        dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.Motion = CommandData->Motion;
         TCP_WriteCommand(
           0,
@@ -644,13 +645,13 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
       }
       case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseButton):{
         auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseButton_t::dt *)&BasePacket[1];
-        auto View = (Channel_ScreenShare_View_t *)ChannelCommon->m_StateData;
+        auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
         Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton_t::dt dt;
-        dt.ChannelID = ChannelCommon->m_ChannelID;
-        dt.ChannelSessionID = ChannelCommon->m_ChannelSessionID;
+        dt.ChannelID = cc->m_ChannelID;
+        dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.key = CommandData->key;
         dt.state = CommandData->state;
         dt.pos = CommandData->pos;
@@ -662,13 +663,13 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
       }
       case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey):{
         auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey_t::dt *)&BasePacket[1];
-        auto View = (Channel_ScreenShare_View_t *)ChannelCommon->m_StateData;
+        auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
         Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard_t::dt dt;
-        dt.ChannelID = ChannelCommon->m_ChannelID;
-        dt.ChannelSessionID = ChannelCommon->m_ChannelSessionID;
+        dt.ChannelID = cc->m_ChannelID;
+        dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.Scancode = CommandData->Scancode;
         dt.State = CommandData->State;
         TCP_WriteCommand(
@@ -709,7 +710,7 @@ void InitAndRun(){
   NET_TCP_layer_state_open(g_pile->TCP.tcp, g_pile->TCP.extid, (NET_TCP_cb_state_t)TCPMain_state_cb);
   SockData->ReadLayerID = NET_TCP_layer_read_open(g_pile->TCP.tcp, g_pile->TCP.extid, (NET_TCP_cb_read_t)TCPMain_read_cb, A_resize, 0, 0);
 
-  MAP_open(&g_pile->TCP.IDMap);
+  IDMap_Open(&g_pile->TCP.IDMap);
   NET_TCP_open(g_pile->TCP.tcp);
 
   if(NET_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &g_pile->UDP.udp) < 0){
@@ -720,7 +721,7 @@ void InitAndRun(){
   EV_event_init_socket(&g_pile->UDP.ev_udp, &g_pile->UDP.udp, ev_udp_read_cb, EV_READ);
   EV_event_start(&g_pile->listener, &g_pile->UDP.ev_udp);
 
-  MAP_open(&g_pile->ChannelMap);
+  ChannelMap_Open(&g_pile->ChannelMap);
 
   EV_start(&g_pile->listener);
 }
