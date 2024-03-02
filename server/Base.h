@@ -8,7 +8,6 @@
 #include <WITCH/NET/TCP/TCP.h>
 #include <WITCH/HASH/SHA.h>
 #include <WITCH/RAND/RAND.h>
-#include <WITCH/MAP/MAP.h>
 #include <WITCH/VEC/VEC.h>
 
 #include <fan/types/types.h>
@@ -57,7 +56,7 @@ void TCP_write_DynamicPointer(NET_TCP_peer_t *peer, void *Data, uintptr_t Size){
   NET_TCP_write_loop(
     peer,
     NET_TCP_GetWriteQueuerReferenceFirst(peer),
-    NET_TCP_QueueType_DynamicPointer_e,
+    NET_TCP_QueueType_DynamicPointer,
     &Queue);
 }
 

@@ -61,12 +61,12 @@ uint32_t TCPMain_read_cb(
   uintptr_t ReadSize;
   uint8_t _EventReadBuffer[4096];
   switch(*type){
-    case NET_TCP_QueueType_DynamicPointer_e:{
+    case NET_TCP_QueueType_DynamicPointer:{
       ReadData = (uint8_t *)Queue->DynamicPointer.ptr;
       ReadSize = Queue->DynamicPointer.size;
       break;
     }
-    case NET_TCP_QueueType_PeerEvent_e:{
+    case NET_TCP_QueueType_PeerEvent:{
       IO_fd_t peer_fd;
       EV_event_get_fd(&peer->event, &peer_fd);
       IO_ssize_t len = IO_read(&peer_fd, _EventReadBuffer, sizeof(_EventReadBuffer));
@@ -78,7 +78,7 @@ uint32_t TCPMain_read_cb(
       ReadSize = len;
       break;
     }
-    case NET_TCP_QueueType_CloseHard_e:{
+    case NET_TCP_QueueType_CloseHard:{
       return 0;
     }
     default:{
