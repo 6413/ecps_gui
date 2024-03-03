@@ -28,23 +28,10 @@
 #include _WITCH_PATH(T/T.h)
 
 #ifdef WOS_WINDOWS
-  #define FAN_INCLUDE_PATH C:/libs/fan/include
+
 #else
   #define FAN_INCLUDE_PATH /usr/local/include
 #endif
-#include _INCLUDE_TOKEN(FAN_INCLUDE_PATH,fan/types/types.h)
-
-#define loco_opengl
-#define loco_window
-#define loco_context
-#define loco_yuv420p
-#define loco_pixel_format_renderer
-#define loco_sprite
-#define loco_no_inline
-#ifdef __GPU_CUDA
-  #define loco_cuda
-#endif
-#include _FAN_PATH(graphics/loco.h)
 
 #include "../prot.h"
 

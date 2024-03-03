@@ -1,7 +1,5 @@
 #pragma once
 
-#include <fan/types/vector.h>
-
 #pragma pack(push, 1)
 
 #define set_ProtocolVersion 0x00000000

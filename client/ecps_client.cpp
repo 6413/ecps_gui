@@ -1,4 +1,5 @@
 #include <WITCH/WITCH.h>
+#include "client_pch.h"
 
 #define ETC_VEDC_Encode_DefineEncoder_OpenH264
 #define ETC_VEDC_Encode_DefineEncoder_x264

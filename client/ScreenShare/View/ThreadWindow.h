@@ -285,7 +285,7 @@ static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
 
 void OpenFrameAndCursor(){
   {
-    loco_t::pixel_format_renderer_t::properties_t properties;
+    loco_t::shapes_t::pixel_format_renderer_t::properties_t properties;
     properties.viewport = &viewport;
     properties.camera = &camera;
     properties.position = fan::vec3(0, 0, 0);
@@ -293,7 +293,7 @@ void OpenFrameAndCursor(){
     FrameCID = properties;
   }
   {
-    loco_t::sprite_t::properties_t properties;
+    loco_t::shapes_t::sprite_t::properties_t properties;
 
     properties.viewport = &viewport;
     properties.camera = &camera;

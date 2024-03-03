@@ -205,8 +205,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
           }
         }
         f32_t sx = (f32_t)Frame.Properties.SizeX / Frame.Properties.Stride[0];
-        This->loco.pixel_format_renderer.set(This->FrameCID, &loco_t::pixel_format_renderer_t::vi_t::tc_size, fan::vec2(sx, 1));
-        This->loco.pixel_format_renderer.reload(
+        This->loco.shapes.pixel_format_renderer.set(This->FrameCID, &loco_t::shapes_t::pixel_format_renderer_t::vi_t::tc_size, fan::vec2(sx, 1));
+        This->loco.shapes.pixel_format_renderer.reload(
           This->FrameCID,
           pixel_format,
           (void **)Frame.Data,
@@ -266,7 +266,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     }
   );
   This->loco.open_camera(&This->camera, fan::vec2(-1, +1), fan::vec2(-1, +1));
-  This->TexturePack.open_compiled(&This->loco, "tpack");
+  This->TexturePack.open_compiled("tpack");
   {
     bool r = This->TexturePack.qti("cursor", &This->TextureCursor);
     if(r != 0){
