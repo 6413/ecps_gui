@@ -4,7 +4,7 @@ bool IsInvalid(Protocol_SessionID_t SessionID){
   if(g_pile->SessionList.inri(SessionID)){
     return true;
   }
-  if(g_pile->SessionList.IsNRSentienel(SessionID)){
+  if(g_pile->SessionList.IsNRSentinel(SessionID)){
     return true;
   }
   if(g_pile->SessionList.IsNodeReferenceRecycled(SessionID)){

@@ -2,7 +2,7 @@ bool IsChannelInvalid(Protocol_ChannelID_t ID){
   if(g_pile->ChannelList.inri(ID)){
     return true;
   }
-  if(g_pile->ChannelList.IsNRSentienel(ID)){
+  if(g_pile->ChannelList.IsNRSentinel(ID)){
     return true;
   }
   if(g_pile->ChannelList.IsNodeReferenceRecycled(ID)){
@@ -16,7 +16,7 @@ bool IsChannelSessionInvalid(Protocol_ChannelID_t ChannelID, Protocol_ChannelSes
   if(Channel->SessionList.inri(ChannelSessionID)){
     return true;
   }
-  if(Channel->SessionList.IsNRSentienel(ChannelSessionID)){
+  if(Channel->SessionList.IsNRSentinel(ChannelSessionID)){
     return true;
   }
   if(Channel->SessionList.IsNodeReferenceRecycled(ChannelSessionID)){

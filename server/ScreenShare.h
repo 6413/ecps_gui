@@ -52,7 +52,7 @@ ScreenShare_SessionQuit
   SessionChannelList_NodeReference_t SessionChannelID
 ){
   auto Session = &g_pile->SessionList[SessionID];
-  if(Session->ChannelList.IsNRSentienel(SessionChannelID)){
+  if(Session->ChannelList.IsNRSentinel(SessionChannelID)){
     /* bad */
     return;
   }

@@ -11,6 +11,7 @@
 #include <WITCH/VEC/VEC.h>
 
 #include <fan/types/types.h>
+#include <fan/types/vector.h>
 
 #include "../prot.h"
 
@@ -80,7 +81,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   ChannelSessionList_NodeReference_t(Protocol_ChannelSessionID_t ID){ \
     NRI = ID.g(); \
   }
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
 #define BLL_set_type_node Protocol_SessionChannelID_t::Type
@@ -88,10 +89,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_declare_NodeReference 1
 #define BLL_set_declare_rest 0
 #define BLL_set_IsNodeRecycled 1
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
-#define BLL_set_CPP_ConstructDestruct
+#define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_type_node Protocol_AccountID_t::Type
 #define BLL_set_prefix AccountList
 #define BLL_set_declare_NodeReference 1
@@ -101,10 +102,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   AccountList_NodeReference_t(Protocol_AccountID_t ID){ \
     NRI = ID.g(); \
   }
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
-#define BLL_set_CPP_ConstructDestruct
+#define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_type_node Protocol_SessionID_t::Type
 #define BLL_set_prefix SessionList
 #define BLL_set_declare_NodeReference 1
@@ -114,10 +115,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   SessionList_NodeReference_t(Protocol_SessionID_t ID){ \
     NRI = ID.g(); \
   }
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
-#define BLL_set_CPP_ConstructDestruct
+#define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_type_node Protocol_ChannelID_t::Type
 #define BLL_set_prefix ChannelList
 #define BLL_set_declare_NodeReference 1
@@ -127,7 +128,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   ChannelList_NodeReference_t(Protocol_ChannelID_t ID){ \
     NRI = ID.g(); \
   }
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
 #define BLL_set_type_node Protocol_ChannelSessionID_t::Type
@@ -138,7 +139,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   Protocol_SessionID_t SessionID; \
   SessionChannelList_NodeReference_t SessionChannelID;
 #define BLL_set_IsNodeRecycled 1
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
 #define BLL_set_type_node Protocol_SessionChannelID_t::Type
@@ -149,10 +150,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   ChannelList_NodeReference_t ChannelID; \
   ChannelSessionList_NodeReference_t ChannelSessionID;
 #define BLL_set_IsNodeRecycled 1
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
-#define BLL_set_CPP_ConstructDestruct
+#define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_type_node Protocol_AccountID_t::Type
 #define BLL_set_prefix AccountList
 #define BLL_set_declare_NodeReference 0
@@ -160,10 +161,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_NodeData \
   uint8_t nothing_yet;
 #define BLL_set_IsNodeRecycled 1
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
-#define BLL_set_CPP_ConstructDestruct
+#define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_type_node Protocol_SessionID_t::Type
 #define BLL_set_prefix SessionList
 #define BLL_set_declare_NodeReference 0
@@ -180,10 +181,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
     uint64_t IdentifySecret; \
   }UDP;
 #define BLL_set_IsNodeRecycled 1
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 #define BLL_set_Language 1
-#define BLL_set_CPP_ConstructDestruct
+#define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_type_node Protocol_ChannelID_t::Type
 #define BLL_set_prefix ChannelList
 #define BLL_set_declare_NodeReference 0
@@ -193,7 +194,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   ChannelSessionList_t SessionList; \
   uint8_t *Buffer;
 #define BLL_set_IsNodeRecycled 1
-#include <WITCH/BLL/BLL.h>
+#include <BLL/BLL.h>
 
 struct Channel_ScreenShare_Data_t{
   uint8_t Flag;
