@@ -205,9 +205,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
           }
         }
         f32_t sx = (f32_t)Frame.Properties.SizeX / Frame.Properties.Stride[0];
-        This->loco.shapes.pixel_format_renderer.set(This->FrameCID, &loco_t::shapes_t::pixel_format_renderer_t::vi_t::tc_size, fan::vec2(sx, 1));
-        This->loco.shapes.pixel_format_renderer.reload(
-          This->FrameCID,
+        This->FrameCID.set_tc_size(fan::vec2(sx, 1));
+        This->FrameCID.reload(
           pixel_format,
           (void **)Frame.Data,
           fan::vec2ui(Frame.Properties.Stride[0], Frame.Properties.SizeY));
@@ -237,8 +236,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     }
 
     {
-      uint32_t we = This->loco.get_window()->handle_events();
-      if(we & fan::window_t::events::close){
+      uint32_t we = This->loco.window.handle_events();
+      if (glfwWindowShouldClose(This->loco.window.glfw_window)) {
         PR_abort();
       }
       This->HandleCursor();
@@ -251,21 +250,19 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
   This->HostMouseCoordinate.had = 0;
   This->HostMouseCoordinate.got = 0;
 
-  This->viewport.open();
-  This->viewport.set(
+  This->viewport = gloco->open_viewport(
     0,
-    This->loco.get_window()->get_size(),
-    This->loco.get_window()->get_size());
-  This->loco.get_window()->add_resize_callback(
+    This->loco.window.get_size());
+  This->loco.window.add_resize_callback(
     [](const fan::window_t::resize_cb_data_t &p) {
-      loco_t *loco = loco_t::get_loco(p.window);
+      loco_t *loco = gloco.loco;
       auto This = OFFSETLESS(loco, ThreadWindow_t, loco);
-      This->viewport.set(0, p.size, p.window->get_size());
+      gloco->viewport_set(This->viewport, 0, p.size, p.window->get_size());
       fan::vec2 CursorSize = fan::vec2(16) / p.window->get_size();
       This->CursorCID.set_size(CursorSize);
     }
   );
-  This->loco.open_camera(&This->camera, fan::vec2(-1, +1), fan::vec2(-1, +1));
+  This->camera = This->loco.open_camera(fan::vec2(-1, +1), fan::vec2(-1, +1));
   This->TexturePack.open_compiled("tpack");
   {
     bool r = This->TexturePack.qti("cursor", &This->TextureCursor);
@@ -276,8 +273,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
   This->FrameRenderSize = 1;
   This->OpenFrameAndCursor();
 
-  This->KeyboardKeyCallbackID = This->loco.get_window()->add_keys_callback(ThreadWindow_t::Keys_cb);
-  This->MouseButtonCallbackID = This->loco.get_window()->add_buttons_callback(ThreadWindow_t::MouseButtons_cb);
+  This->KeyboardKeyCallbackID = This->loco.window.add_keys_callback(ThreadWindow_t::Keys_cb);
+  This->MouseButtonCallbackID = This->loco.window.add_buttons_callback(ThreadWindow_t::MouseButtons_cb);
 
   /* everything is ready now */
   ThreadCommon->ThreadWindow.SetPointer(This);

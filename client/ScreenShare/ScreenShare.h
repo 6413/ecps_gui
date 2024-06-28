@@ -187,7 +187,7 @@ void ScreenShare_WindowResize_cb(fan::window_t *window, const fan::vec2i& res){
 void ScreenShare_WindowTimer_cb(EV_t *listener, EV_timer_t *WindowTimer){
   TCPMain_InChannel_ScreenShare_View_t *View = OFFSETLESS(WindowTimer, TCPMain_InChannel_ScreenShare_View_t, window.WindowTimer);
 
-  uint32_t we = View->window.loco.get_window()->handle_events();
+  uint32_t we = View->window.loco.window.handle_events();
   if(we & fan::window_t::events::close){
     PR_exit(0);
   }

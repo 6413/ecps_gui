@@ -16,7 +16,7 @@ struct{
 fan::vec2i ViewMouseCoordinate = fan::vec2i(-1);
 
 loco_t loco{{.vsync = false}};
-fan::opengl::viewport_t viewport;
+loco_t::viewport_t viewport;
 loco_t::camera_t camera;
 loco_t::texturepack_t TexturePack;
 loco_t::texturepack_t::ti_t TextureCursor;
@@ -74,7 +74,7 @@ void NewReadMethod(ETC_VEDC_Decoder_ReadType Type){
 }
 
 static void CursorCoordinate_cb(const fan::window_t::mouse_move_cb_data_t &p){
-  loco_t *loco = loco_t::get_loco(p.window);
+  loco_t *loco = gloco.loco;
   auto Window = OFFSETLESS(loco, ThreadWindow_t, loco);
 
   if(!(Window->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
@@ -82,7 +82,7 @@ static void CursorCoordinate_cb(const fan::window_t::mouse_move_cb_data_t &p){
   }
 
   /* TODO its not safe to access CodecFrame.Resolution without mutex */
-  fan::vec2i Position = (fan::vec2)p.position / Window->viewport.get_size() * Window->FrameSize;
+  fan::vec2i Position = (fan::vec2)p.position / gloco->viewport_get_size(Window->viewport) * Window->FrameSize;
   //fan::vec2i Position = (fan::vec2)p.position / Window->viewport.get_size() * Window->CodecFrame.Resolution;
   Window->ViewMouseCoordinate = Position;
 
@@ -96,7 +96,7 @@ static void CursorCoordinate_cb(const fan::window_t::mouse_move_cb_data_t &p){
     Payload);
 }
 static void MouseMotion_cb(const fan::window_t::mouse_motion_cb_data_t &p){
-  loco_t *loco = loco_t::get_loco(p.window);
+  loco_t *loco = gloco.loco;
   auto Window = OFFSETLESS(loco, ThreadWindow_t, loco);
 
   if(!(Window->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
@@ -113,7 +113,7 @@ static void MouseMotion_cb(const fan::window_t::mouse_motion_cb_data_t &p){
     Payload);
 }
 static void MouseButtons_cb(const fan::window_t::mouse_buttons_cb_data_t &p){
-  loco_t *loco = loco_t::get_loco(p.window);
+  loco_t *loco = gloco.loco;
   auto Window = OFFSETLESS(loco, ThreadWindow_t, loco);
 
   if(!(Window->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
@@ -178,12 +178,13 @@ void ChangeInputControlMode(InputControlMode_t Mode){
       break;
     }
     case InputControlMode_t::Keyboard_MouseC:{
-      this->loco.get_window()->remove_mouse_move_callback(this->CursorPositionCallbackID);
+      this->loco.window.remove_mouse_move_callback(this->CursorPositionCallbackID);
       break;
     }
     case InputControlMode_t::Keyboard_MouseM:{
-      this->loco.get_window()->erase_mouse_motion_callback(this->MouseMotionCallbackID);
-      this->loco.get_window()->set_flag_value<fan::window_t::flags::no_mouse>(false);
+      fan::print("todo");
+      //this->loco.window.erase_mouse_motion_callback(this->MouseMotionCallbackID);
+      //this->loco.window.set_flag_value<fan::window_t::flags::no_mouse>(false);
       break;
     }
   }
@@ -192,12 +193,13 @@ void ChangeInputControlMode(InputControlMode_t Mode){
       break;
     }
     case InputControlMode_t::Keyboard_MouseC:{
-      this->CursorPositionCallbackID = this->loco.get_window()->add_mouse_move_callback(CursorCoordinate_cb);
+      this->CursorPositionCallbackID = this->loco.window.add_mouse_move_callback(CursorCoordinate_cb);
       break;
     }
     case InputControlMode_t::Keyboard_MouseM:{
-      this->loco.get_window()->set_flag_value<fan::window_t::flags::no_mouse>(true);
-      this->MouseMotionCallbackID = this->loco.get_window()->add_mouse_motion(MouseMotion_cb);
+      fan::print("todooo");
+      //this->loco.window.set_flag_value<fan::window_t::flags::no_mouse>(true);
+      //this->MouseMotionCallbackID = this->loco.window.add_mouse_motion(MouseMotion_cb);
       break;
     }
   }
@@ -205,7 +207,7 @@ void ChangeInputControlMode(InputControlMode_t Mode){
 }
 
 static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
-  loco_t *loco = loco_t::get_loco(p.window);
+  loco_t *loco = gloco.loco;
   auto Window = OFFSETLESS(loco, ThreadWindow_t, loco);
 
   if(p.key == fan::input::key_right_control){
@@ -224,26 +226,6 @@ static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
       }
       case fan::input::key_3:{
         Window->ChangeInputControlMode(InputControlMode_t::Keyboard_MouseM);
-        break;
-      }
-      case fan::input::key_f:{
-        if(p.state != fan::keyboard_state::press){
-          break;
-        }
-        switch(p.window->flag_values.m_size_mode){
-          case fan::window_t::mode::not_set:
-          case fan::window_t::mode::windowed:
-          {
-            p.window->set_windowed_full_screen();
-            break;
-          }
-          case fan::window_t::mode::borderless:
-          case fan::window_t::mode::full_screen:
-          {
-            p.window->set_windowed();
-            break;
-          }
-        }
         break;
       }
     }
@@ -285,23 +267,23 @@ static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
 
 void OpenFrameAndCursor(){
   {
-    loco_t::shapes_t::pixel_format_renderer_t::properties_t properties;
-    properties.viewport = &viewport;
-    properties.camera = &camera;
+    loco_t::universal_image_renderer_t::properties_t properties;
+    properties.viewport = viewport;
+    properties.camera = camera;
     properties.position = fan::vec3(0, 0, 0);
     properties.size = fan::vec2(1, 1);
     FrameCID = properties;
   }
   {
-    loco_t::shapes_t::sprite_t::properties_t properties;
+    loco_t::sprite_t::properties_t properties;
 
-    properties.viewport = &viewport;
-    properties.camera = &camera;
+    properties.viewport = viewport;
+    properties.camera = camera;
 
     properties.load_tp(&TextureCursor);
 
     properties.position = fan::vec3(0, 0, 1);
-    properties.size = fan::vec2(16) / loco.get_window()->get_size();
+    properties.size = fan::vec2(16) / loco.window.get_size();
 
     CursorCID = properties;
   }
