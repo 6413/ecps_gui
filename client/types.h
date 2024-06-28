@@ -27,12 +27,6 @@
 #include _WITCH_PATH(MD/Keyboard/Keyboard.h)
 #include _WITCH_PATH(T/T.h)
 
-#ifdef WOS_WINDOWS
-
-#else
-  #define FAN_INCLUDE_PATH /usr/local/include
-#endif
-
 #include "../prot.h"
 
 enum class ChannelState_t{
@@ -149,7 +143,7 @@ struct pile_t{
     #define BVEC_set_NodeType uint16_t
     #define BVEC_set_NodeSizeType uint8_t
     #define BVEC_set_NodeData uint8_t
-    #include _WITCH_PATH(BVEC/BVEC.h)
+    #include <BVEC/BVEC.h>
     bvec_t bvec;
     EV_async_t ev_async;
   }ITC;

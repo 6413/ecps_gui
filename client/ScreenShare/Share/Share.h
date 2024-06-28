@@ -39,9 +39,9 @@ struct Channel_ScreenShare_Share_t{
     #define BLL_set_prefix FrameList
     #define BLL_set_Language 1
     #define BLL_set_AreWeInsideStruct 1
-    #define BLL_set_CPP_ConstructDestruct
+    #define BLL_set_CPP_ConstructDestruct 1
     #define BLL_set_NodeDataType FrameListNodeData_t
-    #include _WITCH_PATH(BLL/BLL.h)
+    #include <BLL/BLL.h>
     FrameList_t FrameList;
     uint64_t WantedInterval = 5000000;
     uint64_t Bucket; /* in bit */

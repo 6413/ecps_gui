@@ -9,47 +9,13 @@
 #include <fstream>
 #include <string>
 
-#define loco_imgui
-#define loco_assimp
-
-#if defined(loco_assimp)
-  #include <assimp/Importer.hpp>
-  #include <assimp/scene.h>
-  #include <assimp/postprocess.h>
-#endif
-
-#define STRINGIFY(p0) #p0
-#define STRINGIFY_DEFINE(a) STRINGIFY(a)
-
-
-#ifndef FAN_INCLUDE_PATH
-  #define FAN_INCLUDE_PATH C:/libs/fan/include
-#endif
-
-#ifndef FAN_INCLUDE_PATH
-  #define _FAN_PATH(p0) <fan/p0>
-  #else
-  #define FAN_INCLUDE_PATH_END fan/
-  #define _FAN_PATH(p0) <FAN_INCLUDE_PATH/fan/p0>
-  #define _FAN_PATH_QUOTE(p0) STRINGIFY_DEFINE(FAN_INCLUDE_PATH) "/fan/" STRINGIFY(p0)
-#endif
-
-#if defined(loco_imgui)
-#define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
-#define IMGUI_DEFINE_MATH_OPERATORS
-#include _FAN_PATH(imgui/imgui.h)
-#include _FAN_PATH(imgui/imgui_impl_opengl3.h)
-#include _FAN_PATH(imgui/imgui_impl_win32.h)
-#include _FAN_PATH(imgui/imgui_neo_sequencer.h)
-#endif
-
 #ifndef fan_verbose_print_level
   #define fan_verbose_print_level 1
 #endif
 #ifndef fan_debug
   #define fan_debug 0
 #endif
-#include _INCLUDE_TOKEN(FAN_INCLUDE_PATH,fan/types/types.h)
+#include <fan/types/types.h>
 
 //#define loco_vulkan
 //#define loco_compute_shader
