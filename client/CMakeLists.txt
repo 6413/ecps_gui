@@ -46,9 +46,9 @@ set(PCH_NAME "pch.h")
 set(ENABLE_IMGUI ON)
 
 # Set the compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I . -I .. -g -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable -fsanitize=address,undefined")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I . -I .. -g -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
 set(DEBUG_FLAGS "-g")
-set(RELEASE_FLAGS "-s -mmmx -msse -msse2 -msse3 -mssse3 -msse4 -msse4.1 -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
+set(RELEASE_FLAGS "-s -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold")
@@ -105,7 +105,7 @@ if(WIN32)
     target_link_libraries(${OUTPUT} fan)
 else()
     # On Linux, use the system libraries
-    target_link_libraries(${OUTPUT} webp glfw X11)
+    target_link_libraries(${OUTPUT} ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw)
 endif()
 
 # Tell CMake where to find the libraries
