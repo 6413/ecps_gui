@@ -560,7 +560,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       MEM_copy(PacketData, &View->m_data[Current * 0x400], PacketSize);
       View->SetDataCheck(Current);
       if(
-        (View->m_Possible != (uint16_t)-1 && !View->m_Modulo && Current == View->m_Possible) ||
+        (View->m_Possible != (uint16_t)-1 && Current == View->m_Possible) ||
         PacketSize != 0x400
       ){
         View->FixFramePacket();

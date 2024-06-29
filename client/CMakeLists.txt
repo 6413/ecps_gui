@@ -43,7 +43,7 @@ set(LINK_PATH "lib/fan/")
 # Set the precompiled header file
 set(PCH_NAME "pch.h")
 
-set(ENABLE_IMGUI ON)
+set(ENABLE_IMGUI OFF)
 
 # Set the compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I . -I .. -g -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
@@ -91,12 +91,12 @@ list(FILTER SOURCES EXCLUDE REGEX "${ROOT_PATH}/fmt.cpp")
 add_library(fan OBJECT ${SOURCES})
 
 # Compile ImGui, nativefiledialog and fmt source files into separate object libraries
-add_library(fan_imgui OBJECT ${IMGUI_SOURCES})
+# add_library(fan_imgui OBJECT ${IMGUI_SOURCES})
 add_library(fan_nfd OBJECT ${NFD_SOURCES})
 add_library(fan_fmt OBJECT ${FMT_SOURCES})
 
 # Add the executable
-add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan> $<TARGET_OBJECTS:fan_imgui> $<TARGET_OBJECTS:fan_nfd> $<TARGET_OBJECTS:fan_fmt>)
+add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan> $<TARGET_OBJECTS:fan_nfd> $<TARGET_OBJECTS:fan_fmt>)
 
 # Conditionally set the libraries based on the platform
 if(WIN32)

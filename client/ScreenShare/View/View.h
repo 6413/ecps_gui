@@ -14,7 +14,6 @@ struct Channel_ScreenShare_View_t{
 
   uint16_t m_Sequence;
   uint16_t m_Possible;
-  uint16_t m_Modulo;
 
   uint16_t m_ModuloSize;
 
@@ -112,7 +111,6 @@ struct Channel_ScreenShare_View_t{
     if(this->m_Possible == (uint16_t)-1){
       this->m_stats.Packet_HeadDrop++;
       this->m_Possible = LastDataCheck + 1;
-      this->m_Modulo = 0;
     }
 
     this->m_stats.Packet_Total += this->m_Possible;
@@ -130,7 +128,7 @@ struct Channel_ScreenShare_View_t{
       WriteInformation("[CLIENT] [DEBUG] VerboseTime WriteFramePacket0 %llu\r\n", t - this->_VerboseTime);
       this->_VerboseTime = t;
     #endif
-    uint32_t FramePacketSize = (this->m_Possible - 1) * 0x400 + this->m_ModuloSize;
+    uint32_t FramePacketSize = (uint32_t)(this->m_Possible - 1) * 0x400 + this->m_ModuloSize;
 
     auto Decode = this->ThreadCommon->ThreadDecode.GetOrphanPointer();
 
