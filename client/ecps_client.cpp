@@ -14,34 +14,6 @@
 
 #include "types.h"
 
-void WriteInformation(const char *format, ...){
-  IO_fd_t fd_stdout;
-  IO_fd_set(&fd_stdout, FD_OUT);
-  va_list argv;
-  va_start(argv, format);
-  IO_vprint(&fd_stdout, format, argv);
-  va_end(argv);
-}
-void WriteError(const char *format, ...){
-  IO_fd_t fd_stdout;
-  IO_fd_set(&fd_stdout, FD_ERR);
-  va_list argv;
-  va_start(argv, format);
-  IO_vprint(&fd_stdout, format, argv);
-  va_end(argv);
-}
-
-void TCP_write_DynamicPointer(NET_TCP_peer_t *peer, void *Data, uintptr_t Size){
-  NET_TCP_Queue_t Queue;
-  Queue.DynamicPointer.ptr = Data;
-  Queue.DynamicPointer.size = Size;
-  NET_TCP_write_loop(
-    peer,
-    NET_TCP_GetWriteQueuerReferenceFirst(peer),
-    NET_TCP_QueueType_DynamicPointer,
-    &Queue);
-}
-
 void TCP_WriteCommand(uint32_t ID, Protocol_CI_t Command, auto&&...args){
   ProtocolBasePacket_t BasePacket;
   BasePacket.ID = ID;

@@ -1,65 +1,16 @@
 #include <WITCH/WITCH.h>
-#include <WITCH/IO/IO.h>
-#include <WITCH/IO/print.h>
-#include <WITCH/MEM/MEM.h>
-#include <WITCH/STR/common/common.h>
 #include <WITCH/STR/psh.h>
-#include <WITCH/EV/EV.h>
-#include <WITCH/NET/TCP/TCP.h>
-#include <WITCH/HASH/SHA.h>
-#include <WITCH/RAND/RAND.h>
-#include <WITCH/VEC/VEC.h>
 
 #include <fan/types/types.h>
 #include <fan/types/vector.h>
 
-#include "../prot.h"
+#include "../common.h"
 
 #ifndef set_Verbose
   #define set_Verbose 0
 #endif
 
-void WriteInformation(const char *format, ...){
-  IO_fd_t fd_stdout;
-  IO_fd_set(&fd_stdout, FD_OUT);
-  va_list argv;
-  va_start(argv, format);
-  IO_vprint(&fd_stdout, format, argv);
-  va_end(argv);
-}
-
-void WriteError(const char *format, ...){
-  IO_fd_t fd_stdout;
-  IO_fd_set(&fd_stdout, FD_ERR);
-  va_list argv;
-  va_start(argv, format);
-  IO_vprint(&fd_stdout, format, argv);
-  va_end(argv);
-}
-
-void TWriteErrorClient(const char *format, ...){
-  #if set_Verbose >= 1
-    IO_fd_t fd_stdout;
-    IO_fd_set(&fd_stdout, FD_ERR);
-    va_list argv;
-    va_start(argv, format);
-    IO_vprint(&fd_stdout, format, argv);
-    va_end(argv);
-  #endif
-}
-#define TWriteErrorClient(...) \
-  TWriteErrorClient("[ErrorClient] " __VA_ARGS__)
-
-void TCP_write_DynamicPointer(NET_TCP_peer_t *peer, void *Data, uintptr_t Size){
-  NET_TCP_Queue_t Queue;
-  Queue.DynamicPointer.ptr = Data;
-  Queue.DynamicPointer.size = Size;
-  NET_TCP_write_loop(
-    peer,
-    NET_TCP_GetWriteQueuerReferenceFirst(peer),
-    NET_TCP_QueueType_DynamicPointer,
-    &Queue);
-}
+#define TWriteErrorClient(...) _print(FD_ERR, "[ErrorClient] " __VA_ARGS__)
 
 void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, auto&&...args){
   ProtocolBasePacket_t BasePacket;

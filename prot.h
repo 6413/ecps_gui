@@ -1,5 +1,3 @@
-#pragma once
-
 #pragma pack(push, 1)
 
 #define set_ProtocolVersion 0x00000000

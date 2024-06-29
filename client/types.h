@@ -10,24 +10,14 @@
   #include _WITCH_PATH(include/cuda.h)
 #endif
 #include _WITCH_PATH(PR/PR.h)
-#include _WITCH_PATH(IO/IO.h)
-#include _WITCH_PATH(IO/print.h)
-#include _WITCH_PATH(MEM/MEM.h)
-#include _WITCH_PATH(STR/common/common.h)
 #include _WITCH_PATH(STR/psh.h)
 #include _WITCH_PATH(STR/psf.h)
-#include _WITCH_PATH(EV/EV.h)
-#include _WITCH_PATH(NET/NET.h)
-#include _WITCH_PATH(NET/TCP/TCP.h)
-#include _WITCH_PATH(HASH/SHA.h)
-#include _WITCH_PATH(RAND/RAND.h)
 #include _WITCH_PATH(MD/SCR/SCR.h)
-#include _WITCH_PATH(VEC/VEC.h)
 #include _WITCH_PATH(MD/Mice.h)
 #include _WITCH_PATH(MD/Keyboard/Keyboard.h)
 #include _WITCH_PATH(T/T.h)
 
-#include "../prot.h"
+#include "../common.h"
 
 enum class ChannelState_t{
   WaittingForInformation,
