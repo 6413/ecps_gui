@@ -241,7 +241,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         PR_abort();
       }
       This->HandleCursor();
-      This->loco.process_frame();
+      This->loco.process_loop();
     }
   });
   EV_async_start(&This->ev, &This->ev_async);
