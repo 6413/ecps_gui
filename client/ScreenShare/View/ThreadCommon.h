@@ -45,13 +45,27 @@ static bool ThreadDecode_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         This->DecoderUserProperties.DecoderName,
         0);
       if(r != ETC_VEDC_Decoder_Error_OK){
-        WriteInformation(
+
+        std::string_view decoder_name = std::string_view((const char*)This->DecoderUserProperties.DecoderName, This->DecoderUserProperties.DecoderNameSize);
+
+        fan::printn8(
+          "[CLIENT] [WARNING] [DECODER] ", __FUNCTION__, " ", __FILE__, ":", __LINE__,
+          " (ETC_VEDC_Decoder_Open returned (", r, ") for encoder \"",
+          decoder_name, "\""
+        );
+
+        fan::printn8(
+          "[CLIENT] [WARNING] [DECODER] ", __FUNCTION__, " ", __FILE__, ":", __LINE__,
+          " falling back to OpenH264 decoder."
+        );
+
+       /* WriteInformation(
           "[CLIENT] [WARNING] [DECODER] %s %s:%lu ETC_VEDC_Decoder_Open returned (%lx) for encoder \"%.*s\"\r\n",
           __FUNCTION__, __FILE__, __LINE__,
           r, This->DecoderUserProperties.DecoderNameSize, This->DecoderUserProperties.DecoderName);
         WriteInformation(
           "[CLIENT] [WARNING] [DECODER] %s %s:%lu falling back to OpenH264 decoder.\r\n",
-          __FUNCTION__, __FILE__, __LINE__);
+          __FUNCTION__, __FILE__, __LINE__);*/
 
         const char *CodecName = "OpenH264";
         if(ETC_VEDC_Decoder_Open(&This->Decoder, MEM_cstreu(CodecName), CodecName, 0) != ETC_VEDC_Decoder_Error_OK){
