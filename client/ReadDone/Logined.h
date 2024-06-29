@@ -54,8 +54,8 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_Error):{
 case Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK):{
   auto Request = (Protocol_S2C_t::JoinChannel_OK_t::dt *)RestPacket;
 
-  /* TODO check IDMap even before this file to prevent code spam */
-  /* TODO check if that id was for create channel */
+  /* TODO check IDMap even before this file to prevent similar code spam */
+  /* TODO check if that id was for create channel and check if channelid is right */
   if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
     PR_abort();
     goto StateDone_gt;
@@ -66,8 +66,11 @@ case Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK):{
     case Protocol::ChannelType_ScreenShare_e:{
       Channel_Common_t cc(ChannelState_t::ScreenShare, Request->ChannelID, Request->ChannelSessionID);
       cc.m_StateData = new Channel_ScreenShare_t(0);
-      ChannelMap_InNew(&g_pile->ChannelMap, &Request->ChannelID, &cc);
+      *ChannelMap_GetOutputPointer(&g_pile->ChannelMap, &Request->ChannelID) = cc;
       break;
+    }
+    default:{
+      __abort();
     }
   }
 
