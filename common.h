@@ -22,27 +22,6 @@ void _print(uint32_t fd, const char *format, ...){
 #define WriteInformation(...) _print(FD_OUT, __VA_ARGS__)
 #define WriteError(...) _print(FD_ERR, __VA_ARGS__)
 
-bool IsInputLineDone(uint8_t **buffer, IO_ssize_t *size){
-  for(uintptr_t i = 0; i < *size; i++){
-    if((*buffer)[i] == 0x7f || (*buffer)[i] == 0x08){
-      if(g_pile->InputSize){
-        g_pile->InputSize--;
-      }
-      continue;
-    }
-    if((*buffer)[i] == '\n' || (*buffer)[i] == '\r'){
-      if((*buffer)[i] == '\r'){
-        WriteInformation("\r\n");
-      }
-      *buffer += i + 1;
-      *size -= i + 1;
-      return 1;
-    }
-    g_pile->Input[g_pile->InputSize++] = (*buffer)[i];
-  }
-  return 0;
-}
-
 void TCP_write_DynamicPointer(NET_TCP_peer_t *peer, void *Data, uintptr_t Size){
   NET_TCP_Queue_t Queue;
   Queue.DynamicPointer.ptr = Data;

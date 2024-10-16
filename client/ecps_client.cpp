@@ -367,6 +367,27 @@ bool GetNextArgument(const uint8_t *Command, uintptr_t *iCommand, uintptr_t Comm
 
 #include "Input.h"
 
+bool IsInputLineDone(uint8_t **buffer, IO_ssize_t *size){
+  for(uintptr_t i = 0; i < *size; i++){
+    if((*buffer)[i] == 0x7f || (*buffer)[i] == 0x08){
+      if(g_pile->InputSize){
+        g_pile->InputSize--;
+      }
+      continue;
+    }
+    if((*buffer)[i] == '\n' || (*buffer)[i] == '\r'){
+      if((*buffer)[i] == '\r'){
+        WriteInformation("\r\n");
+      }
+      *buffer += i + 1;
+      *size -= i + 1;
+      return 1;
+    }
+    g_pile->Input[g_pile->InputSize++] = (*buffer)[i];
+  }
+  return 0;
+}
+
 void evio_stdin_cb(EV_t *listener, EV_event_t *evio_stdin, uint32_t flag){
   uint8_t _buffer[4096];
   uint8_t *buffer = _buffer;

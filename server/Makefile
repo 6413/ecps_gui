@@ -1,8 +1,10 @@
+CF = -std=c++20
 LINK = -lev -lpthread -lcrypto -lssl
 IO = ecps_server.cpp -o ecps_server.exe
+REST = $(CF) $(IO) $(LINK)
 
 debug:
-	lclang++ -gdwarf-4 -Dset_Verbose=1 $(IO) $(LINK)
+	clang++ -g -Dset_Verbose=1 $(REST)
 
 release:
-	lclang++-size -O3 -Dset_Verbose=0 $(IO) $(LINK)
+	clang++ -s -O3 -Dset_Verbose=0 $(REST)
