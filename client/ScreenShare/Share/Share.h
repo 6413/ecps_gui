@@ -52,13 +52,13 @@ struct Channel_ScreenShare_Share_t{
   }m_NetworkFlow;
 
   void FlagIsChanged(){
-    Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t::dt Payload;
+    Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t Payload;
     Payload.ChannelID = m_ChannelInfo.ChannelID;
     Payload.ChannelSessionID = m_ChannelInfo.ChannelSessionID;
     Payload.Flag = m_ChannelFlag;
     TCP_WriteCommand(
       0,
-      Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag),
+      Protocol_C2S_t().Channel_ScreenShare_Share_InformationToViewSetFlag,
       Payload);
   }
 
@@ -97,10 +97,10 @@ struct Channel_ScreenShare_Share_t{
 
     MEM_copy(Data, DataWillBeAt, DataSize);
 
-    ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t::dt rest;
+    ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t rest;
     rest.ChannelID = this->m_ChannelInfo.ChannelID;
     rest.ChannelSessionID = this->m_ChannelInfo.ChannelSessionID;
-    UDP_send(0, &ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData, rest, buffer, BufferSize);
+    UDP_send(0, ProtocolUDP::C2S_t().Channel_ScreenShare_Host_StreamData, rest, buffer, BufferSize);
 
     return 0;
   }

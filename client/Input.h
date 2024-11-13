@@ -52,7 +52,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
           return;
         }
 
-        Protocol_C2S_t::CreateChannel_t::dt rest;
+        Protocol_C2S_t::CreateChannel_t rest;
         rest.Type = -1;
 
         for(uint8_t i = 0; i < Protocol::ChannelType_Amount; i++){
@@ -76,7 +76,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
 
         TCP_WriteCommand(
           ID,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::CreateChannel),
+          Protocol_C2S_t().CreateChannel,
           rest);
         WriteInformation("[CLIENT] CreateChannel request ID %lx\n", ID);
       }
@@ -92,7 +92,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
           return;
         }
 
-        Protocol_C2S_t::JoinChannel_t::dt rest;
+        Protocol_C2S_t::JoinChannel_t rest;
         rest.ChannelID.g() = STR_psh32_digit(&Input[iCommand], ChannelIDSize);
 
         uint32_t ID = g_pile->TCP.IDSequence++;
@@ -107,7 +107,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
 
         TCP_WriteCommand(
           ID,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::JoinChannel),
+          Protocol_C2S_t().JoinChannel,
           rest);
       }
       else if(CompareCommand(Input, &iCommand, InputSize, "Channel")){

@@ -1,5 +1,5 @@
-case Protocol_S2C_t::AN(&Protocol_S2C_t::Response_Login):{
-  auto Request = (Protocol_S2C_t::Response_Login_t::dt *)RestPacket;
+case Protocol_S2C_t().Response_Login:{
+  auto Request = (Protocol_S2C_t::Response_Login_t *)RestPacket;
 
   /* TODO check IDMap even before this file to prevent code spam */
   /* TODO check if that id was for create channel */

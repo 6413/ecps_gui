@@ -69,12 +69,12 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         PR_abort();
       }
 
-      ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate_t::dt dt;
+      ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate_t dt;
       dt.Position.x = x;
       dt.Position.y = y;
 
       ITC_write(
-        ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate),
+        ITC_Protocol_t().Channel_ScreenShare_Share_MouseCoordinate,
         ThreadCommon->ChannelInfo.ChannelID,
         ThreadCommon->ChannelInfo.ChannelUnique,
         dt);

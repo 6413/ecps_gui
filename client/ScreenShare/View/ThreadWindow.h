@@ -86,11 +86,11 @@ static void CursorCoordinate_cb(const fan::window_t::mouse_move_cb_data_t &p){
   //fan::vec2i Position = (fan::vec2)p.position / Window->viewport.get_size() * Window->CodecFrame.Resolution;
   Window->ViewMouseCoordinate = Position;
 
-  ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate_t::dt Payload;
+  ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate_t Payload;
   Payload.Position = Position;
 
   ITC_write(
-    ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate),
+    ITC_Protocol_t().Channel_ScreenShare_View_MouseCoordinate,
     Window->ThreadCommon->ChannelInfo.ChannelID,
     Window->ThreadCommon->ChannelInfo.ChannelUnique,
     Payload);
@@ -103,11 +103,11 @@ static void MouseMotion_cb(const fan::window_t::mouse_motion_cb_data_t &p){
     return;
   }
 
-  ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion_t::dt Payload;
+  ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion_t Payload;
   Payload.Motion = p.motion;
 
   ITC_write(
-    ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion),
+    ITC_Protocol_t().Channel_ScreenShare_View_MouseMotion,
     Window->ThreadCommon->ChannelInfo.ChannelID,
     Window->ThreadCommon->ChannelInfo.ChannelUnique,
     Payload);
@@ -150,7 +150,7 @@ static void MouseButtons_cb(const fan::window_t::mouse_buttons_cb_data_t &p){
     }
   }
 
-  ITC_Protocol_t::Channel_ScreenShare_View_MouseButton_t::dt Payload;
+  ITC_Protocol_t::Channel_ScreenShare_View_MouseButton_t Payload;
   Payload.key = mouse_key;
   if(mouse_key >= 3 && mouse_key <= 4){
     Payload.state = 0; /* unused */
@@ -166,7 +166,7 @@ static void MouseButtons_cb(const fan::window_t::mouse_buttons_cb_data_t &p){
   }
 
   ITC_write(
-    ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseButton),
+    ITC_Protocol_t().Channel_ScreenShare_View_MouseButton,
     Window->ThreadCommon->ChannelInfo.ChannelID,
     Window->ThreadCommon->ChannelInfo.ChannelUnique,
     Payload);
@@ -250,7 +250,7 @@ static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
     PR_abort();
   }
 
-  ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey_t::dt Payload;
+  ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey_t Payload;
   Payload.Scancode = p.scancode;
   switch(p.state){
     case fan::keyboard_state::release: { Payload.State = 0; break; }
@@ -259,7 +259,7 @@ static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
   }
 
   ITC_write(
-    ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey),
+    ITC_Protocol_t().Channel_ScreenShare_View_KeyboardKey,
     Window->ThreadCommon->ChannelInfo.ChannelID,
     Window->ThreadCommon->ChannelInfo.ChannelUnique,
     Payload);

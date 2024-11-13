@@ -170,7 +170,7 @@ struct ITCBasePacket_t{
   ChannelUnique_t ChannelUnique;
 };
 
-struct ITC_Protocol_t : __dme_inherit<ITC_Protocol_t>{
+struct ITC_Protocol_t : __dme_inherit(ITC_Protocol_t){
   __dme(CloseChannel,);
   __dme(Channel_ScreenShare_Share_MouseCoordinate,
     fan::vec2ui Position;

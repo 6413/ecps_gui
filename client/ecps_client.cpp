@@ -1,4 +1,7 @@
-#include "client_pch.h"
+
+#include <fan/types/types.h>
+#include <fan/types/vector.h>
+#include <fan/graphics/loco.h>
 #include <WITCH/WITCH.h>
 
 #define ETC_VEDC_Encode_DefineEncoder_OpenH264
@@ -28,7 +31,7 @@ template <typename T>
 void
 UDP_send(
   uint32_t ID,
-  T ProtocolUDP::C2S_t::* Command,
+  const T& Command,
   typename T::dt CommandData,
   const void *data,
   IO_size_t size
@@ -38,7 +41,7 @@ UDP_send(
   BasePacket->SessionID = g_pile->SessionID;
   BasePacket->ID = ID;
   BasePacket->IdentifySecret = g_pile->UDP.IdentifySecret;
-  BasePacket->Command = ProtocolUDP::C2S.AN(Command);
+  BasePacket->Command = Command;
   auto CommandDataPacket = (typename T::dt *)&BasePacket[1];
   *CommandDataPacket = CommandData;
   auto RestPacket = (uint8_t *)CommandDataPacket + T().m_DSS;
@@ -89,7 +92,7 @@ ITC_write(
 #define UDP_KeepAliveTimerStepLimit 7
 uint8_t UDP_KeepAliveTimerStep[UDP_KeepAliveTimerStepLimit] = {30, 1, 2, 2, 4, 4, 4};
 void UDP_KeepAliveTimer_cb(EV_t *listener, EV_timer_t *KeepAliveTimer){
-  UDP_send(0, &ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0);
+  UDP_send(0, ProtocolUDP::C2S_t().KeepAlive, {}, 0, 0);
 
   if(g_pile->UDP.KeepAliveTimerStepCurrent == UDP_KeepAliveTimerStepLimit - 1){
     WriteInformation("[CLIENT] UDP KeepAlive timeout\r\n");
@@ -118,7 +121,7 @@ uint8_t TCP_KeepAliveTimerStep[TCP_KeepAliveTimerStepLimit] = {30, 1, 2, 2, 4, 4
 void TCP_KeepAliveTimer_cb(EV_t *listener, EV_timer_t *KeepAliveTimer){
   TCP_WriteCommand(
     0,
-    Protocol_C2S_t::AN(&Protocol_C2S_t::KeepAlive));
+    Protocol_C2S_t().KeepAlive);
 
   if(g_pile->TCP.KeepAliveTimerStepCurrent == TCP_KeepAliveTimerStepLimit - 1){
     WriteInformation("[CLIENT] TCP KeepAlive timeout\r\n");
@@ -166,7 +169,7 @@ TCPMain_state_cb(
 
     TCP_KeepAliveTimer_start();
 
-    Protocol_C2S_t::Request_Login_t::dt rest;
+    Protocol_C2S_t::Request_Login_t rest;
     rest.Type = Protocol::LoginType_t::Anonymous;
 
     uint32_t ID = g_pile->TCP.IDSequence++;
@@ -178,7 +181,7 @@ TCPMain_state_cb(
 
     TCP_WriteCommand(
       ID,
-      Protocol_C2S_t::AN(&Protocol_C2S_t::Request_Login),
+      Protocol_C2S_t().Request_Login,
       rest);
   }
   else do{
@@ -277,7 +280,7 @@ uint32_t TCPMain_read_cb(
         PeerData->iBuffer += size;
         if(PeerData->iBuffer == TotalSize){
           auto RestPacket = (uint8_t *)BasePacket + sizeof(ProtocolBasePacket_t);
-          if(BasePacket->Command == Protocol_S2C_t::AN(&Protocol_S2C_t::KeepAlive)){
+          if(BasePacket->Command == Protocol_S2C_t().KeepAlive){
             TCP_KeepAliveTimer_reset();
             goto StateDone_gt;
           }
@@ -443,14 +446,14 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
 
   IO_ssize_t RelativeSize = size - sizeof(*BasePacket);
   switch(BasePacket->Command){
-    case ProtocolUDP::S2C.AN(&ProtocolUDP::S2C_t::KeepAlive):{
+    case ProtocolUDP::S2C_t().KeepAlive:{
 
       UDP_KeepAliveTimer_reset();
 
       return;
     }
-    case ProtocolUDP::S2C.AN(&ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData):{
-      auto CommandData = (ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t::dt *)&BasePacket[1];
+    case ProtocolUDP::S2C_t().Channel_ScreenShare_View_StreamData:{
+      auto CommandData = (ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t *)&BasePacket[1];
       if(RelativeSize < sizeof(*CommandData)){
         return;
       }
@@ -565,64 +568,64 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
     }
 
     switch(BasePacket->Command){
-      case ITC_Protocol_t::AN(&ITC_Protocol_t::CloseChannel):{
+      case ITC_Protocol_t().CloseChannel:{
         PR_abort();
         break;
       }
-      case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate):{
-        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate_t::dt *)&BasePacket[1];
+      case ITC_Protocol_t().Channel_ScreenShare_Share_MouseCoordinate:{
+        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate_t *)&BasePacket[1];
         auto Share = (Channel_ScreenShare_Share_t *)cc->m_StateData;
 
-        Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate_t::dt dt;
+        Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate_t dt;
         dt.ChannelID = cc->m_ChannelID;
         dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.pos = CommandData->Position;
         TCP_WriteCommand(
           0,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate),
+          Protocol_C2S_t().Channel_ScreenShare_Share_InformationToViewMouseCoordinate,
           dt);
 
         break;
       }
-      case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate):{
-        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate_t::dt *)&BasePacket[1];
+      case ITC_Protocol_t().Channel_ScreenShare_View_MouseCoordinate:{
+        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseCoordinate_t *)&BasePacket[1];
         auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
-        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate_t::dt dt;
+        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate_t dt;
         dt.ChannelID = cc->m_ChannelID;
         dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.pos = CommandData->Position;
         TCP_WriteCommand(
           0,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate),
+          Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostMouseCoordinate,
           dt);
         break;
       }
-      case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion):{
-        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion_t::dt *)&BasePacket[1];
+      case ITC_Protocol_t().Channel_ScreenShare_View_MouseMotion:{
+        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseMotion_t *)&BasePacket[1];
         auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
-        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion_t::dt dt;
+        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion_t dt;
         dt.ChannelID = cc->m_ChannelID;
         dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.Motion = CommandData->Motion;
         TCP_WriteCommand(
           0,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion),
+          Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostMouseMotion,
           dt);
         break;
       }
-      case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_MouseButton):{
-        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseButton_t::dt *)&BasePacket[1];
+      case ITC_Protocol_t().Channel_ScreenShare_View_MouseButton:{
+        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_MouseButton_t *)&BasePacket[1];
         auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
-        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton_t::dt dt;
+        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton_t dt;
         dt.ChannelID = cc->m_ChannelID;
         dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.key = CommandData->key;
@@ -630,24 +633,24 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
         dt.pos = CommandData->pos;
         TCP_WriteCommand(
           0,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton),
+          Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostMouseButton,
           dt);
         break;
       }
-      case ITC_Protocol_t::AN(&ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey):{
-        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey_t::dt *)&BasePacket[1];
+      case ITC_Protocol_t().Channel_ScreenShare_View_KeyboardKey:{
+        auto CommandData = (ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey_t *)&BasePacket[1];
         auto View = (Channel_ScreenShare_View_t *)cc->m_StateData;
         if(!(View->m_ChannelFlag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
           break;
         }
-        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard_t::dt dt;
+        Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard_t dt;
         dt.ChannelID = cc->m_ChannelID;
         dt.ChannelSessionID = cc->m_ChannelSessionID;
         dt.Scancode = CommandData->Scancode;
         dt.State = CommandData->State;
         TCP_WriteCommand(
           0,
-          Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard),
+          Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostKeyboard,
           dt);
         break;
       }

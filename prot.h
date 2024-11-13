@@ -123,14 +123,14 @@ namespace ProtocolUDP{
     uint64_t IdentifySecret;
     Protocol_CI_t Command;
   };
-  struct C2S_t : __dme_inherit<C2S_t>{
+  struct C2S_t : __dme_inherit(C2S_t){
     __dme(KeepAlive,);
     __dme(Channel_ScreenShare_Host_StreamData,
       Protocol_ChannelID_t ChannelID;
       Protocol_ChannelSessionID_t ChannelSessionID;
     );
   }C2S;
-  struct S2C_t : __dme_inherit<S2C_t>{
+  struct S2C_t : __dme_inherit(S2C_t){
     __dme(KeepAlive,);
     __dme(Channel_ScreenShare_View_StreamData,
       Protocol_ChannelID_t ChannelID;
@@ -138,7 +138,7 @@ namespace ProtocolUDP{
   }S2C;
 }
 
-struct Protocol_C2S_t : __dme_inherit<Protocol_C2S_t>{
+struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
   __dme(KeepAlive,);
   __dme(Request_Login,
     Protocol::LoginType_t Type;
@@ -191,7 +191,7 @@ struct Protocol_C2S_t : __dme_inherit<Protocol_C2S_t>{
   );
 }Protocol_C2S;
 
-struct Protocol_S2C_t : __dme_inherit<Protocol_S2C_t>{
+struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t){
   __dme(KeepAlive,);
   __dme(InformInvalidIdentify,
     uint64_t ClientIdentify;
