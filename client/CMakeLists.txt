@@ -34,7 +34,7 @@ set(OUTPUT ecps_client.exe)
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     set(ROOT_PATH "C:/libs/fan_release/include/fan/")
 elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-    set(ROOT_PATH "/usr/local/include/fan/")
+    set(ROOT_PATH "/home/arch/k/git/fan/fan/")
 endif()
 
 
@@ -46,7 +46,7 @@ set(PCH_NAME "pch.h")
 set(ENABLE_IMGUI ON)
 
 # Set the compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I . -I .. -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable -s -O3 -fdata-sections -ffunction-sections -Wl,--gc-sections")
+set(CMAKE_CXX_FLAGS "-w -ferror-limit=2 -I ${ROOT_PATH} -I ${ROOT_PATH}/../ ${CMAKE_CXX_FLAGS} -I . -I .. -g -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
 set(DEBUG_FLAGS "-g")
 set(RELEASE_FLAGS "-s -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
 
@@ -54,7 +54,7 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold")
 
 if(ENABLE_IMGUI)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_imgui -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM -DIMGUI_DEFINE_MATH_OPERATORS")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_assimp -Dloco_imgui -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM -DIMGUI_DEFINE_MATH_OPERATORS")
 endif()
 
 # loco_json
@@ -91,12 +91,12 @@ list(FILTER SOURCES EXCLUDE REGEX "${ROOT_PATH}/fmt.cpp")
 add_library(fan OBJECT ${SOURCES})
 
 # Compile ImGui, nativefiledialog and fmt source files into separate object libraries
-add_library(fan_imgui OBJECT ${IMGUI_SOURCES})
+# add_library(fan_imgui OBJECT ${IMGUI_SOURCES})
 add_library(fan_nfd OBJECT ${NFD_SOURCES})
 add_library(fan_fmt OBJECT ${FMT_SOURCES})
 
 # Add the executable
-add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan> $<TARGET_OBJECTS:fan_imgui> $<TARGET_OBJECTS:fan_nfd> $<TARGET_OBJECTS:fan_fmt>)
+add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan> $<TARGET_OBJECTS:fan_nfd> $<TARGET_OBJECTS:fan_fmt>)
 
 # Conditionally set the libraries based on the platform
 if(WIN32)
@@ -105,7 +105,7 @@ if(WIN32)
     target_link_libraries(${OUTPUT} fan)
 else()
     # On Linux, use the system libraries
-    target_link_libraries(${OUTPUT} ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw)
+    target_link_libraries(${OUTPUT} ${CMAKE_CURRENT_SOURCE_DIR}/lib/fan/libimgui.a ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw)
 endif()
 
 # Tell CMake where to find the libraries

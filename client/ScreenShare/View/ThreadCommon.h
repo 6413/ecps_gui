@@ -210,8 +210,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
       {
         uint32_t pixel_format;
         switch(Frame.Properties.PixelFormat){
-          case ETC_PIXF_YUV420p:{pixel_format = fan::pixel_format::yuv420p; break;}
-          case ETC_PIXF_YUVNV12:{pixel_format = fan::pixel_format::nv12; break;}
+          case PIXF_YUV420p:{pixel_format = fan::pixel_format::yuv420p; break;}
+          case PIXF_YUVNV12:{pixel_format = fan::pixel_format::nv12; break;}
           default:{
             /* not supported pixel format... at least yet.*/
             __abort();

@@ -153,7 +153,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
 
     ETC_VEDC_Encode_Frame_t Frame;
     /* TOOD hardcode to spectific pixel format */
-    Frame.Properties.PixelFormat = ETC_PIXF_BGRA;
+    Frame.Properties.PixelFormat = PIXF_BGRA;
     Frame.Properties.Stride[0] = This->mdscr.Geometry.LineSize;
     Frame.Properties.SizeX = This->mdscr.Geometry.Resolution.x;
     Frame.Properties.SizeY = This->mdscr.Geometry.Resolution.y;
