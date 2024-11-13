@@ -1,14 +1,12 @@
-# Set the minimum required version of CMake
 cmake_minimum_required(VERSION 3.10)
 
-# Set the project name
-project(MyProject)
+project(fan_project)
 
 # Set the C++ standard
 set(CMAKE_CXX_STANDARD 20)
 
 # Add the include directories
-include_directories(../ include/fan/ ./include/)
+include_directories(./)
 
 find_package(PkgConfig REQUIRED)
 
@@ -27,89 +25,98 @@ link_libraries(${GTK3_LIBRARIES})
 set(CMAKE_CXX_COMPILER "clang++")
 
 # Set the source files and output
-set(MAIN ecps_client.cpp)
+if(NOT DEFINED MAIN)
+	set(MAIN ecps_client.cpp)
+endif()
 set(OUTPUT ecps_client.exe)
 
 # Set the paths
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
-    set(ROOT_PATH "C:/libs/fan_release/include/fan/")
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-    set(ROOT_PATH "/home/arch/k/git/fan/fan/")
+# Function to check if a directory exists
+function(check_directory_exists DIR)
+    if (EXISTS "${DIR}")
+        set(EXISTS TRUE PARENT_SCOPE)
+    else()
+        set(EXISTS FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+# Check for the fan directory in various locations
+if(NOT DEFINED ROOT_PATH)
+    set(SEARCH_PATHS "/usr/include/fan/" "/usr/local/include/fan/" "${CMAKE_SOURCE_DIR}/fan/")
+    
+    set(DIR_FOUND FALSE)
+    foreach(PATH ${SEARCH_PATHS})
+        check_directory_exists(${PATH})
+        if(EXISTS)
+            set(ROOT_PATH ${PATH})
+            set(DIR_FOUND TRUE)
+            break()
+        endif()
+    endforeach()
+    
+    if(NOT DIR_FOUND)
+        message(FATAL_ERROR "fan directory not found in any of the specified locations.")
+    endif()
 endif()
-
-
-set(LINK_PATH "lib/fan/")
-
-# Set the precompiled header file
-set(PCH_NAME "pch.h")
 
 set(ENABLE_IMGUI ON)
 
-# Set the compiler flags
-set(CMAKE_CXX_FLAGS "-w -ferror-limit=2 -I ${ROOT_PATH} -I ${ROOT_PATH}/../ ${CMAKE_CXX_FLAGS} -I . -I .. -g -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
+set(CMAKE_CXX_FLAGS "-Winvalid-pch -w ${CMAKE_CXX_FLAGS} -I ${CMAKE_CURRENT_SOURCE_DIR}/${ROOT_PATH}../ -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
 set(DEBUG_FLAGS "-g")
-set(RELEASE_FLAGS "-s -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
+set(RELEASE_FLAGS "-s -mmmx -msse -msse2 -msse3 -mssse3 -msse4 -msse4.1 -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold")
 
 if(ENABLE_IMGUI)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_assimp -Dloco_imgui -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM -DIMGUI_DEFINE_MATH_OPERATORS")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_imgui -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM -DIMGUI_DEFINE_MATH_OPERATORS")
 endif()
 
 # loco_json
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_json")
 
-# Add the definitions
-add_definitions(-DFAN_INCLUDE_PATH=${WINDOWS_ROOT_PATH})
-
 message("Root path is: ${ROOT_PATH}")
 
-file(GLOB_RECURSE SOURCES "${ROOT_PATH}/*.cpp" "${ROOT_PATH}/*.c")
+if(DEFINED BUILD_FAN)
+	file(GLOB_RECURSE SOURCES "${ROOT_PATH}/*.cpp" "${ROOT_PATH}/*.c")
+	# Separate the ImGui sources
+	file(GLOB_RECURSE IMGUI_SOURCES "${ROOT_PATH}/imgui/*.cpp" "${ROOT_PATH}/imgui/*.c")
 
-# Separate the ImGui sources
-file(GLOB_RECURSE IMGUI_SOURCES "${ROOT_PATH}/imgui/*.cpp" "${ROOT_PATH}/imgui/*.c")
+	# Separate the nativefiledialog sources
+	file(GLOB_RECURSE NFD_SOURCES "${ROOT_PATH}/nativefiledialog/*.cpp" "${ROOT_PATH}/nativefiledialog/*.c")
 
-# Separate the nativefiledialog sources
-file(GLOB_RECURSE NFD_SOURCES "${ROOT_PATH}/nativefiledialog/*.cpp" "${ROOT_PATH}/nativefiledialog/*.c")
+	# Separate the fmt sources
+	set(FMT_SOURCES "${ROOT_PATH}/fmt.h" "${ROOT_PATH}/fmt.cpp")
 
-# Separate the fmt sources
-set(FMT_SOURCES "${ROOT_PATH}/fmt.h" "${ROOT_PATH}/fmt.cpp")
+	# Remove the ImGui, nativefiledialog and fmt sources from the SOURCES variable
+	list(REMOVE_ITEM SOURCES ${IMGUI_SOURCES} ${NFD_SOURCES} ${FMT_SOURCES})
 
-# Remove the ImGui, nativefiledialog and fmt sources from the SOURCES variable
-list(REMOVE_ITEM SOURCES ${IMGUI_SOURCES} ${NFD_SOURCES} ${FMT_SOURCES})
+	list(FILTER NFD_SOURCES EXCLUDE REGEX "nfd_zenity.c")
+	list(REMOVE_ITEM SOURCES "nfd_zenity.c")
 
-list(FILTER NFD_SOURCES EXCLUDE REGEX "nfd_zenity.c")
-list(REMOVE_ITEM SOURCES "nfd_zenity.c")
-
-# Set different compiler flags for the ImGui, nativefiledialog and fmt sources
-set_source_files_properties(${IMGUI_SOURCES} ${NFD_SOURCES} ${FMT_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-everything -Wno-format-truncation")
-
-list(FILTER SOURCES EXCLUDE REGEX "${ROOT_PATH}/fmt.cpp")
-
-# Compile all source files into object files
-add_library(fan OBJECT ${SOURCES})
-
-# Compile ImGui, nativefiledialog and fmt source files into separate object libraries
-# add_library(fan_imgui OBJECT ${IMGUI_SOURCES})
-add_library(fan_nfd OBJECT ${NFD_SOURCES})
-add_library(fan_fmt OBJECT ${FMT_SOURCES})
-
-# Add the executable
-add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan> $<TARGET_OBJECTS:fan_nfd> $<TARGET_OBJECTS:fan_fmt>)
-
-# Conditionally set the libraries based on the platform
-if(WIN32)
-    # On Windows, use the precompiled .lib files
-    link_directories(${CMAKE_SOURCE_DIR}/lib)
-    target_link_libraries(${OUTPUT} fan)
-else()
-    # On Linux, use the system libraries
-    target_link_libraries(${OUTPUT} ${CMAKE_CURRENT_SOURCE_DIR}/lib/fan/libimgui.a ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw)
+	list(FILTER SOURCES EXCLUDE REGEX "${ROOT_PATH}/fmt.cpp")
+	
+	message("Sources are: ${SOURCES}")
+	
+	add_library(fan OBJECT ${SOURCES})
+	add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan>)
 endif()
 
-# Tell CMake where to find the libraries
-link_directories(${CMAKE_SOURCE_DIR}/lib)
+message("Main is: ${MAIN}")
 
-# Link the libraries
-target_link_libraries(${OUTPUT} fan)
+if(NOT DEFINED BUILD_FAN)
+	add_executable(${OUTPUT} ${MAIN})
+endif()
+
+if(WIN32)
+    message("Windows back-end undone.")
+else()
+	file(GLOB FAN_LIBS "/usr/local/lib/fan/*.a")
+	if(DEFINED BUILD_FAN)
+		list(FILTER FAN_LIBS EXCLUDE REGEX ".*fan.a$")
+	endif()
+    # On Linux, use the system libraries
+    target_link_libraries(${OUTPUT} ${FAN_LIBS} ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw)
+endif()
+
+link_directories(${CMAKE_SOURCE_DIR}/lib)
