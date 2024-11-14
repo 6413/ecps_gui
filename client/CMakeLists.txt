@@ -59,7 +59,7 @@ if(NOT DEFINED ROOT_PATH)
     endif()
 endif()
 
-set(ENABLE_IMGUI ON)
+set(ENABLE_IMGUI OFF)
 
 set(CMAKE_CXX_FLAGS "-Winvalid-pch -w ${CMAKE_CXX_FLAGS} -I ${CMAKE_CURRENT_SOURCE_DIR}/${ROOT_PATH}../ -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
 set(DEBUG_FLAGS "-g")
@@ -73,7 +73,7 @@ if(ENABLE_IMGUI)
 endif()
 
 # loco_json
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_json")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 message("Root path is: ${ROOT_PATH}")
 

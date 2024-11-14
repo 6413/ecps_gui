@@ -1,7 +1,7 @@
 #include <WITCH/WITCH.h>
 #include <WITCH/STR/psh.h>
 
-#include <fan/types/types.h>
+#define fan_vector_simple
 #include <fan/types/vector.h>
 
 #include "../common.h"
@@ -176,23 +176,23 @@ struct pile_t{
 pile_t *g_pile;
 
 Protocol_SessionID_t::Protocol_SessionID_t(auto p){
-  static_assert(std::is_same<decltype(p), SessionList_NodeReference_t>::value);
+  static_assert(__is_type_same<decltype(p), SessionList_NodeReference_t>);
   *this = *(decltype(this))&p;
 }
 Protocol_SessionID_t::Protocol_SessionID_t(
   auto ChannelID,
   auto ChannelSessionID
 ){
-  static_assert(std::is_same<decltype(ChannelID), Protocol_ChannelID_t>::value);
-  static_assert(std::is_same<decltype(ChannelSessionID), Protocol_ChannelSessionID_t>::value);
+  static_assert(__is_type_same<decltype(ChannelID), Protocol_ChannelID_t>);
+  static_assert(__is_type_same<decltype(ChannelSessionID), Protocol_ChannelSessionID_t>);
   *this = *(decltype(this))&g_pile->ChannelList[ChannelID].SessionList[ChannelSessionID].SessionID;
 }
 Protocol_ChannelID_t::Protocol_ChannelID_t(auto p){
-  static_assert(std::is_same<decltype(p), ChannelList_NodeReference_t>::value);
+  static_assert(__is_type_same<decltype(p), ChannelList_NodeReference_t>);
   *this = *(decltype(this))&p;
 }
 Protocol_ChannelSessionID_t::Protocol_ChannelSessionID_t(auto p){
-  static_assert(std::is_same<decltype(p), ChannelSessionList_NodeReference_t>::value);
+  static_assert(__is_type_same<decltype(p), ChannelSessionList_NodeReference_t>);
   *this = *(decltype(this))&p;
 }
 
