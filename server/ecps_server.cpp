@@ -5,7 +5,7 @@ void
 UDP_send(
   Protocol_SessionID_t SessionID,
   uint32_t ID,
-  T ProtocolUDP::S2C_t::* Command,
+  const T& Command,
   typename T::dt CommandData,
   const void *data,
   IO_size_t size
@@ -16,7 +16,7 @@ UDP_send(
   BasePacket->SessionID = SessionID;
   BasePacket->ID = ID;
   BasePacket->IdentifySecret = 0;
-  BasePacket->Command = ProtocolUDP::S2C.AN(Command);
+  BasePacket->Command = Command;
   auto CommandDataPacket = (typename T::dt *)&BasePacket[1];
   *CommandDataPacket = CommandData;
   auto RestPacket = (uint8_t *)CommandDataPacket + T().m_DSS;
@@ -286,28 +286,28 @@ void evio_udp_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       return;
     }
     Session->UDP.LastInvalidIdentifyAt = CurrentTime;
-    Protocol_S2C_t::InformInvalidIdentify_t::dt rest;
+    Protocol_S2C_t::InformInvalidIdentify_t rest;
     rest.ClientIdentify = BasePacket->IdentifySecret;
     rest.ServerIdentify = Session->UDP.IdentifySecret;
     Session::WriteCommand(
       SessionID,
       0,
-      Protocol_S2C_t::AN(&Protocol_S2C_t::InformInvalidIdentify),
+      Protocol_S2C_t().InformInvalidIdentify,
       rest);
     return;
   }
 
   switch(BasePacket->Command){
-    case ProtocolUDP::C2S.AN(&ProtocolUDP::C2S_t::KeepAlive):{
+    case ProtocolUDP::C2S_t().KeepAlive:{
 
       g_pile->SessionList[SessionID].UDP.Address = dstaddr;
 
-      UDP_send(BasePacket->SessionID, 0, &ProtocolUDP::S2C_t::KeepAlive, {}, 0, 0);
+      UDP_send(BasePacket->SessionID, 0, ProtocolUDP::S2C_t().KeepAlive, {}, 0, 0);
 
       break;
     }
-    case ProtocolUDP::C2S.AN(&ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData):{
-      auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t::dt *)&BasePacket[1];
+    case ProtocolUDP::C2S_t().Channel_ScreenShare_Host_StreamData:{
+      auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t *)&BasePacket[1];
       IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
       if(RestPacketSize < sizeof(*RestPacket)){
         break;

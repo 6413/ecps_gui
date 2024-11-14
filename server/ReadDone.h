@@ -1,13 +1,13 @@
-case Protocol_C2S_t::AN(&Protocol_C2S_t::KeepAlive):{
+case Protocol_C2S_t().KeepAlive:{
   TCP_WriteCommand(
     peer,
     BasePacket->ID,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::KeepAlive));
+    Protocol_S2C_t().KeepAlive);
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Request_Login):{
-  auto Request = (Protocol_C2S_t::Request_Login_t::dt *)RestPacket;
+case Protocol_C2S_t().Request_Login:{
+  auto Request = (Protocol_C2S_t::Request_Login_t *)RestPacket;
 
   if(Session->AccountID != Protocol_AccountID_t::GetInvalid()){
     /* double login */
@@ -24,27 +24,27 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Request_Login):{
     }
   }
 
-  Protocol_S2C_t::Response_Login_t::dt rest;
+  Protocol_S2C_t::Response_Login_t rest;
   rest.AccountID = Session->AccountID;
   rest.SessionID = SessionID;
 
   TCP_WriteCommand(
     peer,
     BasePacket->ID,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::Response_Login),
+    Protocol_S2C_t().Response_Login,
     rest);
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::CreateChannel):{
-  auto Request = (Protocol_C2S_t::CreateChannel_t::dt *)RestPacket;
+case Protocol_C2S_t().CreateChannel:{
+  auto Request = (Protocol_C2S_t::CreateChannel_t *)RestPacket;
   if(Request->Type >= Protocol::ChannelType_Amount){
-    Protocol_S2C_t::JoinChannel_Error_t::dt rest;
+    Protocol_S2C_t::JoinChannel_Error_t rest;
     rest.Reason = Protocol::JoinChannel_Error_Reason_t::InvalidChannelType;
     TCP_WriteCommand(
       peer,
       BasePacket->ID,
-      Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_Error),
+      Protocol_S2C_t().CreateChannel_Error,
       rest);
     goto StateDone_gt;
   }
@@ -59,7 +59,7 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::CreateChannel):{
         ChannelID,
         SessionID,
         &ChannelSessionID);
-      if(CI != Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK)){
+      if(CI != Protocol_S2C_t().JoinChannel_OK){
         /* why */
         PR_abort();
       }
@@ -72,7 +72,7 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::CreateChannel):{
   }
 
   {
-    Protocol_S2C_t::JoinChannel_OK_t::dt jc;
+    Protocol_S2C_t::JoinChannel_OK_t jc;
     jc.Type = Protocol::ChannelType_ScreenShare_e;
     jc.ChannelID = ChannelID;
     jc.ChannelSessionID = ChannelSessionID;
@@ -80,24 +80,24 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::CreateChannel):{
     TCP_WriteCommand(
       peer,
       BasePacket->ID,
-      Protocol_S2C_t::AN(&Protocol_S2C_t::CreateChannel_OK),
+      Protocol_S2C_t().CreateChannel_OK,
       jc);
   }
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::JoinChannel):{
+case Protocol_C2S_t().JoinChannel:{
 
-  auto Request = (Protocol_C2S_t::JoinChannel_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::JoinChannel_t *)RestPacket;
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
 
   if(IsChannelInvalid(ChannelID) == true){
-    Protocol_S2C_t::JoinChannel_Error_t::dt rest;
+    Protocol_S2C_t::JoinChannel_Error_t rest;
     rest.Reason = Protocol::JoinChannel_Error_Reason_t::InvalidChannelID;
     TCP_WriteCommand(
       peer,
       BasePacket->ID,
-      Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_Error),
+      Protocol_S2C_t().JoinChannel_Error,
       rest);
     goto StateDone_gt;
   }
@@ -110,7 +110,7 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::JoinChannel):{
         ChannelID,
         SessionID,
         &ChannelSessionID);
-      if(CI != Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK)){
+      if(CI != Protocol_S2C_t().JoinChannel_OK){
         TCP_WriteCommand(peer, BasePacket->ID, CI);
         goto StateDone_gt;
       }
@@ -120,14 +120,14 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::JoinChannel):{
   }
 
   {
-    Protocol_S2C_t::JoinChannel_OK_t::dt jc;
+    Protocol_S2C_t::JoinChannel_OK_t jc;
     jc.Type = Protocol::ChannelType_ScreenShare_e;
     jc.ChannelID = ChannelID;
     jc.ChannelSessionID = ChannelSessionID;
     TCP_WriteCommand(
       peer,
       BasePacket->ID,
-      Protocol_S2C_t::AN(&Protocol_S2C_t::JoinChannel_OK),
+      Protocol_S2C_t().JoinChannel_OK,
       jc);
   }
 
@@ -135,14 +135,14 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::JoinChannel):{
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::QuitChannel):{
+case Protocol_C2S_t().QuitChannel:{
   /* not implemented yet */
   PR_abort();
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag):{
+case Protocol_C2S_t().Channel_ScreenShare_Share_InformationToViewSetFlag:{
 
-  auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   if(IsChannelInvalid(ChannelID) == true){
@@ -158,9 +158,9 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_Share_InformationTo
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate):{
+case Protocol_C2S_t().Channel_ScreenShare_Share_InformationToViewMouseCoordinate:{
 
-  auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMouseCoordinate_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   if(IsChannelInvalid(ChannelID) == true){
@@ -181,22 +181,22 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_Share_InformationTo
       continue;
     }
 
-    Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMouseCoordinate_t::dt Payload;
+    Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMouseCoordinate_t Payload;
     Payload.ChannelID = ChannelID;
     Payload.pos = Request->pos;
 
     Session::WriteCommand(
       n->data.SessionID,
       0,
-      Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMouseCoordinate),
+      Protocol_S2C_t().Channel_ScreenShare_View_InformationToViewMouseCoordinate,
       Payload);
   }
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate):{
+case Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostMouseCoordinate:{
 
-  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   if(IsChannelInvalid(ChannelID) == true){
@@ -208,21 +208,21 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMou
     goto StateDone_gt;
   }
 
-  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate_t::dt Payload;
+  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate_t Payload;
   Payload.ChannelID = ChannelID;
   Payload.pos = Request->pos;
 
   Session::WriteCommand(
     ChannelData->HostSessionID,
     0,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate),
+    Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseCoordinate,
     Payload);
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion):{
+case Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostMouseMotion:{
 
-  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   if(IsChannelInvalid(ChannelID) == true){
@@ -234,21 +234,21 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMou
     goto StateDone_gt;
   }
 
-  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion_t::dt Payload;
+  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion_t Payload;
   Payload.ChannelID = ChannelID;
   Payload.Motion = Request->Motion;
 
   Session::WriteCommand(
     ChannelData->HostSessionID,
     0,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion),
+    Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseMotion,
     Payload);
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton):{
+case Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostMouseButton:{
 
-  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   if(IsChannelInvalid(ChannelID) == true){
@@ -260,7 +260,7 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMou
     goto StateDone_gt;
   }
 
-  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton_t::dt Payload;
+  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton_t Payload;
   Payload.ChannelID = ChannelID;
   Payload.key = Request->key;
   Payload.state = Request->state;
@@ -269,14 +269,14 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMou
   Session::WriteCommand(
     ChannelData->HostSessionID,
     0,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton),
+    Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseButton,
     Payload);
 
   goto StateDone_gt;
 }
-case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard):{
+case Protocol_C2S_t().Channel_ScreenShare_View_ApplyToHostKeyboard:{
 
-  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard_t::dt *)RestPacket;
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
   if(IsChannelInvalid(ChannelID) == true){
@@ -288,7 +288,7 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKey
     goto StateDone_gt;
   }
 
-  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t::dt Payload;
+  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t Payload;
   Payload.ChannelID = ChannelID;
   Payload.Scancode = Request->Scancode;
   Payload.State = Request->State;
@@ -296,7 +296,7 @@ case Protocol_C2S_t::AN(&Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKey
   Session::WriteCommand(
     ChannelData->HostSessionID,
     0,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard),
+    Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostKeyboard,
     Payload);
 
   goto StateDone_gt;

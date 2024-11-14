@@ -69,13 +69,13 @@ Channel_KickSession(
   auto ChannelSession = &Channel->SessionList[ChannelSessionID];
   auto Session = &g_pile->SessionList[ChannelSession->SessionID];
 
-  Protocol_S2C_t::KickedFromChannel_t::dt rest;
+  Protocol_S2C_t::KickedFromChannel_t rest;
   rest.ChannelID = ChannelID;
   rest.Reason = Reason;
   TCP_WriteCommand(
     Session->TCP.peer,
     0,
-    Protocol_S2C_t::AN(&Protocol_S2C_t::KickedFromChannel),
+    Protocol_S2C_t().KickedFromChannel,
     rest);
 
   Session->ChannelList.unlrec(ChannelSession->SessionChannelID);
