@@ -1,4 +1,4 @@
-case Protocol_S2C_t().InformInvalidIdentify:{
+case Protocol_S2C_t::InformInvalidIdentify:{
   auto Request = (Protocol_S2C_t::InformInvalidIdentify_t *)RestPacket;
 
   if(Request->ClientIdentify != g_pile->UDP.IdentifySecret){
@@ -10,7 +10,7 @@ case Protocol_S2C_t().InformInvalidIdentify:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().CreateChannel_OK:{
+case Protocol_S2C_t::CreateChannel_OK:{
   auto Request = (Protocol_S2C_t::CreateChannel_OK_t *)RestPacket;
 
   /* TODO check IDMap even before this file to prevent code spam */
@@ -35,7 +35,7 @@ case Protocol_S2C_t().CreateChannel_OK:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().CreateChannel_Error:{
+case Protocol_S2C_t::CreateChannel_Error:{
   auto Request = (Protocol_S2C_t::CreateChannel_Error_t *)RestPacket;
 
   /* TODO check IDMap even before this file to prevent code spam */
@@ -51,7 +51,7 @@ case Protocol_S2C_t().CreateChannel_Error:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().JoinChannel_OK:{
+case Protocol_S2C_t::JoinChannel_OK:{
   auto Request = (Protocol_S2C_t::JoinChannel_OK_t *)RestPacket;
 
   /* TODO check IDMap even before this file to prevent similar code spam */
@@ -79,7 +79,7 @@ case Protocol_S2C_t().JoinChannel_OK:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().JoinChannel_Error:{
+case Protocol_S2C_t::JoinChannel_Error:{
   auto Request = (Protocol_S2C_t::JoinChannel_Error_t *)RestPacket;
 
   /* TODO check IDMap even before this file to prevent code spam */
@@ -95,7 +95,7 @@ case Protocol_S2C_t().JoinChannel_Error:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().Channel_ScreenShare_View_InformationToViewSetFlag:{
+case Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewSetFlag:{
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewSetFlag_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
@@ -123,7 +123,7 @@ case Protocol_S2C_t().Channel_ScreenShare_View_InformationToViewSetFlag:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().Channel_ScreenShare_View_InformationToViewMouseCoordinate:{
+case Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMouseCoordinate:{
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMouseCoordinate_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
@@ -161,7 +161,7 @@ case Protocol_S2C_t().Channel_ScreenShare_View_InformationToViewMouseCoordinate:
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseCoordinate:{
+case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate:{
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
@@ -196,7 +196,7 @@ case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseCoordinate:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseMotion:{
+case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion:{
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
@@ -231,7 +231,7 @@ case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseMotion:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseButton:{
+case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton:{
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
@@ -274,7 +274,7 @@ case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostMouseButton:{
 
   goto StateDone_gt;
 }
-case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostKeyboard:{
+case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard:{
   auto Request = (Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
@@ -315,8 +315,7 @@ case Protocol_S2C_t().Channel_ScreenShare_Share_ApplyToHostKeyboard:{
   goto StateDone_gt;
 }
 default:{
-  //WriteInformation("unknown read came %lx:%s\n", BasePacket->Command, ((__dme_t<> *)&Protocol_S2C)[BasePacket->Command].sn);
-  WriteInformation("unknown read came %lx:%s\n", BasePacket->Command, Protocol_S2C_t().NA(BasePacket->Command)->sn);
+  WriteInformation("unknown read came %lx:%s\n", BasePacket->Command, Protocol_S2C.NA(BasePacket->Command)->sn);
   PR_abort();
   goto StateDone_gt;
 }

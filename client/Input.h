@@ -76,7 +76,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
 
         TCP_WriteCommand(
           ID,
-          Protocol_C2S_t().CreateChannel,
+          Protocol_C2S_t::CreateChannel,
           rest);
         WriteInformation("[CLIENT] CreateChannel request ID %lx\n", ID);
       }
@@ -107,7 +107,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
 
         TCP_WriteCommand(
           ID,
-          Protocol_C2S_t().JoinChannel,
+          Protocol_C2S_t::JoinChannel,
           rest);
       }
       else if(CompareCommand(Input, &iCommand, InputSize, "Channel")){

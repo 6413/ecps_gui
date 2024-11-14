@@ -1,4 +1,4 @@
-case Protocol_S2C_t().Response_Login:{
+case Protocol_S2C_t::Response_Login:{
   auto Request = (Protocol_S2C_t::Response_Login_t *)RestPacket;
 
   /* TODO check IDMap even before this file to prevent code spam */

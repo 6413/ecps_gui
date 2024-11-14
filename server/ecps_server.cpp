@@ -6,7 +6,7 @@ UDP_send(
   Protocol_SessionID_t SessionID,
   uint32_t ID,
   const T& Command,
-  typename T::dt CommandData,
+  T CommandData,
   const void *data,
   IO_size_t size
 ){
@@ -17,11 +17,11 @@ UDP_send(
   BasePacket->ID = ID;
   BasePacket->IdentifySecret = 0;
   BasePacket->Command = Command;
-  auto CommandDataPacket = (typename T::dt *)&BasePacket[1];
+  auto CommandDataPacket = (T *)&BasePacket[1];
   *CommandDataPacket = CommandData;
-  auto RestPacket = (uint8_t *)CommandDataPacket + T().m_DSS;
+  auto RestPacket = (uint8_t *)CommandDataPacket + T::dss;
   MEM_copy(data, RestPacket, size);
-  uint16_t TotalSize = sizeof(ProtocolUDP::BasePacket_t) + T().m_DSS + size;
+  uint16_t TotalSize = sizeof(ProtocolUDP::BasePacket_t) + T::dss + size;
   IO_ssize_t r = NET_sendto(&g_pile->udp, buffer, TotalSize, &Session->UDP.Address);
   if(r != TotalSize){
     WriteInformation("[INTERNAL ERROR] NET_sendto failed. wanted %x got %x\r\n", TotalSize, r);
@@ -292,21 +292,21 @@ void evio_udp_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
     Session::WriteCommand(
       SessionID,
       0,
-      Protocol_S2C_t().InformInvalidIdentify,
+      Protocol_S2C_t::InformInvalidIdentify,
       rest);
     return;
   }
 
   switch(BasePacket->Command){
-    case ProtocolUDP::C2S_t().KeepAlive:{
+    case ProtocolUDP::C2S_t::KeepAlive:{
 
       g_pile->SessionList[SessionID].UDP.Address = dstaddr;
 
-      UDP_send(BasePacket->SessionID, 0, ProtocolUDP::S2C_t().KeepAlive, {}, 0, 0);
+      UDP_send(BasePacket->SessionID, 0, ProtocolUDP::S2C_t::KeepAlive, {}, 0, 0);
 
       break;
     }
-    case ProtocolUDP::C2S_t().Channel_ScreenShare_Host_StreamData:{
+    case ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData:{
       auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t *)&BasePacket[1];
       IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
       if(RestPacketSize < sizeof(*RestPacket)){

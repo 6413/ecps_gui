@@ -75,7 +75,7 @@ Channel_KickSession(
   TCP_WriteCommand(
     Session->TCP.peer,
     0,
-    Protocol_S2C_t().KickedFromChannel,
+    Protocol_S2C_t::KickedFromChannel,
     rest);
 
   Session->ChannelList.unlrec(ChannelSession->SessionChannelID);

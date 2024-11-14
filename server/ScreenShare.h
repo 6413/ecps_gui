@@ -12,7 +12,7 @@ ScreenShare_AddPeer
       auto n = Channel->SessionList.GetNodeByReference(nr);
       if(n->data.SessionID == SessionID){
         *ResultNR = nr;
-        return Protocol_S2C_t().JoinChannel_OK;
+        return Protocol_S2C_t::JoinChannel_OK;
       }
       nr = n->NextNodeReference;
     }
@@ -32,7 +32,7 @@ ScreenShare_AddPeer
   SessionChannel->ChannelSessionID = ChannelSessionID;
 
   *ResultNR = ChannelSessionID;
-  return Protocol_S2C_t().JoinChannel_OK;
+  return Protocol_S2C_t::JoinChannel_OK;
 }
 
 bool
@@ -96,7 +96,7 @@ ScreenShare_StreamPacket
     }
     ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t cd;
     cd.ChannelID = ChannelID;
-    UDP_send(n->data.SessionID, 0, ProtocolUDP::S2C_t().Channel_ScreenShare_View_StreamData, cd, Data, DataSize);
+    UDP_send(n->data.SessionID, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData, cd, Data, DataSize);
   }
 }
 
@@ -114,7 +114,7 @@ ScreenShare_SendFlagTo(
   Session::WriteCommand(
     SessionID,
     0,
-    Protocol_S2C_t().Channel_ScreenShare_View_InformationToViewSetFlag,
+    Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewSetFlag,
     rest);
 }
 
