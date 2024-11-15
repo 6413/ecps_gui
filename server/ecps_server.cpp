@@ -215,7 +215,7 @@ void ProcessInput(uint8_t *Input, uintptr_t InputSize){
   }
 }
 
-bool IsInputLineDone(uint8_t **buffer, IO_ssize_t *size){
+bool IsInputLineDone(uint8_t **buffer, uintptr_t *size){
   for(uintptr_t i = 0; i < *size; i++){
     if((*buffer)[i] == 0x7f || (*buffer)[i] == 0x08){
       if(g_pile->InputSize){
@@ -248,7 +248,7 @@ void evio_stdin_cb(EV_t *listener, EV_event_t *evio_stdin, uint32_t flag){
     PR_abort();
   }
   while(1){
-    if(!IsInputLineDone(&buffer, &size)){
+    if(!IsInputLineDone(&buffer, (uintptr_t *)&size)){
       return;
     }
     ProcessInput(g_pile->Input, g_pile->InputSize);
@@ -269,7 +269,7 @@ void evio_udp_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
     PR_abort();
   }
 
-  if(size < sizeof(ProtocolUDP::BasePacket_t)){
+  if((uintptr_t)size < sizeof(ProtocolUDP::BasePacket_t)){
     WriteInformation("invalid packet came\n");
     return;
   }
