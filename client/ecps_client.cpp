@@ -369,7 +369,7 @@ bool GetNextArgument(const uint8_t *Command, uintptr_t *iCommand, uintptr_t Comm
 
 #include "Input.h"
 
-bool IsInputLineDone(uint8_t **buffer, IO_ssize_t *size){
+bool IsInputLineDone(uint8_t **buffer, uintptr_t *size){
   for(uintptr_t i = 0; i < *size; i++){
     if((*buffer)[i] == 0x7f || (*buffer)[i] == 0x08){
       if(g_pile->InputSize){
@@ -398,10 +398,10 @@ void evio_stdin_cb(EV_t *listener, EV_event_t *evio_stdin, uint32_t flag){
   EV_event_get_fd(evio_stdin, &fd);
   size = IO_read(&fd, buffer, sizeof(_buffer));
   if(size < 0){
-    PR_abort();
+    __abort();
   }
   while(1){
-    if(!IsInputLineDone(&buffer, &size)){
+    if(!IsInputLineDone(&buffer, (uintptr_t *)&size)){
       return;
     }
     ProcessInput(g_pile->Input, g_pile->InputSize);
@@ -434,7 +434,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
     PR_abort();
   }
 
-  if(size < sizeof(ProtocolUDP::BasePacket_t)){
+  if((uintptr_t)size < sizeof(ProtocolUDP::BasePacket_t)){
     return;
   }
   auto BasePacket = (ProtocolUDP::BasePacket_t *)buffer;
@@ -443,7 +443,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
     return;
   }
 
-  IO_ssize_t RelativeSize = size - sizeof(*BasePacket);
+  uintptr_t RelativeSize = size - sizeof(*BasePacket);
   switch(BasePacket->Command){
     case ProtocolUDP::S2C_t::KeepAlive:{
 
@@ -498,7 +498,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       uint8_t *PacketData;
       uint16_t Current = Body->GetCurrent();
       if(Current == 0){
-        if(size < sizeof(ScreenShare_StreamHeader_Head_t)){
+        if((uintptr_t)size < sizeof(ScreenShare_StreamHeader_Head_t)){
           return;
         }
         if(View->m_Possible != (uint16_t)-1){

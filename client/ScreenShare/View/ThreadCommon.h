@@ -215,7 +215,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
           default:{
             /* not supported pixel format... at least yet.*/
             __abort();
-            break;
+            __unreachable();
           }
         }
         f32_t sx = (f32_t)Frame.Properties.SizeX / Frame.Properties.Stride[0];

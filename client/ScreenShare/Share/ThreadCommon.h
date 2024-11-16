@@ -257,7 +257,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     {
       uint64_t OneFrameTime = 1000000000 / This->EncoderSetting.Setting.InputFrameRate;
       uint64_t CTime = T_nowi();
-      sint64_t TimeDiff = CTime - FrameProcessStartTime;
+      uint64_t TimeDiff = CTime - FrameProcessStartTime;
       if(TimeDiff > OneFrameTime){
         FrameProcessStartTime = CTime;
       }

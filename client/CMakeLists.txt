@@ -14,7 +14,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 
 # Add GTK flags to the compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${GTK3_CFLAGS_OTHER}")
+string(APPEND CMAKE_CXX_FLAGS " ${GTK3_CFLAGS_OTHER}")
 
 # Add the GTK include directories
 include_directories(${GTK3_INCLUDE_DIRS})
@@ -61,7 +61,10 @@ endif()
 
 set(ENABLE_IMGUI OFF)
 
-set(CMAKE_CXX_FLAGS "-Winvalid-pch -w ${CMAKE_CXX_FLAGS} -I ${CMAKE_CURRENT_SOURCE_DIR}/${ROOT_PATH}../ -ferror-limit=4 -Wno-int-to-void-pointer-cast -Wno-unused-parameter -Wno-unused-function -Wno-shift-op-parentheses -Wno-unused-variable")
+string(APPEND CMAKE_CXX_FLAGS " -ferror-limit=4")
+string(APPEND CMAKE_CXX_FLAGS " -Wall -Wextra -Werror")
+string(APPEND CMAKE_CXX_FLAGS " -Wno-bitwise-op-parentheses -Wno-missing-field-initializers -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-variable")
+
 set(DEBUG_FLAGS "-g")
 set(RELEASE_FLAGS "-s -mmmx -msse -msse2 -msse3 -mssse3 -msse4 -msse4.1 -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
 
@@ -69,13 +72,8 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold")
 
 if(ENABLE_IMGUI)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Dloco_imgui -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM -DIMGUI_DEFINE_MATH_OPERATORS")
+    string(APPEND CMAKE_CXX_FLAGS " -Dloco_imgui -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM -DIMGUI_DEFINE_MATH_OPERATORS")
 endif()
-
-# loco_json
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-
-message("Root path is: ${ROOT_PATH}")
 
 if(DEFINED BUILD_FAN)
 	file(GLOB_RECURSE SOURCES "${ROOT_PATH}/*.cpp" "${ROOT_PATH}/*.c")
@@ -96,20 +94,18 @@ if(DEFINED BUILD_FAN)
 
 	list(FILTER SOURCES EXCLUDE REGEX "${ROOT_PATH}/fmt.cpp")
 	
-	message("Sources are: ${SOURCES}")
-	
 	add_library(fan OBJECT ${SOURCES})
 	add_executable(${OUTPUT} ${MAIN} $<TARGET_OBJECTS:fan>)
 endif()
 
-message("Main is: ${MAIN}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ../)
 
 if(NOT DEFINED BUILD_FAN)
 	add_executable(${OUTPUT} ${MAIN})
 endif()
 
 if(WIN32)
-    message("Windows back-end undone.")
+    message(FATAL_ERROR "Windows back-end undone.")
 else()
 	file(GLOB FAN_LIBS "/usr/local/lib/fan/*.a")
 	if(DEFINED BUILD_FAN)
