@@ -154,7 +154,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
           &ThreadDecode->Decoder,
           ETC_VEDC_Decoder_UniqueType_CudaContext);
         if(cuCtxSetCurrent(CudaContext) != CUDA_SUCCESS){
-          PR_abort();
+          __abort();
         }
 
         ETC_VEDC_Decoder_ImageProperties_t ImageProperties;
@@ -204,7 +204,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         WriteInformation(
           "[CLIENT] [WARNING] %s %s:%u fan doesnt support strides %lu %lu\r\n",
           __FUNCTION__, __FILE__, __LINE__, Frame.Properties.Stride[0], Frame.Properties.Stride[1]);
-        PR_abort();
+        __abort();
       }
 
       {
@@ -215,7 +215,6 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
           default:{
             /* not supported pixel format... at least yet.*/
             __abort();
-            __unreachable();
           }
         }
         f32_t sx = (f32_t)Frame.Properties.SizeX / Frame.Properties.Stride[0];
@@ -242,7 +241,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     {
       auto View = This->ThreadCommon->View.Mark();
       if(View == NULL){
-        PR_abort();
+        __abort();
       }
       auto ChannelFlag = View->m_ChannelFlag; /* TODO please be atomic */
       This->ThreadCommon->View.Unmark();
@@ -252,7 +251,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     {
       uint32_t we = This->loco.window.handle_events();
       if (glfwWindowShouldClose(This->loco.window.glfw_window)) {
-        PR_abort();
+        __abort();
       }
       This->HandleCursor();
       This->loco.process_loop();
@@ -281,7 +280,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
   {
     bool r = This->TexturePack.qti("cursor", &This->TextureCursor);
     if(r != 0){
-      PR_abort();
+      __abort();
     }
   }
   This->FrameRenderSize = 1;
@@ -295,7 +294,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
 
   EV_start(&This->ev);
 
-  PR_abort();
+  __abort();
 
   return 0;
 }
@@ -323,7 +322,7 @@ ThreadCommon_t(Channel_ScreenShare_View_t *p_View){
   {
     auto Decode = ThreadDecode.GetOrphanPointer();
     if(Decode != NULL){
-      PR_abort();
+      __abort();
     }
   }
 }

@@ -83,8 +83,7 @@ uint32_t TCPMain_read_cb(
     }
     default:{
       WriteError("*type %lx\r\n", *type);
-      PR_abort();
-      return 0; /* for no warning */
+      __abort();
     }
   }
   NET_TCP_UpdatePeerTimer(peer->parent->listener, peer->parent, peer);
@@ -245,7 +244,7 @@ void evio_stdin_cb(EV_t *listener, EV_event_t *evio_stdin, uint32_t flag){
   IO_ssize_t size;
   size = IO_read(&event_fd, buffer, sizeof(_buffer));
   if(size < 0){
-    PR_abort();
+    __abort();
   }
   while(1){
     if(!IsInputLineDone(&buffer, (uintptr_t *)&size)){
@@ -262,11 +261,11 @@ void evio_udp_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
   IO_ssize_t size = NET_recvfrom(&g_pile->udp, buffer, sizeof(buffer), &dstaddr);
   if(size < 0){
     WriteInformation("%lx\r\n", size);
-    PR_abort();
+    __abort();
   }
   if(size == sizeof(buffer)){
     WriteInformation("where is mtu for this packet??\r\n");
-    PR_abort();
+    __abort();
   }
 
   if((uintptr_t)size < sizeof(ProtocolUDP::BasePacket_t)){
@@ -350,7 +349,7 @@ int main(int argc, char **argv){
 
   if(NET_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &g_pile->udp) < 0){
     WriteInformation("%lx\r\n", g_pile->udp);
-    PR_abort();
+    __abort();
   }
 
   NET_addr_t udpaddr;
@@ -359,7 +358,7 @@ int main(int argc, char **argv){
   err = NET_bind(&g_pile->udp, &udpaddr);
   if(err){
     WriteInformation("%lx\r\n");
-    PR_abort();
+    __abort();
   }
 
   EV_event_t evio_udp;
@@ -379,7 +378,7 @@ int main(int argc, char **argv){
   err = NET_TCP_listen(g_pile->TCP);
   if(err){
     WriteInformation("listen error %ld\r\n", err);
-    PR_abort();
+    __abort();
   }
   EV_event_start(&g_pile->listener, &g_pile->TCP->ev);
 

@@ -191,7 +191,7 @@ TCPMain_state_cb(
     }
     WriteInformation("[CLIENT] connection dropped with %08lx%04lx\r\n", peer->sdstaddr.ip, peer->sdstaddr.port);
     /* good luck to clean */
-    PR_abort();
+    __abort();
   }while(0);
 
   return 0;
@@ -231,8 +231,7 @@ uint32_t TCPMain_read_cb(
     }
     default:{
       WriteError("*type %lx\r\n", *type);
-      PR_abort();
-      return 0; /* for no warning */
+      __abort();
     }
   }
   NET_TCP_UpdatePeerTimer(peer->parent->listener, peer->parent, peer);
@@ -418,7 +417,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       return;
     }
     WriteInformation("%x\n", size);
-    PR_abort();
+    __abort();
   }
   if(dstaddr.ip != g_pile->UDP.Address.ip || dstaddr.port != g_pile->UDP.Address.port){
     /* packet came from elsewhere */
@@ -431,7 +430,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
   }
   if(size == sizeof(buffer)){
     WriteInformation("where is mtu for this packet??\n");
-    PR_abort();
+    __abort();
   }
 
   if((uintptr_t)size < sizeof(ProtocolUDP::BasePacket_t)){
@@ -463,7 +462,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       {
         auto cc = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
         if(cc == NULL){
-          PR_abort();
+          __abort();
           return;
         }
         switch(cc->GetState()){
@@ -568,7 +567,7 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
 
     switch(BasePacket->Command){
       case ITC_Protocol_t::CloseChannel:{
-        PR_abort();
+        __abort();
         break;
       }
       case ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate:{
@@ -690,7 +689,7 @@ void InitAndRun(){
 
   if(NET_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &g_pile->UDP.udp) < 0){
     WriteInformation("udp socket rip\r\n");
-    PR_abort();
+    __abort();
   }
 
   EV_event_init_socket(&g_pile->UDP.ev_udp, &g_pile->UDP.udp, ev_udp_read_cb, EV_READ);

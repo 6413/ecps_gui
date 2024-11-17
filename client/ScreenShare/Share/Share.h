@@ -224,10 +224,10 @@ struct Channel_ScreenShare_Share_t{
     m_ChannelInfo.ChannelUnique = p_ChannelUnique;
 
     if(MD_Keyboard_open(&Keyboard) != MD_Keyboard_Error_Success){
-      PR_abort();
+      __abort();
     }
     if(MD_Mice_Open(&Mice) != MD_Mice_Error_Success){
-      PR_abort();
+      __abort();
     }
 
     ThreadCommon = new ThreadCommon_t(this);
@@ -238,6 +238,6 @@ struct Channel_ScreenShare_Share_t{
   }
   ~Channel_ScreenShare_Share_t(
   ){
-    PR_abort();
+    __abort();
   }
 };

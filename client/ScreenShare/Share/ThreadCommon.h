@@ -33,11 +33,11 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
   auto This = new ThreadFrame_t;
 
   if(MD_Mice_Open(&This->Mice) != MD_Mice_Error_Success){
-    PR_abort();
+    __abort();
   }
 
   if(MD_SCR_open(&This->mdscr) != 0){
-    PR_abort();
+    __abort();
   }
 
   ETC_VEDC_Encode_OpenNothing(&This->Encode);
@@ -66,7 +66,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         break;
       }
       else if(r != MD_Mice_Error_Success){
-        PR_abort();
+        __abort();
       }
 
       ITC_Protocol_t::Channel_ScreenShare_Share_MouseCoordinate_t dt;
@@ -98,7 +98,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         if(err != ETC_VEDC_Encode_Error_Success){
           WriteInformation("failed to open encoder (%lu)\r\n", err);
           /* TODO */
-          PR_abort();
+          __abort();
         }
       }
       else{
@@ -110,7 +110,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
             &EncoderSetting.Setting.RateControl);
           if(err != ETC_VEDC_Encode_Error_Success){
             /* TODO */
-            PR_abort();
+            __abort();
           }
         }
         if(This->EncoderSetting.Setting.InputFrameRate != EncoderSetting.Setting.InputFrameRate){
@@ -119,7 +119,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
             EncoderSetting.Setting.InputFrameRate);
           if(err != ETC_VEDC_Encode_Error_Success){
             /* TODO */
-            PR_abort();
+            __abort();
           }
         }
       }
@@ -147,7 +147,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         This->EncoderSetting.Setting.FrameSizeY);
       if(err != 0){
         /* TODO */
-        PR_abort();
+        __abort();
       }
     }
 
@@ -167,7 +167,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
       ETC_VEDC_Encode_Error err = ETC_VEDC_Encode_Write(&This->Encode, ETC_VEDC_Encode_WriteType_Frame, &Frame);
       if(err != ETC_VEDC_Encode_Error_Success){
         /* TODO */
-        PR_abort();
+        __abort();
       }
     }
 
@@ -199,7 +199,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         }
         if(rinread < 0){
           /* TODO */
-          PR_abort();
+          __abort();
         }
 
         uint8_t Flag = 0;
@@ -233,7 +233,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         }
         if(rinread < 0){
           /* TODO */
-          PR_abort();
+          __abort();
         }
 
         {
@@ -269,7 +269,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     }
   }
 
-  PR_abort();
+  __abort();
   ETC_VEDC_Encode_Close(&This->Encode);
   MD_SCR_close(&This->mdscr);
 

@@ -61,13 +61,13 @@ case Protocol_C2S_t::CreateChannel:{
         &ChannelSessionID);
       if(CI != Protocol_S2C_t::JoinChannel_OK){
         /* why */
-        PR_abort();
+        __abort();
       }
 
       break;
     }
     default:{
-      PR_abort();
+      __abort();
     }
   }
 
@@ -137,7 +137,7 @@ case Protocol_C2S_t::JoinChannel:{
 }
 case Protocol_C2S_t::QuitChannel:{
   /* not implemented yet */
-  PR_abort();
+  __abort();
   goto StateDone_gt;
 }
 case Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag:{

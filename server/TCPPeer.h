@@ -5,7 +5,7 @@ void Open(NET_TCP_peer_t *peer){
   auto PeerData = (TCPMain_PeerData_t *)NET_TCP_GetPeerData(peer, g_pile->extid);
 
   if(NET_TCP_MakePeerNoDelay(peer) != 0){
-    PR_abort();
+    __abort();
   }
   NET_TCP_StartReadLayer(peer, SockData->ReadLayerID);
 

@@ -247,7 +247,7 @@ static void Keys_cb(const fan::window_t::keyboard_keys_cb_data_t &p){
   if(!!(p.scancode & 0xff00) && !(p.scancode & 0x00ff)){
     /* TODO this is evil for network */
     /* does fan standard prevent it? */
-    PR_abort();
+    __abort();
   }
 
   ITC_Protocol_t::Channel_ScreenShare_View_KeyboardKey_t Payload;

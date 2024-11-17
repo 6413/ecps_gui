@@ -16,7 +16,7 @@ case Protocol_S2C_t::CreateChannel_OK:{
   /* TODO check IDMap even before this file to prevent code spam */
   /* TODO check if that id was for create channel */
   if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
-    PR_abort();
+    __abort();
     goto StateDone_gt;
   }
   IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
@@ -41,7 +41,7 @@ case Protocol_S2C_t::CreateChannel_Error:{
   /* TODO check IDMap even before this file to prevent code spam */
   /* TODO check if that id was for create channel */
   if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
-    PR_abort();
+    __abort();
     goto StateDone_gt;
   }
   IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
@@ -57,7 +57,7 @@ case Protocol_S2C_t::JoinChannel_OK:{
   /* TODO check IDMap even before this file to prevent similar code spam */
   /* TODO check if that id was for create channel and check if channelid is right */
   if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
-    PR_abort();
+    __abort();
     goto StateDone_gt;
   }
   IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
@@ -85,7 +85,7 @@ case Protocol_S2C_t::JoinChannel_Error:{
   /* TODO check IDMap even before this file to prevent code spam */
   /* TODO check if that id was for create channel */
   if(IDMap_DoesInputExists(&g_pile->TCP.IDMap, &BasePacket->ID) == false){
-    PR_abort();
+    __abort();
     goto StateDone_gt;
   }
   IDMap_Remove(&g_pile->TCP.IDMap, &BasePacket->ID);
@@ -190,7 +190,7 @@ case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate:{
   {
     MD_Mice_Error err = MD_Mice_Coordinate_Write(&Share->Mice, Request->pos.x, Request->pos.y);
     if(err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary){
-      PR_abort();
+      __abort();
     }
   }
 
@@ -225,7 +225,7 @@ case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion:{
   {
     MD_Mice_Error err = MD_Mice_Motion_Write(&Share->Mice, Request->Motion.x, Request->Motion.y);
     if(err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary){
-      PR_abort();
+      __abort();
     }
   }
 
@@ -261,13 +261,13 @@ case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton:{
     if(Request->pos != fan::vec2i(-1)){
       MD_Mice_Error err = MD_Mice_Coordinate_Write(&Share->Mice, Request->pos.x, Request->pos.y);
       if(err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary){
-        PR_abort();
+        __abort();
       }
     }
     {
       MD_Mice_Error err = MD_Mice_Button_Write(&Share->Mice, Request->key, Request->state);
       if(err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary){
-        PR_abort();
+        __abort();
       }
     }
   }
@@ -308,7 +308,7 @@ case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard:{
         __FUNCTION__, __FILE__, __LINE__);
     }
     else if(err != MD_Keyboard_Error_Success && err != MD_Keyboard_Error_Temporary){
-      PR_abort();
+      __abort();
     }
   }
 
@@ -316,6 +316,6 @@ case Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard:{
 }
 default:{
   WriteInformation("unknown read came %lx:%s\n", BasePacket->Command, Protocol_S2C.NA(BasePacket->Command)->sn);
-  PR_abort();
+  __abort();
   goto StateDone_gt;
 }
