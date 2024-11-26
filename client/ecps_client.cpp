@@ -1,16 +1,13 @@
-#undef loco_imgui
-#undef loco_json
-#define loco_no_stb
 #include <fan/graphics/loco.h>
 #include <WITCH/WITCH.h>
 #define ETC_VEDC_Encode_DefineEncoder_OpenH264
 #define ETC_VEDC_Encode_DefineEncoder_x264
-#if defined(WOS_WINDOWS)
+#if defined(__platform_windows)
   #define ETC_VEDC_Encode_DefineEncoder_nvenc
 #endif
 
 #define ETC_VEDC_Decoder_DefineCodec_OpenH264
-#if defined(WOS_WINDOWS)
+#if defined(__platform_windows)
   #define ETC_VEDC_Decoder_DefineCodec_cuvid
 #endif
 

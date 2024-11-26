@@ -66,7 +66,7 @@ string(APPEND CMAKE_CXX_FLAGS " -Wall -Wextra -Werror")
 string(APPEND CMAKE_CXX_FLAGS " -Wno-bitwise-op-parentheses -Wno-missing-field-initializers -Wno-invalid-offsetof -Wno-unused-parameter -Wno-unused-variable")
 
 set(DEBUG_FLAGS "-g")
-set(RELEASE_FLAGS "-s -mmmx -msse -msse2 -msse3 -mssse3 -msse4 -msse4.1 -O3 -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
+set(RELEASE_FLAGS "-s -O3 -march=native -mtune=native -fdata-sections -ffunction-sections -march=native -Wl,--gc-sections")
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold")
@@ -114,7 +114,7 @@ else()
 		list(FILTER FAN_LIBS EXCLUDE REGEX ".*fan.a$")
 	endif()
     # On Linux, use the system libraries
-    target_link_libraries(${OUTPUT} ${FAN_LIBS} ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw)
+    target_link_libraries(${OUTPUT} ${FAN_LIBS} ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw uv)
 endif()
 
 link_directories(${CMAKE_SOURCE_DIR}/lib)
