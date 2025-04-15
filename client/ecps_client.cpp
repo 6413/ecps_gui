@@ -41,7 +41,7 @@ UDP_send(
   auto CommandDataPacket = (T *)&BasePacket[1];
   *CommandDataPacket = CommandData;
   auto RestPacket = (uint8_t *)CommandDataPacket + T::dss;
-  MEM_copy(data, RestPacket, size);
+  __builtin_memcpy(RestPacket, data, size);
   uint16_t TotalSize = sizeof(ProtocolUDP::BasePacket_t) + T::dss + size;
   IO_ssize_t r = NET_sendto(&g_pile->UDP.udp, buffer, TotalSize, &g_pile->UDP.Address);
   if(r != TotalSize){
@@ -80,7 +80,7 @@ ITC_write(
   TH_lock(&g_pile->ITC.Mutex);
   auto Current = g_pile->ITC.bvec.Current;
   pile_t::ITC_t::bvec_AddEmpty(&g_pile->ITC.bvec, sizeof(Pack));
-  MEM_copy(&Pack, &g_pile->ITC.bvec.ptr[Current], sizeof(Pack));
+  __builtin_memcpy(&g_pile->ITC.bvec.ptr[Current], &Pack, sizeof(Pack));
   TH_unlock(&g_pile->ITC.Mutex);
   EV_async_send(&g_pile->listener, &g_pile->ITC.ev_async);
 }
@@ -246,7 +246,7 @@ uint32_t TCPMain_read_cb(
         if(size > needed_size){
           size = needed_size;
         }
-        MEM_copy(&ReadData[iSize], &PeerData->Buffer[PeerData->iBuffer], size);
+        __builtin_memcpy(&PeerData->Buffer[PeerData->iBuffer], &ReadData[iSize], size);
         iSize += size;
         PeerData->iBuffer += size;
         if(PeerData->iBuffer == sizeof(ProtocolBasePacket_t)){
@@ -270,7 +270,7 @@ uint32_t TCPMain_read_cb(
         if(size > needed_size){
           size = needed_size;
         }
-        MEM_copy(&ReadData[iSize], &PeerData->Buffer[PeerData->iBuffer], size);
+        __builtin_memcpy(&PeerData->Buffer[PeerData->iBuffer], &ReadData[iSize], size);
         iSize += size;
         PeerData->iBuffer += size;
         if(PeerData->iBuffer == TotalSize){
@@ -527,7 +527,7 @@ void ev_udp_read_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t flag){
       if(PacketSize != 0x400){
         View->m_ModuloSize = PacketSize;
       }
-      MEM_copy(PacketData, &View->m_data[Current * 0x400], PacketSize);
+      __builtin_memcpy(&View->m_data[Current * 0x400], PacketData, PacketSize);
       View->SetDataCheck(Current);
       if(
         (View->m_Possible != (uint16_t)-1 && Current == View->m_Possible) ||

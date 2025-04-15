@@ -114,7 +114,7 @@ else()
 		list(FILTER FAN_LIBS EXCLUDE REGEX ".*fan.a$")
 	endif()
     # On Linux, use the system libraries
-    target_link_libraries(${OUTPUT} ${FAN_LIBS} ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw uv)
+    target_link_libraries(${OUTPUT} /usr/local/lib/libfan.so ev pthread crypto ssl xcb xcb-shm xcb-keysyms xcb-xtest GL X11 Xtst Xfixes Xrandr webp openh264 x264 glfw uv)
 endif()
 
 link_directories(${CMAKE_SOURCE_DIR}/lib)

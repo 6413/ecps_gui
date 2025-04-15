@@ -25,7 +25,7 @@ else if(CompareCommand(Input, &iCommand, InputSize, "Decoder")){
   }
   td->DecoderUserProperties.Mutex.Lock();
   td->DecoderUserProperties.DecoderNameSize = size;
-  MEM_copy(&Input[iCommand], td->DecoderUserProperties.DecoderName, size);
+  __builtin_memcpy(td->DecoderUserProperties.DecoderName, &Input[iCommand], size);
   td->DecoderUserProperties.Updated = true;
   td->DecoderUserProperties.Mutex.Unlock();
 }

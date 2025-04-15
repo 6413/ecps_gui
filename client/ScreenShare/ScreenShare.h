@@ -86,7 +86,7 @@ void ScreenShare_SetNewSequence(TCPMain_InChannel_ScreenShare_View_t *View, uint
 
   View->ModuloIsAt = (uint16_t)-1;
 
-  MEM_set(0, View->DataCheck, sizeof(View->DataCheck));
+  __builtin_memset(View->DataCheck, 0, sizeof(View->DataCheck));
 }
 
 bool ScreenShare_IsSequencePast(uint16_t CurrentSequence, uint16_t PacketSequence){
@@ -171,7 +171,7 @@ void ScreenShare_FixFramePacket(TCPMain_InChannel_ScreenShare_View_t *View){
   for(uint16_t i = 0; i < (View->Possible + !!View->Modulo); i++){
     if(!ScreenShare_GetDataCheck(View, i)){
       View->stats.Packet_BodyDrop++;
-      MEM_set(0, &View->data[i * 0x400], 0x400);
+      __builtin_memset(&View->data[i * 0x400], 0, 0x400);
     }
   }
 }
@@ -377,7 +377,7 @@ void ScreenShare_View_evio_udp_cb(EV_t *listener, EV_event_t *evio_udp, uint32_t
     View->ModuloIsAt = Current;
     View->ModuloSize = PacketSize;
   }
-  MEM_copy(PacketData, &View->data[Current * 0x400], PacketSize);
+  __builtin_memcpy(&View->data[Current * 0x400], PacketData, PacketSize);
   ScreenShare_SetDataCheck(View, Current);
   if(
     (View->Possible != (uint16_t)-1 && !View->Modulo && Current == View->Possible) ||

@@ -195,7 +195,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         while((rinread = ETC_VEDC_Encode_Read(&This->Encode, &PacketInfo, &PacketData)) > 0){
           FramePacket.Current += rinread;
           VEC_handle(&FramePacket);
-          MEM_copy(PacketData, &((uint8_t *)FramePacket.ptr)[FramePacket.Current - rinread], rinread);
+          __builtin_memcpy(&((uint8_t *)FramePacket.ptr)[FramePacket.Current - rinread], PacketData, rinread);
         }
         if(rinread < 0){
           /* TODO */
@@ -229,7 +229,7 @@ static bool ThreadFrame_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         while((rinread = ETC_VEDC_Encode_Read(&This->Encode, &PacketInfo, &PacketData)) > 0){
           FramePacket.Current += rinread;
           VEC_handle(&FramePacket);
-          MEM_copy(PacketData, &((uint8_t *)FramePacket.ptr)[FramePacket.Current - rinread], rinread);
+          __builtin_memcpy(&((uint8_t *)FramePacket.ptr)[FramePacket.Current - rinread], PacketData, rinread);
         }
         if(rinread < 0){
           /* TODO */

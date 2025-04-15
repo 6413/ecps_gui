@@ -95,7 +95,7 @@ struct Channel_ScreenShare_Share_t{
       *Bucket -= BufferSize * 8;
     }
 
-    MEM_copy(Data, DataWillBeAt, DataSize);
+    __builtin_memcpy(DataWillBeAt, Data, DataSize);
 
     ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t rest;
     rest.ChannelID = this->m_ChannelInfo.ChannelID;

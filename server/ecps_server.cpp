@@ -20,7 +20,7 @@ UDP_send(
   auto CommandDataPacket = (T *)&BasePacket[1];
   *CommandDataPacket = CommandData;
   auto RestPacket = (uint8_t *)CommandDataPacket + T::dss;
-  MEM_copy(data, RestPacket, size);
+  __builtin_memcpy(RestPacket, data, size);
   uint16_t TotalSize = sizeof(ProtocolUDP::BasePacket_t) + T::dss + size;
   IO_ssize_t r = NET_sendto(&g_pile->udp, buffer, TotalSize, &Session->UDP.Address);
   if(r != TotalSize){
@@ -101,7 +101,7 @@ uint32_t TCPMain_read_cb(
         if(size > needed_size){
           size = needed_size;
         }
-        MEM_copy(&ReadData[iSize], &PeerData->Buffer[PeerData->iBuffer], size);
+        __builtin_memcpy(&PeerData->Buffer[PeerData->iBuffer], &ReadData[iSize], size);
         iSize += size;
         PeerData->iBuffer += size;
         if(PeerData->iBuffer == sizeof(ProtocolBasePacket_t)){
@@ -125,7 +125,7 @@ uint32_t TCPMain_read_cb(
         if(size > needed_size){
           size = needed_size;
         }
-        MEM_copy(&ReadData[iSize], &PeerData->Buffer[PeerData->iBuffer], size);
+        __builtin_memcpy(&PeerData->Buffer[PeerData->iBuffer], &ReadData[iSize], size);
         iSize += size;
         PeerData->iBuffer += size;
         if(PeerData->iBuffer == TotalSize){

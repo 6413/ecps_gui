@@ -17,7 +17,7 @@ else if(CompareCommand(Input, &iCommand, InputSize, "Encoder")){
   }
   sd->ThreadCommon->EncoderSetting.Mutex.Lock();
   sd->ThreadCommon->EncoderSetting.EncoderSetting.EncoderNameSize = size;
-  MEM_copy(&Input[iCommand], sd->ThreadCommon->EncoderSetting.EncoderSetting.EncoderName, size);
+  __builtin_memcpy(sd->ThreadCommon->EncoderSetting.EncoderSetting.EncoderName, &Input[iCommand], size);
   sd->ThreadCommon->EncoderSetting.Updated = true;
   sd->ThreadCommon->EncoderSetting.Mutex.Unlock();
 }

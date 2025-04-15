@@ -45,7 +45,7 @@ struct Channel_ScreenShare_View_t{
     m_Sequence = Sequence;
     m_Possible = (uint16_t)-1;
 
-    MEM_set(0, m_DataCheck, sizeof(m_DataCheck));
+    __builtin_memset(m_DataCheck, 0, sizeof(m_DataCheck));
   }
 
   bool IsSequencePast(uint16_t PacketSequence){
@@ -117,7 +117,7 @@ struct Channel_ScreenShare_View_t{
     for(uint16_t i = 0; i < this->m_Possible; i++){
       if(!GetDataCheck(i)){
         this->m_stats.Packet_BodyDrop++;
-        MEM_set(0, &this->m_data[i * 0x400], 0x400);
+        __builtin_memset(&this->m_data[i * 0x400], 0, 0x400);
       }
     }
   }
@@ -138,7 +138,7 @@ struct Channel_ScreenShare_View_t{
     auto fp = &Decode->FramePacketList[fpnr];
     fp->Size = FramePacketSize;
     fp->Data = (uint8_t *)A_resize(0, fp->Size);
-    MEM_copy(this->m_data, fp->Data, fp->Size);
+    __builtin_memcpy(fp->Data, this->m_data, fp->Size);
 
     if(Decode->FramePacketList.Usage() == 1){
       this->ThreadCommon->StartDecoder();
