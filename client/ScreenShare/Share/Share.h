@@ -38,6 +38,8 @@ struct Channel_ScreenShare_Share_t{
     };
     #define BLL_set_prefix FrameList
     #define BLL_set_Language 1
+    #define BLL_set_Usage 1
+    #define BLL_set_Clear 1
     #define BLL_set_AreWeInsideStruct 1
     #define BLL_set_CPP_ConstructDestruct 1
     #define BLL_set_NodeDataType FrameListNodeData_t

@@ -684,7 +684,7 @@ void InitAndRun(){
   IDMap_Open(&g_pile->TCP.IDMap);
   NET_TCP_open(g_pile->TCP.tcp);
 
-  if(NET_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &g_pile->UDP.udp) < 0){
+  if(NET_socket2(NET_AF_INET, NET_SOCK_DGRAM | NET_SOCK_NONBLOCK, NET_IPPROTO_UDP, &g_pile->UDP.udp) < 0){
     WriteInformation("udp socket rip\r\n");
     __abort();
   }

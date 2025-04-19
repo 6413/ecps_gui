@@ -8,6 +8,7 @@ struct FramePacketNodeData_t{
 
 SleepyMutex_t FramePacketList_Mutex;
 #define BLL_set_prefix FramePacketList
+#define BLL_set_Usage 1
 #define BLL_set_Language 1
 #define BLL_set_CPP_ConstructDestruct 1
 #define BLL_set_AreWeInsideStruct 1

@@ -68,19 +68,19 @@ public:
 
 #include _WITCH_PATH(TRT/CON0.h)
 
-#define TRT_BME_set_Prefix SleepyMutex
-#define TRT_BME_set_Language 1
-#define TRT_BME_set_MutexType 0
-#include _WITCH_PATH(TRT/BME/BME.h)
-#define TRT_BME_set_Prefix SleepyCMutex
-#define TRT_BME_set_Language 1
-#define TRT_BME_set_MutexType 0
-#define TRT_BME_set_Conditional
-#include _WITCH_PATH(TRT/BME/BME.h)
-#define TRT_BME_set_Prefix FastMutex
-#define TRT_BME_set_Language 1
-#define TRT_BME_set_MutexType 1
-#include _WITCH_PATH(TRT/BME/BME.h)
+#define BME_set_Prefix SleepyMutex
+#define BME_set_Language 1
+#define BME_set_Sleep 1
+#include <BME/BME.h>
+#define BME_set_Prefix SleepyCMutex
+#define BME_set_Language 1
+#define BME_set_Sleep 1
+#define BME_set_Conditional
+#include <BME/BME.h>
+#define BME_set_Prefix FastMutex
+#define BME_set_Language 1
+#define BME_set_Sleep 0
+#include <BME/BME.h>
 
 #include _WITCH_PATH(ETC/VEDC/Encode.h)
 #include _WITCH_PATH(ETC/VEDC/Decoder.h)

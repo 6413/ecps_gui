@@ -347,13 +347,13 @@ int main(int argc, char **argv){
   EV_event_init_fd(&evio_stdin, &fd_stdin, evio_stdin_cb, EV_READ);
   EV_event_start(&g_pile->listener, &evio_stdin);
 
-  if(NET_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &g_pile->udp) < 0){
+  if(NET_socket2(NET_AF_INET, NET_SOCK_DGRAM | NET_SOCK_NONBLOCK, NET_IPPROTO_UDP, &g_pile->udp) < 0){
     WriteInformation("%lx\r\n", g_pile->udp);
     __abort();
   }
 
   NET_addr_t udpaddr;
-  udpaddr.ip = INADDR_ANY;
+  udpaddr.ip = NET_INADDR_ANY;
   udpaddr.port = port;
   err = NET_bind(&g_pile->udp, &udpaddr);
   if(err){
