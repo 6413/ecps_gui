@@ -2,13 +2,14 @@
   #define set_VerboseProtocol_HoldStreamTimes 0
 #endif
 
+#include <chrono>
+
+#include <mutex>
+#include <thread>
+
 #define _INCLUDE_TOKEN(p0, p1) <p0/p1>
 
-#ifdef ETC_VEDC_Decoder_DefineCodec_cuvid
-  // #define __GPU_USE_FAKE_CUDA
-  // #define __GPU_USE_FAKE_CUVID
-  #include _WITCH_PATH(include/cuda.h)
-#endif
+
 #include _WITCH_PATH(PR/PR.h)
 #include _WITCH_PATH(STR/psh.h)
 #include _WITCH_PATH(STR/psf.h)
@@ -17,7 +18,14 @@
 #include _WITCH_PATH(MD/Keyboard/Keyboard.h)
 #include _WITCH_PATH(T/T.h)
 
+
 #include "../common.h"
+
+#ifdef ETC_VEDC_Decoder_DefineCodec_cuvid
+// #define __GPU_USE_FAKE_CUDA
+// #define __GPU_USE_FAKE_CUVID
+#include _WITCH_PATH(include/cuda.h)
+#endif
 
 enum class ChannelState_t{
   WaittingForInformation,

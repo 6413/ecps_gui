@@ -1,8 +1,7 @@
 #include <WITCH/WITCH.h>
 #include <WITCH/STR/psh.h>
 
-#define fan_vector_simple
-#include <fan/types/vector.h>
+#include <fan/types/vector_simple.h>
 
 #include "../common.h"
 

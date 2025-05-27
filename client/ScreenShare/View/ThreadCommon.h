@@ -167,7 +167,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
         This->ReadMethodData.CudaArrayFrame.cuda_textures.resize(
           &This->loco,
           This->FrameCID,
-          fan::pixel_format::nv12,
+          fan::graphics::image_format::nv12,
           fan::vec2ui(ImageProperties.SizeX, ImageProperties.SizeY));
 
         ETC_VEDC_Decoder_CudaArrayFrame_t Frame;
@@ -210,8 +210,8 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
       {
         uint32_t pixel_format;
         switch(Frame.Properties.PixelFormat){
-          case PIXF_YUV420p:{pixel_format = fan::pixel_format::yuv420p; break;}
-          case PIXF_YUVNV12:{pixel_format = fan::pixel_format::nv12; break;}
+          case PIXF_YUV420p:{pixel_format = fan::graphics::image_format::yuv420p; break;}
+          case PIXF_YUVNV12:{pixel_format = fan::graphics::image_format::nv12; break;}
           default:{
             /* not supported pixel format... at least yet.*/
             __abort();
@@ -250,7 +250,7 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
 
     {
       uint32_t we = This->loco.window.handle_events();
-      if (glfwWindowShouldClose(This->loco.window.glfw_window)) {
+      if (This->loco.should_close()) {
         __abort();
       }
       This->HandleCursor();

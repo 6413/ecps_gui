@@ -1,4 +1,3 @@
-#include <fan/graphics/loco.h>
 #include <WITCH/WITCH.h>
 #define ETC_VEDC_Encode_DefineEncoder_OpenH264
 #define ETC_VEDC_Encode_DefineEncoder_x264
