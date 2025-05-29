@@ -211,3 +211,5 @@ struct TCPMain_PeerData_t{
   uint32_t iBuffer;
   uint8_t *Buffer;
 };
+
+#undef ecps_server

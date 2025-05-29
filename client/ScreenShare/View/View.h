@@ -1,4 +1,7 @@
 struct Channel_ScreenShare_View_t{
+
+#include "gui.h"
+
   struct ChannelInfo_t{
     Protocol_ChannelID_t ChannelID;
     Protocol_ChannelSessionID_t ChannelSessionID;
@@ -142,6 +145,7 @@ struct Channel_ScreenShare_View_t{
 
     if(Decode->FramePacketList.Usage() == 1){
       this->ThreadCommon->StartDecoder();
+      gviewing = 1;
     }
 
     #if set_VerboseProtocol_HoldStreamTimes == 1
@@ -152,12 +156,12 @@ struct Channel_ScreenShare_View_t{
     Decode->FramePacketList_Mutex.Unlock();
   }
 
-  Channel_ScreenShare_View_t(
-    Channel_ScreenShare_t &Channel_ScreenShare,
+  void init(
+    Channel_ScreenShare_t& Channel_ScreenShare,
     Protocol_ChannelID_t p_ChannelID,
     Protocol_ChannelSessionID_t p_ChannelSessionID,
     uint32_t p_ChannelUnique
-  ){
+  ) {
     ChannelInfo.ChannelID = p_ChannelID;
     ChannelInfo.ChannelSessionID = p_ChannelSessionID;
     ChannelInfo.ChannelUnique = p_ChannelUnique;
@@ -171,7 +175,17 @@ struct Channel_ScreenShare_View_t{
     m_stats.Packet_Total = 0;
     m_stats.Packet_HeadDrop = 0;
     m_stats.Packet_BodyDrop = 0;
+  }
 
+  Channel_ScreenShare_View_t() = default;
+
+  Channel_ScreenShare_View_t(
+    Channel_ScreenShare_t &Channel_ScreenShare,
+    Protocol_ChannelID_t p_ChannelID,
+    Protocol_ChannelSessionID_t p_ChannelSessionID,
+    uint32_t p_ChannelUnique
+  ){
+    init(Channel_ScreenShare, p_ChannelID, p_ChannelSessionID, p_ChannelUnique);
     ThreadCommon = new ThreadCommon_t(this);
   }
   ~Channel_ScreenShare_View_t(
@@ -179,3 +193,4 @@ struct Channel_ScreenShare_View_t{
 
   }
 };
+

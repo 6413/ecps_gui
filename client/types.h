@@ -18,6 +18,7 @@
 #include _WITCH_PATH(MD/Keyboard/Keyboard.h)
 #include _WITCH_PATH(T/T.h)
 
+import fan;
 
 #include "../common.h"
 
@@ -127,8 +128,11 @@ struct TCPMain_PeerData_t{
 
 typedef uint32_t ChannelUnique_t;
 
+struct Channel_ScreenShare_View_t;
+
 struct pile_t{
   EV_t listener;
+  Channel_ScreenShare_View_t* view;
 
   PileState_t state = PileState_t::NotConnected;
 

@@ -11,6 +11,16 @@ static bool ThreadDecode_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
   auto This = ThreadCommon->ThreadDecode.GetOrphanPointer();
 
   while(1){
+    if (!gviewing){
+      auto Window = ThreadCommon->ThreadWindow.Mark();
+      if (Window == NULL) {
+        continue;
+      }
+      EV_async_send(&Window->ev, &Window->ev_async);
+      ThreadCommon->ThreadWindow.Unmark();
+      continue;
+    }
+
     This->FramePacketList_Mutex.Lock();
     auto fpnr = This->FramePacketList.GetNodeFirst();
     auto fp = &This->FramePacketList[fpnr];
@@ -112,11 +122,13 @@ static bool ThreadDecode_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     if(This->FramePacketList.Usage() == 0){
       This->FramePacketList_Mutex.Unlock();
       ThreadCommon->Itself.Decrease();
+      This->has_started = false;
       return 0;
     }
     This->FramePacketList_Mutex.Unlock();
 
     if(ThreadCommon->View.IsMarkable() == false){
+      This->has_started = false;
       ThreadCommon->Itself.Decrease();
       return 0;
     }
@@ -249,12 +261,12 @@ static bool ThreadWindow_tp_outside_cb(EV_t *listener, EV_tp_t *tp){
     }
 
     {
-      uint32_t we = This->loco.window.handle_events();
-      if (This->loco.should_close()) {
+      This->HandleCursor();
+      if (This->loco.process_loop([&] {
+        This->ecps_gui.render();
+      })) {
         __abort();
       }
-      This->HandleCursor();
-      This->loco.process_loop();
     }
   });
   EV_async_start(&This->ev, &This->ev_async);
@@ -303,6 +315,11 @@ static void ThreadWindow_tp_inside_cb(EV_t *listener, EV_tp_t *tp, sint32_t err)
 }
 
 void StartDecoder(){
+  auto Decode = ThreadDecode.GetOrphanPointer();
+  if (Decode->has_started) {
+    return;
+  }
+  Decode->has_started = true;
   Itself.Increase();
   EV_tp_init(&ThreadDecode.tp, ThreadDecode_tp_outside_cb, ThreadDecode_tp_inside_cb, 0);
   EV_tp_start(&g_pile->listener, &ThreadDecode.tp);

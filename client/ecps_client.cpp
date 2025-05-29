@@ -10,7 +10,12 @@
   #define ETC_VEDC_Decoder_DefineCodec_cuvid
 #endif
 
+int gviewing = false;
+
 #include "types.h"
+
+std::mutex queue_mutex;
+std::vector<std::function<void()>> state_queue;
 
 void TCP_WriteCommand(uint32_t ID, Protocol_CI_t Command, auto&&...args){
   ProtocolBasePacket_t BasePacket;
@@ -656,6 +661,10 @@ void ITC_read_cb(EV_t *listener, EV_async_t *async){
   TH_unlock(&g_pile->ITC.Mutex);
 }
 
+void process_state(int state) {
+
+}
+
 void InitAndRun(){
   g_pile = new pile_t;
 
@@ -666,11 +675,11 @@ void InitAndRun(){
   EV_async_init(&g_pile->listener, &g_pile->ITC.ev_async, ITC_read_cb);
   EV_async_start(&g_pile->listener, &g_pile->ITC.ev_async);
 
-  EV_event_t evio_stdin;
-  IO_fd_t fd_stdin;
-  IO_fd_set(&fd_stdin, FD_IN);
-  EV_event_init_fd(&evio_stdin, &fd_stdin, evio_stdin_cb, EV_READ);
-  EV_event_start(&g_pile->listener, &evio_stdin);
+  //EV_event_t evio_stdin;
+  //IO_fd_t fd_stdin;
+  //IO_fd_set(&fd_stdin, FD_IN);
+  //EV_event_init_fd(&evio_stdin, &fd_stdin, evio_stdin_cb, EV_READ);
+  //EV_event_start(&g_pile->listener, &evio_stdin);
 
   g_pile->TCP.tcp = NET_TCP_alloc(&g_pile->listener);
 
@@ -692,6 +701,51 @@ void InitAndRun(){
   EV_event_start(&g_pile->listener, &g_pile->UDP.ev_udp);
 
   ChannelMap_Open(&g_pile->ChannelMap);
+  fan::event::event_loop = g_pile->listener.loop;
+  auto task = fan::event::timer_task(1, [] {
+    std::lock_guard<std::mutex> v(queue_mutex);
+    for (auto& i : state_queue) {
+      i();
+    }
+    state_queue.clear();
+    return 0;
+  });
+
+  Protocol_ChannelID_t ChannelID;
+  //ChannelID.g() = 0;
+
+ // auto ChannelCommon = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+
+ // auto sd = (Channel_ScreenShare_View_t*)ChannelCommon->m_StateData;
+  //if (CompareCommand(Input, &iCommand, InputSize, "SetMode")) {
+ //   auto ChannelFlag = sd->m_ChannelFlag;
+  //  delete sd;
+    //new Channel_ScreenShare_t(0);
+    //goto gt_SetMode;
+  //}
+
+  //uv_run(g_pile->listener.loop, UV_RUN_ONCE);
+
+  //ChannelID.g() = 1;
+
+  //auto ChannelCommon = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+
+  //ChannelCommon->SetState(ChannelState_t::ScreenShare_View);
+  //auto Channel_ScreenShare = *(Channel_ScreenShare_t*)ChannelCommon->m_StateData;
+  //delete (Channel_ScreenShare_t*)ChannelCommon->m_StateData;
+  //ChannelCommon->m_StateData = new Channel_ScreenShare_View_t(
+  //  Channel_ScreenShare,
+  //  ChannelCommon->m_ChannelID,
+  //  ChannelCommon->m_ChannelSessionID,
+  //  ChannelCommon->m_ChannelUnique);
+
+  
+  g_pile->view = new Channel_ScreenShare_View_t;
+  g_pile->view->ThreadCommon = new Channel_ScreenShare_View_t::ThreadCommon_t(g_pile->view);
+
+  EV_tp_init(&g_pile->view->ThreadCommon->ThreadDecode.tp, Channel_ScreenShare_View_t::ThreadCommon_t::ThreadDecode_tp_outside_cb, Channel_ScreenShare_View_t::ThreadCommon_t::ThreadDecode_tp_inside_cb, 0);
+  EV_tp_start(&g_pile->listener, &g_pile->view->ThreadCommon->ThreadDecode.tp);
+
 
   EV_start(&g_pile->listener);
 }

@@ -2,8 +2,8 @@ struct FramePacketNodeData_t{
   #if set_VerboseProtocol_HoldStreamTimes == 1
     uint64_t _VerboseTime;
   #endif
-  uint32_t Size;
-  uint8_t *Data;
+  uint32_t Size = 0;
+  uint8_t *Data = 0;
 };
 
 SleepyMutex_t FramePacketList_Mutex;
@@ -25,6 +25,8 @@ struct{
 
 SleepyMutex_t Decoder_Mutex;
 ETC_VEDC_Decoder_t Decoder;
+
+bool has_started = true;
 
 ThreadDecode_t(){
   ETC_VEDC_Decoder_OpenNothing(&this->Decoder);

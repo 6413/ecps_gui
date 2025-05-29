@@ -16,6 +16,7 @@ struct{
 fan::vec2i ViewMouseCoordinate = fan::vec2i(-1);
 
 loco_t loco{{.vsync = false}};
+ecps_gui_t ecps_gui;
 loco_t::viewport_t viewport;
 loco_t::camera_t camera;
 loco_t::texturepack_t TexturePack;

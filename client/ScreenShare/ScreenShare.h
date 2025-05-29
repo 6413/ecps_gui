@@ -187,10 +187,6 @@ void ScreenShare_WindowResize_cb(fan::window_t *window, const fan::vec2i& res){
 void ScreenShare_WindowTimer_cb(EV_t *listener, EV_timer_t *WindowTimer){
   TCPMain_InChannel_ScreenShare_View_t *View = OFFSETLESS(WindowTimer, TCPMain_InChannel_ScreenShare_View_t, window.WindowTimer);
 
-  uint32_t we = View->window.loco.window.handle_events();
-  if(we & fan::window_t::events::close){
-    PR_exit(0);
-  }
   if(
     View->HostMouseCoordinate.got.x != View->HostMouseCoordinate.had.x ||
     View->HostMouseCoordinate.got.y != View->HostMouseCoordinate.had.y
@@ -201,7 +197,9 @@ void ScreenShare_WindowTimer_cb(EV_t *listener, EV_timer_t *WindowTimer){
     fan::print(View->HostMouseCoordinate.had, CursorPosition);
     View->window.loco.sprite.set(&View->window.CursorCID, &loco_t::sprite_t::instance_t::position, CursorPosition);
   }
-  View->window.loco.process_frame();
+  if (View->window.loco.process_loop()) {
+    PR_exit(0);
+  }
 }
 
 void ScreenShare_LoadImage_init(TCPMain_InChannel_ScreenShare_View_t *View){

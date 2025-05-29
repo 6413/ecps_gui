@@ -33,6 +33,44 @@ case Protocol_S2C_t::CreateChannel_OK:{
   WriteInformation("[SERVER] CreateChannel_OK ID %lx\n", BasePacket->ID);
   WriteInformation("  ChannelID: %lx\n", Request->ChannelID);
 
+  //HELP
+
+  //std::lock_guard<std::mutex> v(queue_mutex);
+
+  //state_queue.push_back([channel_id = Request->ChannelID.g()] {
+
+  //  Protocol_C2S_t::JoinChannel_t rest;
+  //  try {
+  //    rest.ChannelID.g() = channel_id;
+  //  }
+  //  catch (const std::invalid_argument& e) {
+  //    fan::print("The input couldn't be converted to a number");
+  //    return;
+  //  }
+  //  catch (const std::out_of_range& e) {
+  //    fan::print("The input was too large for unsigned long");
+  //    return;
+  //  }
+
+  //  uint32_t ID = g_pile->TCP.IDSequence++;
+
+  //  { /* TODO use actual output instead of filler */
+  //    uint8_t filler = 0;
+  //    IDMap_InNew(&g_pile->TCP.IDMap, &ID, &filler);
+  //  }
+
+  //  Channel_Common_t Output(ChannelState_t::WaittingForInformation, rest.ChannelID);
+  //  ChannelMap_InNew(&g_pile->ChannelMap, &rest.ChannelID, &Output);
+
+  //  TCP_WriteCommand(
+  //    ID,
+  //    Protocol_C2S_t::JoinChannel,
+  //    rest
+  //  );
+
+
+  //});
+
   goto StateDone_gt;
 }
 case Protocol_S2C_t::CreateChannel_Error:{
@@ -67,6 +105,24 @@ case Protocol_S2C_t::JoinChannel_OK:{
       Channel_Common_t cc(ChannelState_t::ScreenShare, Request->ChannelID, Request->ChannelSessionID);
       cc.m_StateData = new Channel_ScreenShare_t(0);
       *ChannelMap_GetOutputPointer(&g_pile->ChannelMap, &Request->ChannelID) = cc;
+
+
+      //HELP
+      state_queue.push_back([channel_id = Request->ChannelID.g()] {
+        Protocol_ChannelID_t ChannelID;
+        ChannelID.g() = channel_id;
+        auto ChannelCommon = ChannelMap_GetOutputPointerSafe(&g_pile->ChannelMap, &ChannelID);
+        ChannelCommon->SetState(ChannelState_t::ScreenShare_View);
+        auto Channel_ScreenShare = *(Channel_ScreenShare_t*)ChannelCommon->m_StateData;
+        ChannelCommon->m_StateData = g_pile->view;
+        g_pile->view->init(
+          Channel_ScreenShare,
+          ChannelCommon->m_ChannelID,
+          ChannelCommon->m_ChannelSessionID,
+          ChannelCommon->m_ChannelUnique
+        );
+      });
+
       break;
     }
     default:{
