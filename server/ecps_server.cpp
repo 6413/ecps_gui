@@ -105,9 +105,13 @@ uint32_t TCPMain_read_cb(
         iSize += size;
         PeerData->iBuffer += size;
         if(PeerData->iBuffer == sizeof(ProtocolBasePacket_t)){
+
           auto BasePacket = (ProtocolBasePacket_t *)PeerData->Buffer;
+          //WriteInformation("Received packet: ID=%u, Command=%u, Max=%u\r\n", 
+          //BasePacket->ID, BasePacket->Command, Protocol_C2S_t::GetMemberAmount());
           if(BasePacket->Command >= Protocol_C2S_t::GetMemberAmount()){
             TWriteErrorClient("BasePacket->Command >= Protocol_C2S_t::GetMemberAmount()\r\n");
+            TWriteErrorClient("Command: %u, Max: %u\r\n", BasePacket->Command, Protocol_C2S_t::GetMemberAmount());
             A_resize(PeerData->Buffer, 0);
             NET_TCP_CloseHard(peer);
             return NET_TCP_EXT_PeerIsClosed_e;

@@ -81,3 +81,89 @@ Channel_KickSession(
   Session->ChannelList.unlrec(ChannelSession->SessionChannelID);
   Channel->SessionList.unlrec(ChannelSessionID);
 }
+
+uint32_t GetChannelUserCount(Protocol_ChannelID_t ChannelID) {
+  if (IsChannelInvalid(ChannelID)) return 0;
+  
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  uint32_t count = 0;
+  
+  auto nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+    count++;
+    nr = n->NextNodeReference;
+  }
+  
+  return count;
+}
+
+const char* GetChannelName(Protocol_ChannelID_t ChannelID) {
+  static char name_buffer[64];
+  if (IsChannelInvalid(ChannelID)) return "Invalid";
+  
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  switch(Channel.Type) {
+    case Protocol::ChannelType_ScreenShare_e:
+      snprintf(name_buffer, sizeof(name_buffer), "Screen Share #%d", ChannelID.g());
+      break;
+    default:
+      snprintf(name_buffer, sizeof(name_buffer), "Channel #%d", ChannelID.g());
+      break;
+  }
+  return name_buffer;
+}
+
+Protocol_SessionID_t GetChannelHost(Protocol_ChannelID_t ChannelID) {
+  if (IsChannelInvalid(ChannelID)) {
+    Protocol_SessionID_t invalid;
+    invalid.g() = (Protocol_SessionID_t::Type)-1;
+    return invalid;
+  }
+  
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  switch(Channel.Type) {
+    case Protocol::ChannelType_ScreenShare_e: {
+      auto ChannelData = (Channel_ScreenShare_Data_t*)Channel.Buffer;
+      return ChannelData->HostSessionID;
+    }
+    default: {
+      Protocol_SessionID_t invalid;
+      invalid.g() = (Protocol_SessionID_t::Type)-1;
+      return invalid;
+    }
+  }
+}
+
+const char* GetSessionUsername(Protocol_SessionID_t SessionID) {
+  static char username_buffer[32];
+  snprintf(username_buffer, sizeof(username_buffer), "User_%d", SessionID.g());
+  return username_buffer;
+}
+
+void NotifyChannelListChanged() {
+  auto nr = g_pile->SessionList.GetNodeFirst();
+  while (nr != g_pile->SessionList.dst) {
+    auto n = g_pile->SessionList.GetNodeByReference(nr);
+    
+    if (n->data.AccountID != Protocol_AccountID_t::GetInvalid()) {
+      // can send refresh notify
+    }
+    
+    nr = n->NextNodeReference;
+  }
+}
+
+void NotifyChannelSessionListChanged(Protocol_ChannelID_t ChannelID) {
+  if (IsChannelInvalid(ChannelID)) return;
+  
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  
+  auto nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+    
+    
+    nr = n->NextNodeReference;
+  }
+}

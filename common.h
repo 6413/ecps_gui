@@ -9,8 +9,6 @@
 #include _WITCH_PATH(NET/NET.h)
 #include _WITCH_PATH(NET/TCP/TCP.h)
 
-import fan;
-
 #include "prot.h"
 
 void _print(uint32_t fd, const char *format, ...){

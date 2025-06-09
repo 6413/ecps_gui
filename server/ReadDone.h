@@ -301,3 +301,152 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::RequestChannelList: {
+  uint16_t channel_count = 0;
+  
+  auto nr = g_pile->ChannelList.GetNodeFirst();
+  while (nr != g_pile->ChannelList.dst) {
+    auto n = g_pile->ChannelList.GetNodeByReference(nr);
+    channel_count++;
+    nr = n->NextNodeReference;
+  }
+  
+  size_t response_size = sizeof(Protocol_S2C_t::ChannelList_t) + 
+                        (channel_count * sizeof(Protocol_S2C_t::ChannelInfo_t));
+  
+  uint8_t* response_buffer = (uint8_t*)malloc(response_size);
+  if (!response_buffer) {
+    goto StateDone_gt;
+  }
+  
+  auto channel_list = (Protocol_S2C_t::ChannelList_t*)response_buffer;
+  channel_list->ChannelCount = channel_count;
+  
+  auto channel_info_array = (Protocol_S2C_t::ChannelInfo_t*)(response_buffer + sizeof(Protocol_S2C_t::ChannelList_t));
+  uint16_t info_index = 0;
+  
+  nr = g_pile->ChannelList.GetNodeFirst();
+  while (nr != g_pile->ChannelList.dst && info_index < channel_count) {
+    auto n = g_pile->ChannelList.GetNodeByReference(nr);
+    
+    Protocol_ChannelID_t channel_id(nr);
+    auto& info = channel_info_array[info_index++];
+      
+    info.ChannelID = channel_id;
+    info.Type = n->data.Type;
+    info.UserCount = GetChannelUserCount(channel_id);
+    info.HostSessionID = GetChannelHost(channel_id);
+    info.IsPasswordProtected = 0;
+      
+    const char* name = GetChannelName(channel_id);
+    strncpy(info.Name, name, sizeof(info.Name) - 1);
+    info.Name[sizeof(info.Name) - 1] = '\0';
+    
+    nr = n->NextNodeReference;
+  }
+  
+  TCP_WriteCommand(
+    peer,
+    BasePacket->ID,
+    Protocol_S2C_t::ChannelList,
+    *channel_list
+  );
+  
+  if (channel_count > 0) {
+    TCP_write_DynamicPointer(peer, channel_info_array, channel_count * sizeof(Protocol_S2C_t::ChannelInfo_t));
+  }
+  
+  free(response_buffer);
+  
+  goto StateDone_gt;
+}
+
+case Protocol_C2S_t::RequestChannelSessionList: {
+  auto Request = (Protocol_C2S_t::RequestChannelSessionList_t*)RestPacket;
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  
+  if (IsChannelInvalid(ChannelID)) {
+    // Send empty list for invalid channels
+    Protocol_S2C_t::ChannelSessionList_t empty_list;
+    empty_list.ChannelID = ChannelID;
+    empty_list.SessionCount = 0;
+    
+    TCP_WriteCommand(
+      peer,
+      BasePacket->ID,
+      Protocol_S2C_t::ChannelSessionList,
+      empty_list
+    );
+    
+    #if set_Verbose
+      _print("[RequestChannelSessionList] Invalid channel %d requested by session %d\n", ChannelID.g(), SessionID.g());
+    #endif
+    
+    goto StateDone_gt;
+  }
+  
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  
+  uint16_t session_count = 0;
+  auto nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+    session_count++;
+    nr = n->NextNodeReference;
+  }
+  
+  size_t response_size = sizeof(Protocol_S2C_t::ChannelSessionList_t) + 
+                        (session_count * sizeof(Protocol_S2C_t::SessionInfo_t));
+  
+  uint8_t* response_buffer = (uint8_t*)malloc(response_size);
+  if (!response_buffer) {
+    goto StateDone_gt;
+  }
+  
+  auto session_list = (Protocol_S2C_t::ChannelSessionList_t*)response_buffer;
+  session_list->ChannelID = ChannelID;
+  session_list->SessionCount = session_count;
+  
+  auto session_info_array = (Protocol_S2C_t::SessionInfo_t*)(response_buffer + sizeof(Protocol_S2C_t::ChannelSessionList_t));
+  uint16_t info_index = 0;
+  
+  Protocol_SessionID_t host_session = GetChannelHost(ChannelID);
+  
+  nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst && info_index < session_count) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+    
+    auto& info = session_info_array[info_index++];
+    Protocol_ChannelSessionID_t channel_session_id(nr);
+      
+    info.SessionID = n->data.SessionID;
+    info.ChannelSessionID = channel_session_id;
+      
+    auto& user_session = g_pile->SessionList[n->data.SessionID];
+    info.AccountID = user_session.AccountID;
+      
+    info.IsHost = (n->data.SessionID.g() == host_session.g()) ? 1 : 0;
+    info.JoinedAt = 0;
+      
+    const char* username = GetSessionUsername(n->data.SessionID);
+    strncpy((char*)info.Username, username, sizeof(info.Username) - 1);
+    info.Username[sizeof(info.Username) - 1] = '\0';
+    
+    nr = n->NextNodeReference;
+  }
+  
+  TCP_WriteCommand(
+    peer,
+    BasePacket->ID,
+    Protocol_S2C_t::ChannelSessionList,
+    *session_list
+  );
+  
+  if (session_count > 0) {
+    TCP_write_DynamicPointer(peer, session_info_array, session_count * sizeof(Protocol_S2C_t::SessionInfo_t));
+  }
+  
+  free(response_buffer);
+  
+  goto StateDone_gt;
+}
