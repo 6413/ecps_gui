@@ -450,3 +450,65 @@ case Protocol_C2S_t::RequestChannelSessionList: {
   
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_ScreenShare_ViewToShare:{
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsChannelInvalid(ChannelID) == true){
+    goto StateDone_gt;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  
+  // Send the flag from viewer to host
+  Protocol_S2C_t::Channel_ScreenShare_ViewToShare_t Payload;
+  Payload.ChannelID = ChannelID;
+  Payload.Flag = Request->Flag;
+
+  Session::WriteCommand(
+    ChannelData->HostSessionID,
+    0,
+    Protocol_S2C_t::Channel_ScreenShare_ViewToShare,
+    Payload);
+
+  goto StateDone_gt;
+}
+
+case Protocol_C2S_t::Channel_ScreenShare_ShareToView:{
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_ShareToView_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsChannelInvalid(ChannelID) == true){
+    goto StateDone_gt;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  
+  // Verify that the sender is the host
+  if(ChannelData->HostSessionID != SessionID){
+    goto StateDone_gt;
+  }
+
+  // Send the flag from host to all viewers
+  auto nr = Channel->SessionList.GetNodeFirst();
+  ChannelSessionList_Node_t *n;
+  for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
+    n = Channel->SessionList.GetNodeByReference(nr);
+    if(n->data.SessionID == SessionID){
+      /* don't send to self (host) */
+      continue;
+    }
+
+    Protocol_S2C_t::Channel_ScreenShare_ShareToView_t Payload;
+    Payload.ChannelID = ChannelID;
+    Payload.Flag = Request->Flag;
+
+    Session::WriteCommand(
+      n->data.SessionID,
+      0,
+      Protocol_S2C_t::Channel_ScreenShare_ShareToView,
+      Payload);
+  }
+
+  goto StateDone_gt;
+}
