@@ -132,6 +132,8 @@ struct dynamic_config_t {
   }
 };
 
+#if 0
+
 struct webrtc_stream_t {
   std::vector<fan::network::tcp_id_t> peer_connections;
   std::atomic<bool> enabled {true};
@@ -360,11 +362,15 @@ void webrtc_stream_t::broadcast_to_websocket_clients(const std::string& message)
 
 std::string WEBRTC_HTML;
 
+#endif
+
 struct render_thread_t {
   render_thread_t() {
+  #if 0
     if (fan::io::file::read(fan::io::file::find_relative_path("webrtc.html"), &WEBRTC_HTML)) {
       fan::print_color(fan::colors::red, "failed to open html file");
     }
+  #endif
 
     window_icon = engine.image_load("icons/ecps_logo.png");
 
@@ -441,7 +447,7 @@ struct render_thread_t {
 #define BLL_set_CPP_CopyAtPointerChange 1
 #include <BLL/BLL.h>
   FrameList_t FrameList;
-
+#if 0
   webrtc_stream_t webrtc_stream;
   fan::network::http_server_t http_server;
 
@@ -543,7 +549,6 @@ struct render_thread_t {
     co_return;
   }
 
-#if 0
   fan::event::task_t start_websocket_server() {
     fan::network::tcp_t websocket_tcp;
     fan::print("Starting WebSocket server on port 9091...");
@@ -618,7 +623,6 @@ struct render_thread_t {
       co_return;
     }, true);
   }
-#endif
 
   fan::event::task_t handle_websocket_connection(fan::network::tcp_id_t conn_id) {
     try {
@@ -633,6 +637,8 @@ struct render_thread_t {
     webrtc_stream.remove_peer(conn_id);
     co_return;
   }
+#endif
+
 };
 
 struct webrtc_rate_limiter_t {
@@ -1640,6 +1646,7 @@ int main() {
             }
           }
 
+        #if 0
           bool has_webrtc_connections = false;
           {
             std::lock_guard<std::mutex> lock(websocket_server.connections_mutex);
@@ -1664,6 +1671,7 @@ int main() {
             rt->webrtc_stream.push_frame(out_frame, is_keyframe, has_sps_pps,
               rt->screen_encoder.config_.width, rt->screen_encoder.config_.height, pts90k, dts90k);
           }
+        #endif
 
           pts90k += frame_duration;
           dts90k += frame_duration;
