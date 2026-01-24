@@ -1,32 +1,15 @@
-
 #version 330
 
 layout (location = 0) in vec3 in_position;
-layout (location = 1) in vec2 in_size;
-layout (location = 2) in vec2 in_rotation_point;
-layout (location = 3) in vec4 in_color;
-layout (location = 4) in vec4 in_outline_color;
-layout (location = 5) in vec3 in_angle;
+layout (location = 1) in vec4 in_color;
+layout (location = 2) in vec3 in_offset;
+layout (location = 3) in vec3 in_angle;
+layout (location = 4) in vec2 in_rotation_point;
 
-out vec2 instance_position;
-out vec4 instance_color;
-out vec4 instance_outline_color;
-out vec2 texture_coordinate;
-out vec2 instance_size;
+out vec4 color;
 
 uniform mat4 view;
 uniform mat4 projection;
-
-vec2 rectangle_vertices[] = vec2[](
-	vec2(-1.0, -1.0),
-	vec2(1.0, -1.0),
-	vec2(1.0, 1.0),
-
-	vec2(1.0, 1.0),
-	vec2(-1.0, 1.0),
-	vec2(-1.0, -1.0)
-);
-
 
 mat4 translate(mat4 m, vec3 v) {
 	mat4 matrix = m;
@@ -66,37 +49,15 @@ mat4 rotate(mat4 m, vec3 angles) {
     return matrix;
 }
 
-
-// for outline
-vec2 tc[] = vec2[](
-  vec2(0, 0), // top left
-  vec2(1, 0), // top right
-  vec2(1, 1), // bottom right
-  vec2(1, 1), // bottom right
-  vec2(0, 1), // bottom left
-  vec2(0, 0) // top left
-);
-
-
 void main() {
-	uint id = uint(gl_VertexID % 6);
-
-	vec2 ratio_size = in_size;
-
-	vec2 rp = rectangle_vertices[id];
 
   mat4 m = mat4(1);
   mat4 t1 = translate(mat4(1), -vec3(in_rotation_point, 0));
   mat4 t2 = translate(mat4(1), vec3(in_rotation_point, 0));
-  mat4 r = rotate(mat4(1), -in_angle); 
-  m = t2 * r * t1;
-  vec2 rotated = vec4(m * vec4(rp* in_size, 0, 1)).xy;
-
-  gl_Position = projection * view * vec4(rotated + in_position.xy, in_position.z, 1);
-
-  instance_position = gl_Position.xy;
-	instance_color = in_color;
-  instance_outline_color = in_outline_color;
-  instance_size = in_size;
-  texture_coordinate = tc[id];
+  mat4 r = rotate(mat4(1), vec3(0, 0, -in_angle)); 
+  m = t1 * r * t2;
+  vec2 rotated = vec4(m * vec4(in_position, 1)).xy;
+  // z is assigned to in_position because of depth ordering
+	gl_Position = projection * view * vec4(in_offset.xy + rotated, in_offset.z, 1);
+  color = in_color;
 }

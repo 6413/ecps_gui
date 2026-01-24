@@ -1,9 +1,4 @@
-#include <WITCH/WITCH.h>
-#include <WITCH/STR/psh.h>
-
-#include <fan/types/vector_simple.h>
-
-#include "../common.h"
+#include "common.h"
 
 #ifndef set_Verbose
   #define set_Verbose 0
@@ -29,7 +24,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_IsNodeRecycled 1
 #define BLL_set_NodeReference_Overload_Declare \
   ChannelSessionList_NodeReference_t(Protocol_ChannelSessionID_t ID){ \
-    NRI = ID.g(); \
+    NRI = ID; \
   }
 #include <BLL/BLL.h>
 
@@ -50,7 +45,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_IsNodeRecycled 1
 #define BLL_set_NodeReference_Overload_Declare \
   AccountList_NodeReference_t(Protocol_AccountID_t ID){ \
-    NRI = ID.g(); \
+    NRI = ID; \
   }
 #include <BLL/BLL.h>
 
@@ -63,7 +58,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_IsNodeRecycled 1
 #define BLL_set_NodeReference_Overload_Declare \
   SessionList_NodeReference_t(Protocol_SessionID_t ID){ \
-    NRI = ID.g(); \
+    NRI = ID; \
   }
 #include <BLL/BLL.h>
 
@@ -76,7 +71,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_IsNodeRecycled 1
 #define BLL_set_NodeReference_Overload_Declare \
   ChannelList_NodeReference_t(Protocol_ChannelID_t ID){ \
-    NRI = ID.g(); \
+    NRI = ID; \
   }
 #include <BLL/BLL.h>
 
@@ -149,6 +144,7 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 struct Channel_ScreenShare_Data_t{
   uint8_t Flag;
   Protocol_SessionID_t HostSessionID;
+  std::unordered_map<uint16_t, std::vector<std::vector<uint8_t>>> SentPackets;
 };
 
 struct pile_t{
@@ -211,5 +207,3 @@ struct TCPMain_PeerData_t{
   uint32_t iBuffer;
   uint8_t *Buffer;
 };
-
-#undef ecps_server

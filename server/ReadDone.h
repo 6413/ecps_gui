@@ -337,9 +337,9 @@ case Protocol_C2S_t::RequestChannelList: {
     info.UserCount = GetChannelUserCount(channel_id);
     info.HostSessionID = GetChannelHost(channel_id);
     info.IsPasswordProtected = 0;
-      
-    const char* name = GetChannelName(channel_id);
-    strncpy(info.Name, name, sizeof(info.Name) - 1);
+    //
+    const char* username = GetSessionUsername(GetChannelHost(channel_id));
+    strncpy(info.Name, username, sizeof(info.Name) - 1);
     info.Name[sizeof(info.Name) - 1] = '\0';
     
     nr = n->NextNodeReference;
@@ -379,7 +379,7 @@ case Protocol_C2S_t::RequestChannelSessionList: {
     );
     
     #if set_Verbose
-      _print("[RequestChannelSessionList] Invalid channel %d requested by session %d\n", ChannelID.g(), SessionID.g());
+      //_print("[RequestChannelSessionList] Invalid channel %d requested by session %d\n", (int)ChannelID, (int)SessionID);
     #endif
     
     goto StateDone_gt;
@@ -425,7 +425,7 @@ case Protocol_C2S_t::RequestChannelSessionList: {
     auto& user_session = g_pile->SessionList[n->data.SessionID];
     info.AccountID = user_session.AccountID;
       
-    info.IsHost = (n->data.SessionID.g() == host_session.g()) ? 1 : 0;
+    info.IsHost = (n->data.SessionID == host_session) ? 1 : 0;
     info.JoinedAt = 0;
       
     const char* username = GetSessionUsername(n->data.SessionID);
@@ -473,7 +473,6 @@ case Protocol_C2S_t::Channel_ScreenShare_ViewToShare:{
 
   goto StateDone_gt;
 }
-
 case Protocol_C2S_t::Channel_ScreenShare_ShareToView:{
   auto Request = (Protocol_C2S_t::Channel_ScreenShare_ShareToView_t *)RestPacket;
 
@@ -484,12 +483,10 @@ case Protocol_C2S_t::Channel_ScreenShare_ShareToView:{
   auto Channel = &g_pile->ChannelList[ChannelID];
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
   
-  // Verify that the sender is the host
   if(ChannelData->HostSessionID != SessionID){
     goto StateDone_gt;
   }
 
-  // Send the flag from host to all viewers
   auto nr = Channel->SessionList.GetNodeFirst();
   ChannelSessionList_Node_t *n;
   for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
