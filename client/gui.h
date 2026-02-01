@@ -617,7 +617,7 @@ struct ecps_gui_t {
                 gui::table_set_column_index(1);
                 gui::push_style_color(gui::col_header_active, gui::get_style().Colors[gui::col_header_hovered]);
 
-                if (gui::selectable(display_name, is_selected, gui::selectable_flags_span_all_columns)) {
+                if (gui::selectable(std::string_view(display_name), is_selected, gui::selectable_flags_span_all_columns)) {
                   This->selected_channel_id = channel.channel_id;
 
                   This->backend_queue([channel_id = channel.channel_id]() -> fan::event::task_t {
@@ -1813,7 +1813,6 @@ struct ecps_gui_t {
 
       gui::push_style_var(gui::style_var_frame_padding, fan::vec2(12, 8));
 
-      window_content_size = gui::get_content_region_avail();
       stream_button_renderer_t::render_centered_stream_button(This->selected_channel_id, stream_area, window_content_size);
 
       gui::pop_style_var(1);
@@ -1822,10 +1821,9 @@ struct ecps_gui_t {
       f32_t button_spacing = 10.0f;
       f32_t margin = 20.0f;
 
-      f32_t current_y = gui::get_cursor_pos().y;
-      
       f32_t settings_x = stream_area.x - (icon_size * 2) - button_spacing - margin;
-      gui::set_cursor_pos(fan::vec2(settings_x, current_y));
+      f32_t settings_y = window_size.y - icon_size - margin;
+      gui::set_cursor_pos(fan::vec2(settings_x, settings_y));
 
       if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen_settings", This->icon_settings, fan::vec2(icon_size, icon_size))) {
         This->stream_settings.show_in_stream_view = !This->stream_settings.show_in_stream_view;
