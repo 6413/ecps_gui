@@ -1,4 +1,6 @@
-#include <fan/utility.h>
+#include <cstdint>
+#include <type_traits>
+#include <fan/utils/utility.h>
 #include <fan/event/types.h>
 #include <fan/types/dme.h>
 #include <cstring>
@@ -46,7 +48,7 @@ extern "C" {
 import fan;
 import fan.fmt;
 
-import fan.graphics.video.screen_codec;
+import fan.graphics.video.screen;
 using namespace fan::graphics;
 
 #include <fan/graphics/types.h>
@@ -376,7 +378,14 @@ struct render_thread_t {
 
     engine.set_target_fps(0, false);
     engine.set_window_name("ECPS - Every Communication Program Sucks");
-    engine.set_window_icon(window_icon);
+    // image_load is async now, so read the icon pixels synchronously for glfw
+    if (auto icon = fan::image::load_owned("icons/ecps_logo.png"); icon.valid() && icon.channels == 4) {
+      fan::image::info_t icon_info;
+      icon_info.data = icon.data.get();
+      icon_info.size = fan::vec2i(icon.size.x, icon.size.y);
+      icon_info.channels = icon.channels;
+      engine.set_window_icon(icon_info);
+    }
 
     if (!screen_encoder.open()) {
       fan::print("Failed to open modern encoder");
@@ -438,7 +447,7 @@ struct render_thread_t {
     }
   }
 
-#include <fan/fan_bll_preset.h>
+#include <fan/memory/fan_bll_preset.h>
 #define BLL_set_prefix FrameList
 #define BLL_set_Language 1
 #define BLL_set_Usage 1
@@ -1038,12 +1047,12 @@ void ecps_backend_t::view_t::WriteFramePacket() {
     if (decode_result.type == 1) { // success
       bool has_valid_data = false;
 
-      if (decode_result.pixel_format == fan::graphics::image_format::yuv420p) {
+      if (decode_result.pixel_format == fan::graphics::image_format_e::yuv420p) {
         has_valid_data = !decode_result.data[0].empty() &&
           !decode_result.data[1].empty() &&
           !decode_result.data[2].empty();
       }
-      else if (decode_result.pixel_format == fan::graphics::image_format::nv12) {
+      else if (decode_result.pixel_format == fan::graphics::image_format_e::nv12) {
         has_valid_data = !decode_result.data[0].empty() &&
           !decode_result.data[1].empty();
       }
@@ -1312,7 +1321,7 @@ int main() {
                 node.image_size.x <= 7680 && node.image_size.y <= 4320;
               bool stride_valid = node.stride[0].x >= node.image_size.x && node.stride[0].x > 0;
 
-              if (node.pixel_format == fan::graphics::image_format::yuv420p) {
+              if (node.pixel_format == fan::graphics::image_format_e::yuv420p) {
                 has_valid_data = !node.data[0].empty() && !node.data[1].empty() && !node.data[2].empty();
 
               #if ecps_debug_prints >= 3
@@ -1323,7 +1332,7 @@ int main() {
                 }
               #endif
               }
-              else if (node.pixel_format == fan::graphics::image_format::nv12) {
+              else if (node.pixel_format == fan::graphics::image_format_e::nv12) {
                 has_valid_data = !node.data[0].empty() && !node.data[1].empty();
 
               #if ecps_debug_prints >= 3
@@ -1348,13 +1357,13 @@ int main() {
                 if (sx > 0 && sx <= 1.0f) {
                   std::array<void*, 4> raw_ptrs = {nullptr, nullptr, nullptr, nullptr};
 
-                  if (node.pixel_format == fan::graphics::image_format::yuv420p) {
+                  if (node.pixel_format == fan::graphics::image_format_e::yuv420p) {
                     raw_ptrs[0] = static_cast<void*>(node.data[0].data());
                     raw_ptrs[1] = static_cast<void*>(node.data[1].data());
                     raw_ptrs[2] = static_cast<void*>(node.data[2].data());
                     raw_ptrs[3] = nullptr;
                   }
-                  else if (node.pixel_format == fan::graphics::image_format::nv12) {
+                  else if (node.pixel_format == fan::graphics::image_format_e::nv12) {
                     raw_ptrs[0] = static_cast<void*>(node.data[0].data());
                     raw_ptrs[1] = static_cast<void*>(node.data[1].data());
                     raw_ptrs[2] = nullptr;
@@ -1365,10 +1374,10 @@ int main() {
                   }
 
                   bool pointers_valid = false;
-                  if (node.pixel_format == fan::graphics::image_format::yuv420p) {
+                  if (node.pixel_format == fan::graphics::image_format_e::yuv420p) {
                     pointers_valid = (raw_ptrs[0] && raw_ptrs[1] && raw_ptrs[2]);
                   }
-                  else if (node.pixel_format == fan::graphics::image_format::nv12) {
+                  else if (node.pixel_format == fan::graphics::image_format_e::nv12) {
                     pointers_valid = (raw_ptrs[0] && raw_ptrs[1]);
                   }
                   else {
@@ -1388,8 +1397,8 @@ int main() {
                     #if ecps_debug_prints >= 2
                       static uint64_t render_count = 0;
                       if (++render_count % 30 == 1) {
-                        const char* format_name = (node.pixel_format == fan::graphics::image_format::yuv420p) ? "YUV420P" :
-                          (node.pixel_format == fan::graphics::image_format::nv12) ? "NV12" : "Unknown";
+                        const char* format_name = (node.pixel_format == fan::graphics::image_format_e::yuv420p) ? "YUV420P" :
+                          (node.pixel_format == fan::graphics::image_format_e::nv12) ? "NV12" : "Unknown";
                         fan::print_throttled_format("RENDER: {} frame processed {}x{}, stride={}, sx={} ({})",
                           format_name, node.image_size.x, node.image_size.y, node.stride[0].x, sx, render_count);
                       }
@@ -1397,8 +1406,8 @@ int main() {
                     }
                     catch (const std::exception& e) {
                     #if ecps_debug_prints >= 1
-                      const char* format_name = (node.pixel_format == fan::graphics::image_format::yuv420p) ? "YUV420P" :
-                        (node.pixel_format == fan::graphics::image_format::nv12) ? "NV12" : "Unknown";
+                      const char* format_name = (node.pixel_format == fan::graphics::image_format_e::yuv420p) ? "YUV420P" :
+                        (node.pixel_format == fan::graphics::image_format_e::nv12) ? "NV12" : "Unknown";
                       fan::print_throttled_format("RENDER: {} reload failed for LibAV frame: {}", format_name, e.what());
                     #endif
                     }
@@ -1418,8 +1427,8 @@ int main() {
               }
               else {
               #if ecps_debug_prints >= 1
-                const char* format_name = (node.pixel_format == fan::graphics::image_format::yuv420p) ? "YUV420P" :
-                  (node.pixel_format == fan::graphics::image_format::nv12) ? "NV12" : "Unknown";
+                const char* format_name = (node.pixel_format == fan::graphics::image_format_e::yuv420p) ? "YUV420P" :
+                  (node.pixel_format == fan::graphics::image_format_e::nv12) ? "NV12" : "Unknown";
                 fan::print_throttled_format("RENDER: {} validation failed - data:{} dims:{}x{} stride:{}",
                   format_name, has_valid_data, node.image_size.x, node.image_size.y, node.stride[0].x);
               #endif
@@ -1505,16 +1514,16 @@ int main() {
           "Linear Mipmap Nearest", "Nearest Mipmap Linear", "Linear Mipmap Linear"
         };
 
-        static fan::graphics::image_filter sampler_filters[] = {
-          fan::graphics::image_filter::nearest,
-          fan::graphics::image_filter::linear,
-          fan::graphics::image_filter::nearest_mipmap_nearest,
-          fan::graphics::image_filter::linear_mipmap_nearest,
-          fan::graphics::image_filter::nearest_mipmap_linear,
-          fan::graphics::image_filter::linear_mipmap_linear
+        static std::uintptr_t sampler_filters[] = {
+          fan::graphics::image_filter_e::nearest,
+          fan::graphics::image_filter_e::linear,
+          fan::graphics::image_filter_e::nearest_mipmap_nearest,
+          fan::graphics::image_filter_e::linear_mipmap_nearest,
+          fan::graphics::image_filter_e::nearest_mipmap_linear,
+          fan::graphics::image_filter_e::linear_mipmap_linear
         };
 
-        static int current_sampler = fan::graphics::image_filter::linear;
+        static int current_sampler = fan::graphics::image_filter_e::linear;
 
         auto* rt = render_thread_ptr.load(std::memory_order_acquire);
         if (!rt) return;
@@ -1537,7 +1546,6 @@ int main() {
 
   render_thread_future.wait();
 
-  fan::graphics::gui::load_emojis();
 
   fan::event::thread_create([] {
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
@@ -1585,8 +1593,8 @@ int main() {
 
               try {
                 fan::graphics::image_load_properties_t props;
-                props.format = fan::graphics::image_format::b8g8r8a8_unorm;
-                props.visual_output = fan::graphics::image_filter::linear;
+                props.format = fan::graphics::image_format_e::bgra;
+                props.visual_output = fan::graphics::image_filter_e::linear;
 
                 fan::image::info_t image_info;
                 image_info.data = current_rt->screen_encoder.screen_buffer;
@@ -1748,7 +1756,7 @@ int main() {
     }
   });
 
-  auto motion_idr_task = fan::event::every(dynamic_config_t::get_adaptive_motion_poll_ms(), []() -> fan::event::task_value_resume_t<bool> {
+  auto motion_idr_task = fan::event::every(dynamic_config_t::get_adaptive_motion_poll_ms(), []() -> fan::event::runv_t<bool> {
     static uint64_t last_frame_count = 0;
     static int motion_frames = 0;
     static auto startup_time = std::chrono::steady_clock::now();
@@ -1842,7 +1850,7 @@ int main() {
     continue;
   }
 
-  auto network_task = fan::event::every(1, []() -> fan::event::task_value_resume_t<bool> {
+  auto network_task = fan::event::every(1, []() -> fan::event::runv_t<bool> {
     /*if (ecps_backend.cleanup_disconnected_channels()) {
       auto* rt = render_thread_ptr.load(std::memory_order_acquire);
       if (rt) {

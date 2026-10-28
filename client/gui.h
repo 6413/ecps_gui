@@ -177,16 +177,16 @@ struct ecps_gui_t {
 
   ecps_gui_t() {
 
-    engine.clear_color = gui::get_color(gui::col_window_bg);
+    engine.set_clear_color(gui::get_color(gui::col_window_bg));
 
     icon_settings = engine.image_load("icons/settings.png", {
-     .min_filter = fan::graphics::image_filter::linear,
-     .mag_filter = fan::graphics::image_filter::linear,
+     .min_filter = fan::graphics::image_filter_e::linear,
+     .mag_filter = fan::graphics::image_filter_e::linear,
       });
 
     icon_fullscreen = engine.image_load("icons/fullscreen.png", {
-     .min_filter = fan::graphics::image_filter::nearest,
-     .mag_filter = fan::graphics::image_filter::nearest,
+     .min_filter = fan::graphics::image_filter_e::nearest,
+     .mag_filter = fan::graphics::image_filter_e::nearest,
       });
 
     if (fan::io::file::exists(config_path)) {
@@ -1257,7 +1257,7 @@ struct ecps_gui_t {
           }
         }
         for (int key = fan::input::input_first; key < fan::input::input_last; key++) {
-          if (engine.is_key_pressed(key)) {
+          if (engine.is_key_clicked(key)) {
             This->backend_queue([key]() -> fan::event::task_t {
               try {
                 for (const auto& channel : ecps_backend.channel_info) {

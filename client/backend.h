@@ -105,7 +105,7 @@ struct ecps_backend_t {
       }
     }
   }
-  fan::event::task_value_resume_t<uint32_t> tcp_write(int command, void* data, uint32_t len) {
+  fan::event::runv_t<uint32_t> tcp_write(int command, void* data, uint32_t len) {
     static int id = 0;
     tcp::ProtocolBasePacket_t bp;
     bp.ID = id++;
@@ -391,7 +391,7 @@ struct ecps_backend_t {
         std::vector<uint8_t> vec;
         uintptr_t SentOffset;
       };
-#include <fan/fan_bll_preset.h>
+#include <fan/memory/fan_bll_preset.h>
 #define BLL_set_prefix FrameList
 #define BLL_set_Language 1
 #define BLL_set_Usage 1
@@ -410,7 +410,7 @@ struct ecps_backend_t {
     void CalculateNetworkFlowBucket();
   }share;
 
-  fan::event::task_value_resume_t<bool> write_stream(
+  fan::event::runv_t<bool> write_stream(
     uint16_t Current,
     uint16_t Possible,
     uint8_t Flag,
@@ -477,7 +477,7 @@ struct ecps_backend_t {
     co_return 0;
   }
 
-  fan::event::task_value_resume_t<bool> connect(const std::string& ip, uint16_t port) {
+  fan::event::runv_t<bool> connect(const std::string& ip, uint16_t port) {
     this->ip = ip;
     this->port = port;
 
@@ -676,7 +676,7 @@ struct ecps_backend_t {
     //co_await connect(ip, port);
  // }
   }
-  fan::event::task_value_resume_t<Protocol_ChannelID_t> channel_create() {
+  fan::event::runv_t<Protocol_ChannelID_t> channel_create() {
     Protocol_C2S_t::CreateChannel_t rest;
     rest.Type = Protocol::ChannelType_ScreenShare_e;
     uint32_t request_id = co_await tcp_write(Protocol_C2S_t::CreateChannel, &rest, sizeof(rest));
