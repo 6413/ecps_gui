@@ -20,7 +20,8 @@
 #include _WITCH_PATH(NET/NET.h)
 #include _WITCH_PATH(NET/TCP/TCP.h)
 
-import fan.event;
+import fan.event.types;
+import fan.time;
 import fan.print;
 
 #include "Base.h"
@@ -196,7 +197,7 @@ bool CompareCommand(const uint8_t* Command, uintptr_t* iCommand, uintptr_t Comma
       break;
     }
   }
-  uintptr_t StrSize = MEM_cstreu(Str);
+  uintptr_t StrSize = MEM_cstrlen(Str);
   if (StrSize != CommandSize) {
     return 0;
   }
