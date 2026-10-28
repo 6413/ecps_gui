@@ -25,6 +25,14 @@ done
 touch third_party/fan/.core.stamp third_party/fan/.gfx.stamp
 
 pkgs="libuv glfw3 libpng libwebp freetype2 fmt shaderc zlib libavformat libavcodec libswscale libavutil"
+
+# ECPS_WAYLAND_CAPTURE=1: capture the screen through the xdg-desktop-portal + PipeWire
+# (works on Wayland); otherwise WITCH captures the X11 root window
+wayland_screen=n
+if [[ "${ECPS_WAYLAND_CAPTURE:-0}" == 1 ]]; then
+  wayland_screen=y
+  pkgs="$pkgs dbus-1 libpipewire-0.3 wayland-client"
+fi
 cflags="$(pkg-config --cflags $pkgs) ${ECPS_EXTRA_CFLAGS:-}"
 ldflags="$(pkg-config --libs $pkgs) -llunasvg -lbox2d ${ECPS_EXTRA_LDFLAGS:-}"
 
@@ -49,7 +57,7 @@ done
 xmake f -y -c -m release --compiler="$compiler" --toolchain="$compiler" \
   --FAN_WINDOW=y --FAN_2D=y --FAN_GUI=y --FAN_PHYSICS_2D=y --FAN_JSON=y \
   --FAN_NETWORK=y --FAN_VIDEO=y --FAN_FMT=y --FAN_SHADERC=y \
-  --FAN_3D=n --FAN_AUDIO=n --FAN_WAYLAND_SCREEN=n --FAN_REFLECTION=n \
+  --FAN_3D=n --FAN_AUDIO=n --FAN_WAYLAND_SCREEN=$wayland_screen --FAN_REFLECTION=n \
   --main="$ecps_src/client/ecps.cpp" \
   --cxflags="$cflags" --ldflags="$ldflags"
 xmake -y -j"$jobs" a.exe

@@ -57,7 +57,7 @@ std::timed_mutex render_mutex;
 std::timed_mutex task_mutex;
 
 struct render_thread_t;
-#define ecps_debug_prints 1
+#define ecps_debug_prints 0
 
 // fan::print_throttled_format is currently a no-op in fan, so throttle here:
 // at most one line per call site every 250 ms
@@ -1279,6 +1279,9 @@ int main() {
 
   std::promise<void> render_thread_promise;
   std::future<void> render_thread_future = render_thread_promise.get_future();
+
+  // the engine builds its gui fonts on the render thread, so enable emojis before it starts
+  fan::graphics::gui::load_emojis();
 
   fan::event::thread_create([&render_thread_promise] {
     render_thread_t render_thread_instance;

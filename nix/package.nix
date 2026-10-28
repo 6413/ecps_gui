@@ -28,6 +28,10 @@
   xorg,
   libxkbcommon,
   wayland,
+  pipewire,
+  dbus,
+  # capture through xdg-desktop-portal + PipeWire instead of the X11 root window
+  withWaylandCapture ? true,
   # sources, pinned by the flake
   ecpsSrc,
   fanSrc,
@@ -90,7 +94,7 @@ clangStdenv.mkDerivation {
     vulkanHeaders vulkan-loader gtk3 openssl curl
     xorg.libX11 xorg.libxcb xorg.libXrandr xorg.libXinerama xorg.libXcursor xorg.libXi
     libxkbcommon wayland lunasvg box2d
-  ];
+  ] ++ lib.optionals withWaylandCapture [ pipewire dbus ];
 
   # fan's xmake.lua and the ecps sources sit next to each other, like the dev layout
   unpackPhase = ''
@@ -159,6 +163,7 @@ clangStdenv.mkDerivation {
     done
     export ECPS_EXTRA_CFLAGS="$NIX_CFLAGS_COMPILE $wrapper_flags -resource-dir=$(clang++ -print-resource-dir)"
 
+    export ECPS_WAYLAND_CAPTURE=${if withWaylandCapture then "1" else "0"}
     bash ecps_gui/nix/build-ecps.sh fan ecps_gui clang
     runHook postBuild
   '';
