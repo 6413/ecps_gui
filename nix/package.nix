@@ -119,6 +119,22 @@ clangStdenv.mkDerivation {
     mkdir -p $TMPDIR/bin
     ln -s ${llvmPackages.clang-unwrapped}/bin/clang-scan-deps $TMPDIR/bin/
     export PATH=$TMPDIR/bin:$PATH
+
+    # xmake finds `import std` through libstdc++.modules.json, whose relative
+    # source paths break because nix splits gcc's headers and libs into separate
+    # outputs. Write one with absolute paths; -B makes -print-file-name find it.
+    std_cc=$(echo ${gccForLibs}/include/c++/*/bits/std.cc)
+    [ -f "$std_cc" ] || { echo "libstdc++ std module source not found in ${gccForLibs}" >&2; exit 1; }
+    mkdir -p $TMPDIR/stdmod
+    cat > $TMPDIR/stdmod/libstdc++.modules.json <<EOF
+    {"version": 1, "revision": 1, "modules": [
+      {"logical-name": "std", "source-path": "$std_cc", "is-std-library": true},
+      {"logical-name": "std.compat", "source-path": "$(dirname $std_cc)/std.compat.cc", "is-std-library": true}
+    ]}
+    EOF
+    export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -B$TMPDIR/stdmod"
+    clang++ -print-file-name=libstdc++.modules.json
+
     export ECPS_EXTRA_CFLAGS="$NIX_CFLAGS_COMPILE $(cat $NIX_CC/nix-support/libcxx-cxxflags 2>/dev/null || true) $(cat $NIX_CC/nix-support/cc-cflags) -resource-dir=$(clang++ -print-resource-dir)"
 
     bash ecps_gui/nix/build-ecps.sh fan ecps_gui clang

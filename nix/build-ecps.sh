@@ -28,6 +28,12 @@ pkgs="libuv glfw3 libpng libwebp freetype2 fmt shaderc zlib libavformat libavcod
 cflags="$(pkg-config --cflags $pkgs) ${ECPS_EXTRA_CFLAGS:-}"
 ldflags="$(pkg-config --libs $pkgs) -llunasvg -lbox2d ${ECPS_EXTRA_LDFLAGS:-}"
 
+# xmake dedups repeated flag tokens, which turns "-isystem a -isystem b" into
+# "-isystem a b"; join path flags with their argument so nothing gets dropped
+join_flags() { sed -E 's/(^|[[:space:]])-(isystem|idirafter|iquote|I|L|B)[[:space:]]+/\1-\2/g' <<< "$1"; }
+cflags=$(join_flags "$cflags")
+ldflags=$(join_flags "$ldflags")
+
 xmake f -y -c -m release --compiler="$compiler" --toolchain="$compiler" \
   --FAN_WINDOW=y --FAN_2D=y --FAN_GUI=y --FAN_PHYSICS_2D=y --FAN_JSON=y \
   --FAN_NETWORK=y --FAN_VIDEO=y --FAN_FMT=y --FAN_SHADERC=y \
