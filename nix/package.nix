@@ -73,6 +73,10 @@ clangStdenv.mkDerivation {
 
   nativeBuildInputs = [ xmake pkg-config mold makeWrapper copyDesktopItems ];
 
+  # _FORTIFY_SOURCE makes glibc's clang path wrap fprintf & co. in static inline
+  # overloads, which libstdc++'s std module can't export
+  hardeningDisable = [ "fortify" "fortify3" ];
+
   buildInputs = [
     libuv glfw libpng libwebp freetype fmt shaderc zlib ffmpeg-full
     vulkan-headers vulkan-loader gtk3 openssl curl
