@@ -132,7 +132,9 @@ clangStdenv.mkDerivation {
       {"logical-name": "std.compat", "source-path": "$(dirname $std_cc)/std.compat.cc", "is-std-library": true}
     ]}
     EOF
-    export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -B$TMPDIR/stdmod"
+    # clang adds include/c++/<ver>/backward for libstdc++ on its own, but the
+    # wrapper's header list leaves it out; std.cc needs <strstream> from there
+    export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -B$TMPDIR/stdmod -isystem$(dirname $(dirname $std_cc))/backward"
     clang++ -print-file-name=libstdc++.modules.json
 
     # same order the wrapper uses: C++ stdlib headers, compiler flags, then libc
