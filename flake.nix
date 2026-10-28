@@ -16,6 +16,8 @@
     PIXF = { url = "github:6413/PIXF/af94c9963077e617b86ee4677fe9601a398915c2"; flake = false; };
     VulkanMemoryAllocator = { url = "github:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/3aa921224c154a0d2c43912bc88e1c42ce1f7607"; flake = false; };
     VulkanUtilityLibraries = { url = "github:KhronosGroup/Vulkan-Utility-Libraries/vulkan-sdk-1.4.335.0"; flake = false; };
+    # must match the utility headers above (fan's xmake.lua pins the same SDK)
+    VulkanHeaders = { url = "github:KhronosGroup/Vulkan-Headers/vulkan-sdk-1.4.335.0"; flake = false; };
 
     # versions fan's xmake.lua pins
     lunasvg = { url = "github:sammycage/lunasvg/v2.4.1"; flake = false; };
@@ -33,6 +35,7 @@
         fanSrc = inputs.fan;
         lunasvgSrc = inputs.lunasvg;
         box2dSrc = inputs.box2d;
+        vulkanHeadersSrc = inputs.VulkanHeaders;
         thirdParty = {
           inherit (inputs) WITCH BCOL BLL BVEC BDBT bcontainer pixfconv PIXF
             VulkanMemoryAllocator VulkanUtilityLibraries;

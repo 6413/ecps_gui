@@ -34,6 +34,7 @@
   thirdParty,
   lunasvgSrc,
   box2dSrc,
+  vulkanHeadersSrc,
 }:
 
 let
@@ -63,6 +64,13 @@ let
     ];
   };
 
+  # nixpkgs' headers can be newer than the pinned Vulkan-Utility-Libraries, whose
+  # vk_enum_string_helper.h then names enums the headers no longer have
+  vulkanHeaders = vulkan-headers.overrideAttrs {
+    version = "1.4.335.0";
+    src = vulkanHeadersSrc;
+  };
+
   assetDirs = [ "shaders" "fonts" "icons" "images" "audio" "effects" ];
 in
 clangStdenv.mkDerivation {
@@ -79,7 +87,7 @@ clangStdenv.mkDerivation {
 
   buildInputs = [
     libuv glfw libpng libwebp freetype fmt shaderc zlib ffmpeg-full
-    vulkan-headers vulkan-loader gtk3 openssl curl
+    vulkanHeaders vulkan-loader gtk3 openssl curl
     xorg.libX11 xorg.libxcb xorg.libXrandr xorg.libXinerama xorg.libXcursor xorg.libXi
     libxkbcommon wayland lunasvg box2d
   ];
