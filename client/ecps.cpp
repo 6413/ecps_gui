@@ -59,6 +59,17 @@ std::timed_mutex task_mutex;
 struct render_thread_t;
 #define ecps_debug_prints 0
 
+// fan::print_throttled_format is currently a no-op in fan, so throttle here:
+// at most one line per call site every 250 ms
+#define ecps_print_throttled(...) do { \
+    static std::chrono::steady_clock::time_point ecps_last_print_{}; \
+    auto ecps_now_ = std::chrono::steady_clock::now(); \
+    if (ecps_now_ - ecps_last_print_ > std::chrono::milliseconds(250)) { \
+      ecps_last_print_ = ecps_now_; \
+      fan::print(fan::format(__VA_ARGS__)); \
+    } \
+  } while (0)
+
 std::atomic<render_thread_t*> render_thread_ptr {nullptr};
 
 render_thread_t* get_render_thread() {
@@ -929,7 +940,7 @@ void ecps_backend_t::share_t::CalculateNetworkFlowBucket() {
 
 #if ecps_debug_prints >= 1
   uint32_t fps = dynamic_config_t::get_target_framerate();
-  fan::print_throttled_format("Adaptive bucket: {}fps -> {} bits ({} MB)",
+  ecps_print_throttled("Adaptive bucket: {}fps -> {} bits ({} MB)",
     fps, m_NetworkFlow.BucketSize, m_NetworkFlow.BucketSize / 8 / 1024 / 1024);
 #endif
 }
@@ -964,7 +975,7 @@ void ecps_backend_t::view_t::WriteFramePacket() {
   if (FramePacketSize < 32 || FramePacketSize > 0x500000) {
     this->m_stats.Frame_Drop++;
   #if ecps_debug_prints >= 1
-    fan::print_throttled_format("NETWORK: Frame dropped - invalid size: {} bytes (valid range: 32 - 5MB)",
+    ecps_print_throttled("NETWORK: Frame dropped - invalid size: {} bytes (valid range: 32 - 5MB)",
       FramePacketSize);
   #endif
     return;
@@ -973,7 +984,7 @@ void ecps_backend_t::view_t::WriteFramePacket() {
   if (this->m_data.size() < FramePacketSize) {
     this->m_stats.Frame_Drop++;
   #if ecps_debug_prints >= 1
-    fan::print_throttled_format("NETWORK: Frame dropped - buffer underrun: need {} bytes, have {}",
+    ecps_print_throttled("NETWORK: Frame dropped - buffer underrun: need {} bytes, have {}",
       FramePacketSize, this->m_data.size());
   #endif
     return;
@@ -1068,6 +1079,18 @@ void ecps_backend_t::view_t::WriteFramePacket() {
         decode_result.stride[0].x > 0;
 
       if (has_valid_data && valid_dimensions && valid_stride) {
+      #if ecps_debug_prints >= 1
+        {
+          // one-off dump of the decoded luma plane, before it reaches the renderer
+          static int decode_dump_frame = 0;
+          if (++decode_dump_frame == 60) {
+            fan::image::write("ecps_decoded_y.png", decode_result.data[0].data(),
+              fan::vec2i((int)decode_result.stride[0].x, (int)decode_result.image_size.y), 1);
+            fan::print("DEBUG: wrote ecps_decoded_y.png (" + std::to_string(decode_result.image_size.x) + "x" +
+              std::to_string(decode_result.image_size.y) + ", stride " + std::to_string(decode_result.stride[0].x) + ")");
+          }
+        }
+      #endif
         std::unique_lock<std::timed_mutex> frame_lock(render_mutex, std::defer_lock);
 
         if (frame_lock.try_lock_for(std::chrono::milliseconds(5))) {
@@ -1097,7 +1120,7 @@ void ecps_backend_t::view_t::WriteFramePacket() {
       }
       else {
       #if ecps_debug_prints >= 1
-        fan::print_throttled_format("NETWORK: Decoded frame validation failed - data:{} dims:{}x{} stride:{}",
+        ecps_print_throttled("NETWORK: Decoded frame validation failed - data:{} dims:{}x{} stride:{}",
           has_valid_data, decode_result.image_size.x,
           decode_result.image_size.y, decode_result.stride[0].x);
       #endif
@@ -1106,14 +1129,14 @@ void ecps_backend_t::view_t::WriteFramePacket() {
     }
     else {
     #if ecps_debug_prints >= 1
-      fan::print_throttled_format("NETWORK: Decode failed with type: {}", decode_result.type);
+      ecps_print_throttled("NETWORK: Decode failed with type: {}", decode_result.type);
     #endif
       this->m_stats.Frame_Drop++;
     }
   }
   catch (const std::exception& e) {
   #if ecps_debug_prints >= 1
-    fan::print_throttled_format("NETWORK: Decode exception: {}", e.what());
+    ecps_print_throttled("NETWORK: Decode exception: {}", e.what());
   #endif
     this->m_stats.Frame_Drop++;
   }
@@ -1122,6 +1145,16 @@ void ecps_backend_t::view_t::WriteFramePacket() {
 }
 
 void ecps_backend_t::view_t::FixFrameOnComplete() {
+  // the first packet carries the packet count; without it the frame can't be sized
+  if (m_Possible == (uint16_t)-1) {
+    m_stats.Frame_Drop++;
+  #if ecps_debug_prints >= 1
+    ecps_print_throttled("NETWORK: Frame dropped - first packet missing (seq {})", m_Sequence);
+  #endif
+    RequestKeyframe();
+    return;
+  }
+
   UpdateMissingPackets();
   if (m_MissingPackets.empty()) {
     WriteFramePacket();
@@ -1129,6 +1162,10 @@ void ecps_backend_t::view_t::FixFrameOnComplete() {
   }
 
   m_stats.Frame_Drop++;
+#if ecps_debug_prints >= 1
+  ecps_print_throttled("NETWORK: Frame dropped - missing {} of {} packets (seq {}), first missing: {}",
+    m_MissingPackets.size(), m_Possible, m_Sequence, m_MissingPackets.front());
+#endif
   m_Possible = (uint16_t)-1;
   RequestKeyframe();
 
@@ -1327,7 +1364,7 @@ int main() {
               #if ecps_debug_prints >= 3
                 static uint64_t yuv420_count = 0;
                 if (++yuv420_count % 60 == 1) {
-                  fan::print_throttled_format("RENDER: YUV420P frame - Y:{} U:{} V:{}",
+                  ecps_print_throttled("RENDER: YUV420P frame - Y:{} U:{} V:{}",
                     node.data[0].size(), node.data[1].size(), node.data[2].size());
                 }
               #endif
@@ -1338,7 +1375,7 @@ int main() {
               #if ecps_debug_prints >= 3
                 static uint64_t nv12_count = 0;
                 if (++nv12_count % 60 == 1) {
-                  fan::print_throttled_format("RENDER: NV12 frame - Y:{} UV:{}",
+                  ecps_print_throttled("RENDER: NV12 frame - Y:{} UV:{}",
                     node.data[0].size(), node.data[1].size());
                 }
               #endif
@@ -1347,7 +1384,7 @@ int main() {
                 has_valid_data = !node.data[0].empty();
 
               #if ecps_debug_prints >= 1
-                fan::print_throttled_format("RENDER: Unknown pixel format {}, trying Y-plane only",
+                ecps_print_throttled("RENDER: Unknown pixel format {}, trying Y-plane only",
                   node.pixel_format);
               #endif
               }
@@ -1399,7 +1436,7 @@ int main() {
                       if (++render_count % 30 == 1) {
                         const char* format_name = (node.pixel_format == fan::graphics::image_format_e::yuv420p) ? "YUV420P" :
                           (node.pixel_format == fan::graphics::image_format_e::nv12) ? "NV12" : "Unknown";
-                        fan::print_throttled_format("RENDER: {} frame processed {}x{}, stride={}, sx={} ({})",
+                        ecps_print_throttled("RENDER: {} frame processed {}x{}, stride={}, sx={} ({})",
                           format_name, node.image_size.x, node.image_size.y, node.stride[0].x, sx, render_count);
                       }
                     #endif
@@ -1408,20 +1445,20 @@ int main() {
                     #if ecps_debug_prints >= 1
                       const char* format_name = (node.pixel_format == fan::graphics::image_format_e::yuv420p) ? "YUV420P" :
                         (node.pixel_format == fan::graphics::image_format_e::nv12) ? "NV12" : "Unknown";
-                      fan::print_throttled_format("RENDER: {} reload failed for LibAV frame: {}", format_name, e.what());
+                      ecps_print_throttled("RENDER: {} reload failed for LibAV frame: {}", format_name, e.what());
                     #endif
                     }
                   }
                   else {
                   #if ecps_debug_prints >= 1
-                    fan::print_throttled_format("RENDER: Invalid pointers for format {} - Y:{} UV/U:{} V:{}",
+                    ecps_print_throttled("RENDER: Invalid pointers for format {} - Y:{} UV/U:{} V:{}",
                       node.pixel_format, (void*)raw_ptrs[0], (void*)raw_ptrs[1], (void*)raw_ptrs[2]);
                   #endif
                   }
                 }
                 else {
                 #if ecps_debug_prints >= 1
-                  fan::print_throttled_format("RENDER: Invalid sx ratio for LibAV frame: {}", sx);
+                  ecps_print_throttled("RENDER: Invalid sx ratio for LibAV frame: {}", sx);
                 #endif
                 }
               }
@@ -1429,7 +1466,7 @@ int main() {
               #if ecps_debug_prints >= 1
                 const char* format_name = (node.pixel_format == fan::graphics::image_format_e::yuv420p) ? "YUV420P" :
                   (node.pixel_format == fan::graphics::image_format_e::nv12) ? "NV12" : "Unknown";
-                fan::print_throttled_format("RENDER: {} validation failed - data:{} dims:{}x{} stride:{}",
+                ecps_print_throttled("RENDER: {} validation failed - data:{} dims:{}x{} stride:{}",
                   format_name, has_valid_data, node.image_size.x, node.image_size.y, node.stride[0].x);
               #endif
               }
@@ -1469,7 +1506,7 @@ int main() {
                 break;
               default:
               #if ecps_debug_prints >= 1
-                fan::print_throttled_format("RENDER: LibAV unknown error type: {}", node.type);
+                ecps_print_throttled("RENDER: LibAV unknown error type: {}", node.type);
               #endif
                 break;
               }
@@ -1494,7 +1531,7 @@ int main() {
                           sizeof(rest)
                         );
                       #if ecps_debug_prints >= 1
-                        fan::print_throttled_format("RENDER: Requesting LibAV IDR for channel {} due to invalid frame", channel.channel_id.i);
+                        ecps_print_throttled("RENDER: Requesting LibAV IDR for channel {} due to invalid frame", channel.channel_id.i);
                       #endif
                       }
                     }
@@ -1612,6 +1649,21 @@ int main() {
           rt->screen_encoder.sleep_thread();
           continue;
         }
+
+      #if ecps_debug_prints >= 1
+        {
+          // one-off dump of the captured screen, to tell capture problems from encode/render ones
+          static int capture_dump_frame = 0;
+          auto& geometry = rt->screen_encoder.mdscr.Geometry;
+          if (++capture_dump_frame == 60 && rt->screen_encoder.screen_buffer && geometry.Resolution.x && geometry.Resolution.y) {
+            int dump_width = geometry.LineSize ? (int)geometry.LineSize / 4 : (int)geometry.Resolution.x;
+            fan::image::write("ecps_capture.png", rt->screen_encoder.screen_buffer,
+              fan::vec2i(dump_width, (int)geometry.Resolution.y), 4);
+            fan::print("DEBUG: wrote ecps_capture.png (" + std::to_string(geometry.Resolution.x) + "x" +
+              std::to_string(geometry.Resolution.y) + ", line size " + std::to_string(geometry.LineSize) + ")");
+          }
+        }
+      #endif
 
         uint8_t* encoded_data = nullptr;
         size_t encoded_size = rt->screen_encoder.encode_read(&encoded_data);
@@ -1862,9 +1914,15 @@ int main() {
       if (rt->ecps_gui.window_handler.auto_refresh) {
         static fan::time::timer refresh_timer(rt->ecps_gui.window_handler.refresh_interval * 2e+9, true);
         if (refresh_timer.finished()) {
-          rt->ecps_gui.backend_queue([]() -> fan::event::task_t {
+          // the user list of the open channel needs refreshing too, otherwise
+          // people who join after it was opened never show up
+          auto selected_channel_id = rt->ecps_gui.selected_channel_id;
+          rt->ecps_gui.backend_queue([selected_channel_id]() -> fan::event::task_t {
             try {
               co_await ecps_backend.request_channel_list();
+              if (selected_channel_id.i != (uint16_t)-1) {
+                co_await ecps_backend.request_channel_session_list(selected_channel_id);
+              }
             }
             catch (...) {}
           });
@@ -2009,7 +2067,7 @@ int main() {
       size_t keyframe_completion = (chunks_sent * 100) / static_cast<size_t>(Possible);
       if (keyframe_completion < 30) {
       #if ecps_debug_prints >= 1
-        fan::print_throttled_format("NETWORK: Incomplete keyframe transmission: {}% ({}/{})",
+        ecps_print_throttled("NETWORK: Incomplete keyframe transmission: {}% ({}/{})",
           keyframe_completion, chunks_sent, Possible);
       #endif
 

@@ -110,8 +110,15 @@ struct ecps_backend_t {
     tcp::ProtocolBasePacket_t bp;
     bp.ID = id++;
     bp.Command = command;
-    co_await tcp_client.write_raw(&bp, sizeof(bp));
-    co_await tcp_client.write_raw(data, len);
+    // header and body in one write: several coroutines send concurrently (auto-refresh,
+    // gui actions, keep-alive), and two separate writes can interleave on the stream,
+    // which desyncs the server's parser for the rest of the connection
+    fan::network::buffer_t packet(sizeof(bp) + len);
+    std::memcpy(packet.data(), &bp, sizeof(bp));
+    if (len) {
+      std::memcpy(packet.data() + sizeof(bp), data, len);
+    }
+    co_await tcp_client.write_raw(packet);
     co_return bp.ID;
   }
   template <typename T>
@@ -182,8 +189,14 @@ struct ecps_backend_t {
 
       uint64_t total_timeout = base_timeout + rtt_timeout + recovery_time;
 
-      uint64_t min_timeout = 80000000ULL; 
-      uint64_t max_timeout = 300000000ULL;
+      // big frames (keyframes) are paced out by the sender's bandwidth bucket and can
+      // take a few hundred ms to arrive; give each 1 KB packet 1.5 ms (~5.5 Mbit/s floor)
+      if (m_Possible != (uint16_t)-1) {
+        total_timeout += (uint64_t)m_Possible * 1500000ULL;
+      }
+
+      uint64_t min_timeout = 80000000ULL;
+      uint64_t max_timeout = 1000000000ULL;
 
       return std::clamp(total_timeout, min_timeout, max_timeout);
     }
@@ -312,7 +325,8 @@ struct ecps_backend_t {
       m_AckSent = false;
       m_MissingPackets.clear();
       __builtin_memset(m_DataCheck.data(), 0, m_DataCheck.size());
-      frame_start_time = fan::event::now();
+      // timed from the frame's first packet, see the udp receive path
+      frame_start_time = 0;
       m_PacketCounter = 0;
     }
 
@@ -629,6 +643,9 @@ struct ecps_backend_t {
             view.SetDataCheck(current);
 
             view.last_valid_packet_time = fan::event::now();
+            if (view.frame_start_time == 0) {
+              view.frame_start_time = view.last_valid_packet_time;
+            }
 
           #if ecps_debug_prints >= 3
             printf("UDP: accepted packet seq=%u, current=%u, size=%u\n", sequence, current, packet_size);
