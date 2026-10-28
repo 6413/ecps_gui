@@ -30,9 +30,21 @@ ldflags="$(pkg-config --libs $pkgs) -llunasvg -lbox2d ${ECPS_EXTRA_LDFLAGS:-}"
 
 # xmake dedups repeated flag tokens, which turns "-isystem a -isystem b" into
 # "-isystem a b"; join path flags with their argument so nothing gets dropped
-join_flags() { sed -E 's/(^|[[:space:]])-(isystem|idirafter|iquote|I|L|B)[[:space:]]+/\1-\2/g' <<< "$1"; }
+join_flags() {
+  tr -s '[:space:]' ' ' <<< "$1" |
+    sed -E 's/(^| )(-cxx-isystem|-isystem-after|-isystem|-idirafter|-iquote|-I|-L|-B) +/\1\2/g'
+}
 cflags=$(join_flags "$cflags")
 ldflags=$(join_flags "$ldflags")
+
+# a path left on its own would be read by clang-scan-deps as an input file
+for flag in $cflags $ldflags; do
+  if [[ $flag == /* ]]; then
+    echo "build-ecps.sh: path without a flag in compiler flags: $flag" >&2
+    echo "cflags: $cflags" >&2
+    exit 1
+  fi
+done
 
 xmake f -y -c -m release --compiler="$compiler" --toolchain="$compiler" \
   --FAN_WINDOW=y --FAN_2D=y --FAN_GUI=y --FAN_PHYSICS_2D=y --FAN_JSON=y \
