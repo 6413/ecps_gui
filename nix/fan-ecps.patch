@@ -1,3 +1,22 @@
+diff --git a/fan/graphics/vulkan/vk_core_device_impl.cpp b/fan/graphics/vulkan/vk_core_device_impl.cpp
+index 29de78b..0a15ad5 100644
+--- a/fan/graphics/vulkan/vk_core_device_impl.cpp
++++ b/fan/graphics/vulkan/vk_core_device_impl.cpp
+@@ -1690,6 +1690,14 @@ VkResult fan::vulkan::context_t::end_render(fan::window_t* window) {
+   presentInfo.swapchainCount = 1;
+   presentInfo.pSwapchains = swapChains;
+   presentInfo.pImageIndices = &image_index;
++
++  // Wayland forbids giving a surface the window role after a buffer was committed
++  // to it, so there the window can't stay hidden until the first frame is presented
++  if (!window_shown && window->is_wayland()) {
++    window_shown = true;
++    window->show();
++  }
++
+   auto result = vkQueuePresentKHR(present_queue, &presentInfo);
+ 
+   if (!window_shown) {
 diff --git a/fan/video/codec.ixx b/fan/video/codec.ixx
 index b458c2a..52e6b76 100644
 --- a/fan/video/codec.ixx
@@ -52,6 +71,37 @@ index 611efff..65ec4df 100644
  #endif
  
  #endif
+diff --git a/fan/window/window.ixx b/fan/window/window.ixx
+index 0ce7c2d..e41e4cc 100644
+--- a/fan/window/window.ixx
++++ b/fan/window/window.ixx
+@@ -387,6 +387,7 @@ export namespace fan {
+     void set_error_callback(GLFWerrorfun callback);
+ 
+     void show();
++    bool is_wayland() const;
+ 
+ #if defined(fan_platform_windows)
+     //---------------------------Windows specific code---------------------------
+diff --git a/fan/window/window_impl.cpp b/fan/window/window_impl.cpp
+index 821bc37..a4388a9 100644
+--- a/fan/window/window_impl.cpp
++++ b/fan/window/window_impl.cpp
+@@ -966,6 +966,14 @@ namespace fan {
+     glfwShowWindow(*this);
+   }
+ 
++  bool window_t::is_wayland() const {
++  #if GLFW_VERSION_MAJOR > 3 || (GLFW_VERSION_MAJOR == 3 && GLFW_VERSION_MINOR >= 4)
++    return glfwGetPlatform() == GLFW_PLATFORM_WAYLAND;
++  #else
++    return false;
++  #endif
++  }
++
+ #if defined(fan_platform_windows)
+   //---------------------------Windows specific code---------------------------
+ 
 diff --git a/xmake.lua b/xmake.lua
 index 8089cfb..e8c9b62 100644
 --- a/xmake.lua
