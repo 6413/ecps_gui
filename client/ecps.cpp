@@ -57,7 +57,7 @@ std::timed_mutex render_mutex;
 std::timed_mutex task_mutex;
 
 struct render_thread_t;
-#define ecps_debug_prints 0
+#define ecps_debug_prints 1
 
 // fan::print_throttled_format is currently a no-op in fan, so throttle here:
 // at most one line per call site every 250 ms
