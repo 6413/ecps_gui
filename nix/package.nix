@@ -135,7 +135,15 @@ clangStdenv.mkDerivation {
     export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -B$TMPDIR/stdmod"
     clang++ -print-file-name=libstdc++.modules.json
 
-    export ECPS_EXTRA_CFLAGS="$NIX_CFLAGS_COMPILE $(cat $NIX_CC/nix-support/libcxx-cxxflags 2>/dev/null || true) $(cat $NIX_CC/nix-support/cc-cflags) -resource-dir=$(clang++ -print-resource-dir)"
+    # same order the wrapper uses: C++ stdlib headers, compiler flags, then libc
+    # (glibc's headers like features.h come from libc-cflags via -idirafter)
+    wrapper_flags=""
+    for f in libcxx-cxxflags cc-cxxflags cc-cflags libc-cflags; do
+      if [ -f $NIX_CC/nix-support/$f ]; then
+        wrapper_flags="$wrapper_flags $(cat $NIX_CC/nix-support/$f)"
+      fi
+    done
+    export ECPS_EXTRA_CFLAGS="$NIX_CFLAGS_COMPILE $wrapper_flags -resource-dir=$(clang++ -print-resource-dir)"
 
     bash ecps_gui/nix/build-ecps.sh fan ecps_gui clang
     runHook postBuild
