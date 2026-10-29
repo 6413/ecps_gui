@@ -7,8 +7,6 @@
 #include <WITCH/WITCH.h>
 #include <WITCH/STR/psh.h>
 
-#include <fan/types/vector_simple.h>
-
 #include _WITCH_PATH(MEM/MEM.h)
 #include _WITCH_PATH(STR/common/common.h)
 #include _WITCH_PATH(IO/IO.h)
@@ -20,6 +18,7 @@
 #include _WITCH_PATH(NET/NET.h)
 #include _WITCH_PATH(NET/TCP/TCP.h)
 
+import fan.types.vector;
 import fan.event.types;
 import fan.time;
 import fan.print;
@@ -351,7 +350,7 @@ void drop_old_incomplete_frames() {
   while (it != g_server_frames.end()) {
     uint64_t estimated_rtt = 50000000ULL; // 50ms default if unknown
     uint64_t adaptive_timeout = 50000000ULL + estimated_rtt * 2 + 30000000ULL;
-    adaptive_timeout = std::clamp(adaptive_timeout, 80000000ULL, 300000000ULL);
+    adaptive_timeout = std::clamp<uint64_t>(adaptive_timeout, 80000000ULL, 300000000ULL);
 
     if (now - it->second.first_packet_time > adaptive_timeout) {
       it = g_server_frames.erase(it);

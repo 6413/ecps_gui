@@ -41,17 +41,30 @@
             VulkanMemoryAllocator VulkanUtilityLibraries;
         };
       };
+      ecps-server = pkgs.callPackage ./nix/server.nix {
+        llvmPackages = pkgs.llvmPackages_latest;
+        gccForLibs = pkgs.gcc15.cc;
+        ecpsSrc = self;
+        fanSrc = inputs.fan;
+        thirdParty = { inherit (inputs) WITCH BCOL BLL BVEC BDBT bcontainer; };
+      };
     in {
       packages.${system} = {
-        inherit ecps;
+        inherit ecps ecps-server;
         default = ecps;
       };
 
-      apps.${system}.default = {
-        type = "app";
-        program = "${ecps}/bin/ecps";
+      apps.${system} = {
+        default = {
+          type = "app";
+          program = "${ecps}/bin/ecps";
+        };
+        server = {
+          type = "app";
+          program = "${ecps-server}/bin/ecps-server";
+        };
       };
 
-      overlays.default = final: prev: { ecps = self.packages.${system}.ecps; };
+      overlays.default = final: prev: { inherit (self.packages.${system}) ecps ecps-server; };
     };
 }
