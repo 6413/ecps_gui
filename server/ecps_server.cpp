@@ -25,6 +25,12 @@ import fan.print;
 
 #include "Base.h"
 
+// WITCH's Windows NET backend only defines NET_SOL_SOCKET
+#ifndef NET_SO_SNDBUF
+  #define NET_SO_SNDBUF SO_SNDBUF
+  #define NET_SO_RCVBUF SO_RCVBUF
+#endif
+
 template <typename T>
 void
 UDP_send(
@@ -546,11 +552,11 @@ int main(int argc, char** argv) {
     __abort();
   }
 
-  if (NET_setsockopt(&g_pile->udp, SOL_SOCKET, SO_SNDBUF, 8388608) < 0) {
+  if (NET_setsockopt(&g_pile->udp, NET_SOL_SOCKET, NET_SO_SNDBUF, 8388608) < 0) {
     WriteInformation("Failed to set SO_SNDBUF\r\n");
   }
 
-  if (NET_setsockopt(&g_pile->udp, SOL_SOCKET, SO_RCVBUF, 8388608) < 0) {
+  if (NET_setsockopt(&g_pile->udp, NET_SOL_SOCKET, NET_SO_RCVBUF, 8388608) < 0) {
     WriteInformation("Failed to set SO_RCVBUF\r\n");
   }
 
