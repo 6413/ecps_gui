@@ -747,10 +747,11 @@ ecps_backend_t::ecps_backend_t() {
 
   __dme_get(Protocol_S2C, ChannelList) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::ChannelList_t>();
-    backend.available_channels.clear();
-    backend.available_channels.reserve(msg->ChannelCount);
+    uint16_t channel_count = msg->ChannelCount;
+    std::vector<ecps_backend_t::channel_list_info_t> channels;
+    channels.reserve(channel_count);
 
-    for (uint16_t i = 0; i < msg->ChannelCount; ++i) {
+    for (uint16_t i = 0; i < channel_count; ++i) {
       auto channel_info = co_await backend.tcp_client.read<Protocol_S2C_t::ChannelInfo_t>();
       ecps_backend_t::channel_list_info_t info;
       info.channel_id = channel_info->ChannelID;
@@ -759,8 +760,9 @@ ecps_backend_t::ecps_backend_t() {
       info.name = std::string(channel_info->Name, strnlen(channel_info->Name, 63));
       info.is_password_protected = (channel_info->IsPasswordProtected != 0);
       info.host_session_id = channel_info->HostSessionID;
-      backend.available_channels.push_back(info);
+      channels.push_back(info);
     }
+    backend.available_channels = std::move(channels);
     backend.channel_list_received = true;
   };
 
@@ -1745,9 +1747,25 @@ int main() {
 
           std::unique_lock<std::timed_mutex> frame_list_lock(ecps_backend.share.frame_list_mutex, std::try_to_lock);
           if (frame_list_lock.owns_lock()) {
-            bool is_idr = (rt->screen_encoder.encode_write_flags & fan::graphics::codec_update_e::force_keyframe) != 0;
+            // encode_write already cleared the force_keyframe flag, the encoded frame is the source of truth
+            bool is_idr = is_keyframe;
+
+            // a backlog is latency on the viewer side, a keyframe lets the queue be dropped safely
+            static auto last_backlog_idr = std::chrono::steady_clock::now();
+            auto backlog_now = std::chrono::steady_clock::now();
+            if (!is_idr && ecps_backend.share.m_NetworkFlow.FrameList.Usage() > dynamic_config_t::get_adaptive_queue_size() &&
+              backlog_now - last_backlog_idr > std::chrono::seconds(1)) {
+              rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
+              last_backlog_idr = backlog_now;
+            }
 
             if (is_idr) {
+              // a partly sent frame is dropped here, its sequence must not be reused
+              auto head = ecps_backend.share.m_NetworkFlow.FrameList.GetNodeFirst();
+              if (head != ecps_backend.share.m_NetworkFlow.FrameList.dst &&
+                ecps_backend.share.m_NetworkFlow.FrameList[head].SentOffset) {
+                ++ecps_backend.share.frame_index;
+              }
               while (ecps_backend.share.m_NetworkFlow.FrameList.Usage() > 0) {
                 auto old = ecps_backend.share.m_NetworkFlow.FrameList.GetNodeFirst();
                 ecps_backend.share.m_NetworkFlow.FrameList.unlrec(old);

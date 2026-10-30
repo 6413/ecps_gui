@@ -114,6 +114,9 @@ case Protocol_C2S_t::CreateChannel:{
       jc);
   }
 
+  Channel_BroadcastSessionList(ChannelID);
+  Channel_BroadcastChannelList();
+
   goto StateDone_gt;
 }
 case Protocol_C2S_t::JoinChannel:{
@@ -162,6 +165,7 @@ case Protocol_C2S_t::JoinChannel:{
   }
 
   Channel_BroadcastSessionList(ChannelID);
+  Channel_BroadcastChannelList();
   ScreenShare_SendFlagTo(ChannelID, {ChannelID, ChannelSessionID});
 
   goto StateDone_gt;
@@ -332,61 +336,7 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard:{
   goto StateDone_gt;
 }
 case Protocol_C2S_t::RequestChannelList: {
-  uint16_t channel_count = 0;
-  
-  auto nr = g_pile->ChannelList.GetNodeFirst();
-  while (nr != g_pile->ChannelList.dst) {
-    auto n = g_pile->ChannelList.GetNodeByReference(nr);
-    channel_count++;
-    nr = n->NextNodeReference;
-  }
-  
-  size_t response_size = sizeof(Protocol_S2C_t::ChannelList_t) + 
-                        (channel_count * sizeof(Protocol_S2C_t::ChannelInfo_t));
-  
-  uint8_t* response_buffer = (uint8_t*)malloc(response_size);
-  if (!response_buffer) {
-    goto StateDone_gt;
-  }
-  
-  auto channel_list = (Protocol_S2C_t::ChannelList_t*)response_buffer;
-  channel_list->ChannelCount = channel_count;
-  
-  auto channel_info_array = (Protocol_S2C_t::ChannelInfo_t*)(response_buffer + sizeof(Protocol_S2C_t::ChannelList_t));
-  uint16_t info_index = 0;
-  
-  nr = g_pile->ChannelList.GetNodeFirst();
-  while (nr != g_pile->ChannelList.dst && info_index < channel_count) {
-    auto n = g_pile->ChannelList.GetNodeByReference(nr);
-    
-    Protocol_ChannelID_t channel_id(nr);
-    auto& info = channel_info_array[info_index++];
-      
-    info.ChannelID = channel_id;
-    info.Type = n->data.Type;
-    info.UserCount = GetChannelUserCount(channel_id);
-    info.HostSessionID = GetChannelHost(channel_id);
-    info.IsPasswordProtected = 0;
-    //
-    const char* username = GetSessionUsername(GetChannelHost(channel_id));
-    strncpy(info.Name, username, sizeof(info.Name) - 1);
-    info.Name[sizeof(info.Name) - 1] = '\0';
-    
-    nr = n->NextNodeReference;
-  }
-  
-  TCP_WriteCommand(
-    peer,
-    BasePacket->ID,
-    Protocol_S2C_t::ChannelList,
-    *channel_list
-  );
-  
-  if (channel_count > 0) {
-    TCP_write_DynamicPointer(peer, channel_info_array, channel_count * sizeof(Protocol_S2C_t::ChannelInfo_t));
-  }
-  
-  free(response_buffer);
+  Channel_SendChannelList(peer, BasePacket->ID);
   
   goto StateDone_gt;
 }

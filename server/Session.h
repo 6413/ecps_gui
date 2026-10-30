@@ -52,6 +52,7 @@ void _Close_ChannelClose(Protocol_ChannelID_t ChannelID){
 
 void Close(Protocol_SessionID_t SessionID){
   auto Session = &g_pile->SessionList[SessionID];
+  Session->TCP.peer = nullptr;
 
   auto nr = Session->ChannelList.GetNodeFirst();
   while(nr != Session->ChannelList.dst){
@@ -78,6 +79,8 @@ void Close(Protocol_SessionID_t SessionID){
     nr = n->NextNodeReference;
   }
   Session->ChannelList.Close();
+
+  Channel_BroadcastChannelList();
 }
 
 } // namespace Session

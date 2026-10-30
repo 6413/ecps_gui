@@ -170,14 +170,57 @@ void Channel_SendSessionList(NET_TCP_peer_t *peer, uint32_t ID, Protocol_Channel
   }
 }
 
-void Channel_BroadcastSessionList(Protocol_ChannelID_t ChannelID) {
-  auto& Channel = g_pile->ChannelList[ChannelID];
-  auto nr = Channel.SessionList.GetNodeFirst();
-  while (nr != Channel.SessionList.dst) {
-    auto n = Channel.SessionList.GetNodeByReference(nr);
-    Channel_SendSessionList(g_pile->SessionList[n->data.SessionID].TCP.peer, 0, ChannelID);
+void Channel_SendChannelList(NET_TCP_peer_t *peer, uint32_t ID) {
+  std::vector<Protocol_S2C_t::ChannelInfo_t> infos;
+  auto nr = g_pile->ChannelList.GetNodeFirst();
+  while (nr != g_pile->ChannelList.dst) {
+    auto n = g_pile->ChannelList.GetNodeByReference(nr);
+    Protocol_ChannelID_t channel_id(nr);
+
+    Protocol_S2C_t::ChannelInfo_t info{};
+    info.ChannelID = channel_id;
+    info.Type = n->data.Type;
+    info.UserCount = GetChannelUserCount(channel_id);
+    info.HostSessionID = GetChannelHost(channel_id);
+    info.IsPasswordProtected = 0;
+    strncpy(info.Name, GetSessionUsername(GetChannelHost(channel_id)), sizeof(info.Name) - 1);
+    info.Name[sizeof(info.Name) - 1] = '\0';
+    infos.push_back(info);
+
     nr = n->NextNodeReference;
   }
+
+  Protocol_S2C_t::ChannelList_t channel_list;
+  channel_list.ChannelCount = (uint16_t)infos.size();
+  TCP_WriteCommand(peer, ID, Protocol_S2C_t::ChannelList, channel_list);
+  if (!infos.empty()) {
+    TCP_write_DynamicPointer(peer, infos.data(), infos.size() * sizeof(Protocol_S2C_t::ChannelInfo_t));
+  }
+}
+
+// sessions stay in SessionList after closing, TCP.peer is null for those
+template <typename F>
+void ForEachConnectedSession(F f) {
+  auto nr = g_pile->SessionList.GetNodeFirst();
+  while (nr != g_pile->SessionList.dst) {
+    auto n = g_pile->SessionList.GetNodeByReference(nr);
+    if (n->data.TCP.peer != nullptr && n->data.TCP.Crypto.ready) {
+      f(n->data.TCP.peer);
+    }
+    nr = n->NextNodeReference;
+  }
+}
+
+void Channel_BroadcastSessionList(Protocol_ChannelID_t ChannelID) {
+  ForEachConnectedSession([&](NET_TCP_peer_t *peer) {
+    Channel_SendSessionList(peer, 0, ChannelID);
+  });
+}
+
+void Channel_BroadcastChannelList() {
+  ForEachConnectedSession([](NET_TCP_peer_t *peer) {
+    Channel_SendChannelList(peer, 0);
+  });
 }
 
 void NotifyChannelListChanged() {
