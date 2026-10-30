@@ -1,0 +1,876 @@
+diff --git a/fan/fan.ixx b/fan/fan.ixx
+index a904136..5e8cb43 100644
+--- a/fan/fan.ixx
++++ b/fan/fan.ixx
+@@ -117,6 +117,7 @@ export import fan.graphics.gui.inventory;
+ #endif
+ 
+ export import fan.crypto;
++export import fan.network.crypto;
+ 
+ //#if defined(FAN_REFLECTION)
+ //  export import fan.reflection;
+diff --git a/fan/network/network.ixx b/fan/network/network.ixx
+index 6589966..baa88a9 100644
+--- a/fan/network/network.ixx
++++ b/fan/network/network.ixx
+@@ -28,6 +28,7 @@ import fan.print.error;
+ import fan.types.json;
+ import fan.memory;
+ import fan.event;
++import fan.network.crypto;
+ 
+ export namespace fan {
+   namespace network {
+@@ -120,12 +121,13 @@ export namespace fan {
+     struct raw_writer_t {
+       struct writer_data_t;
+       std::unique_ptr<writer_data_t> data;
++      std::shared_ptr<crypto::secure_stream_t> secure;
+ 
+       raw_writer_t(const tcp_t& tcp);
+       raw_writer_t(raw_writer_t&&) noexcept;
+       raw_writer_t& operator=(raw_writer_t&&) noexcept;
+ 
+-      int write(const buffer_t& some_data);
++      int write(buffer_t some_data);
+       bool await_ready() const noexcept;
+       void await_suspend(std::coroutine_handle<> h) noexcept;
+       int await_resume() noexcept;
+@@ -180,6 +182,8 @@ export namespace fan {
+       bool reading_header{ true };
+       bool is_raw_read{ false };
+       bool is_fixed_size_read{ false };
++      std::shared_ptr<crypto::secure_stream_t> secure;
++      std::vector<char> plain;
+ 
+       static constexpr std::size_t header_size = sizeof(std::uint64_t);
+       static constexpr std::size_t default_buffer_size = 64 * 1024;
+@@ -191,6 +195,7 @@ export namespace fan {
+       void setup_fixed_size_read(ssize_t len);
+       void setup_raw_read();
+       void setup_header_read();
++      void decrypt_buffered();
+       void stop();
+       int start() noexcept;
+       bool await_ready() const;
+@@ -298,6 +303,7 @@ export namespace fan {
+       using listen_cb_t = std::function<fan::event::task_t(tcp_t&)>;
+ 
+       std::shared_ptr<uv_tcp_t> socket;
++      std::shared_ptr<crypto::secure_stream_t> secure = std::make_shared<crypto::secure_stream_t>();
+ 
+       operator tcp_id_t () const { return nr; }
+ 
+@@ -312,6 +318,8 @@ export namespace fan {
+       tcp_t(tcp_t&&) = default;
+       tcp_t& operator=(tcp_t&&) = delete;
+ 
++      void reset();
++      void enable_secure(const crypto::x25519_key_t& send_key, const crypto::x25519_key_t& recv_key);
+       fan::event::error_code_t accept(tcp_t& client) noexcept;
+       fan::event::error_code_t bind(const std::string& ip, int port) noexcept;
+       fan::event::task_t listen(const listen_address_t& address, listen_cb_t lambda, bool bind = false);
+@@ -359,6 +367,11 @@ export namespace fan {
+         w.write(data);
+         return w;
+       }
++      raw_writer_t write_raw(buffer_t&& data) const {
++        raw_writer_t w{ *this };
++        w.write(std::move(data));
++        return w;
++      }
+       raw_writer_t write_raw(const std::string& data) const {
+         return write_raw(buffer_t(data.begin(), data.end()));
+       }
+@@ -410,6 +423,8 @@ export namespace fan {
+       udp_datagram_t() : status(0) {}
+       udp_datagram_t(const buffer_t& msg, const socket_address_t& addr, ssize_t stat = 0)
+         : data(msg), sender(addr), status(stat) {}
++      udp_datagram_t(buffer_t&& msg, const socket_address_t& addr, ssize_t stat = 0)
++        : data(std::move(msg)), sender(addr), status(stat) {}
+ 
+       operator bool() const { return status >= 0; }
+       operator std::string() const { return std::string(data.begin(), data.end()); }
+@@ -469,19 +484,12 @@ export namespace fan {
+     };
+ 
+     struct udp_recvfrom_t {
+-      std::shared_ptr<uv_udp_t> socket;
+-      std::coroutine_handle<> co_handle;
+-      udp_datagram_t datagram;
+-      bool ready{ false };
+-      bool receiving{ false };
+-      bool filter_sender{ false };
+-      socket_address_t expected_sender;
+-
+       udp_recvfrom_t(const udp_t& udp);
+ 
+       void set_expected_sender(const socket_address_t& sender);
+       void set_expected_sender(const std::string& ip, int port);
+       bool matches_expected_sender(const socket_address_t& actual_sender) const;
++      bool matches_expected_sender(const struct sockaddr* sa) const;
+ 
+       udp_recvfrom_t(const udp_recvfrom_t&) = delete;
+       udp_recvfrom_t(udp_recvfrom_t&& r) noexcept;
+@@ -489,10 +497,20 @@ export namespace fan {
+       int start();
+       void stop();
+ 
+-      bool await_ready() const { return ready; }
++      bool await_ready() const { return !queue.empty(); }
+       void await_suspend(std::coroutine_handle<> h);
+       udp_datagram_t await_resume();
+       ~udp_recvfrom_t();
++
++      static constexpr std::size_t max_datagram_size = 65536;
++      static constexpr std::size_t max_queue_size = 4096;
++      std::shared_ptr<uv_udp_t> socket;
++      std::coroutine_handle<> co_handle;
++      std::deque<udp_datagram_t> queue;
++      buffer_t recv_buffer;
++      bool receiving{ false };
++      bool filter_sender{ false };
++      socket_address_t expected_sender;
+     };
+ 
+     struct udp_t {
+@@ -586,30 +604,40 @@ export namespace fan {
+       send_keepalive_callback_t send_callback;
+       timeout_callback_t timeout_callback;
+       bool should_stop = false;
++      bool activity = false;
++      bool in_callback = false;
+ 
+       fan::event::task_t timer_coroutine() {
+         while (!should_stop && config.is_running) {
+           co_await fan::co_sleep(config.timer_steps[config.current_step] * 1000);
++          if (should_stop || !config.is_running) {
++            break;
++          }
++          if (activity) {
++            activity = false;
++            config.current_step = 0;
++            continue;
++          }
+           if (send_callback) {
+             try {
+               co_await send_callback(connection);
+             }
+-            catch (const std::exception& e) {
+-              fan::throw_error("Keep alive send failed: ", e.what());
+-            }
++            catch (...) {}
+           }
+-
+           if (config.current_step == config.timer_step_limit - 1) {
++            config.is_running = false;
+             if (timeout_callback) {
++              in_callback = true;
+               timeout_callback();
++              in_callback = false;
++            }
++            if (config.is_running) {
++              continue;
+             }
+             break;
+           }
+-          else {
+-            config.current_step++;
+-          }
++          ++config.current_step;
+         }
+-        co_return;
+       }
+ 
+     public:
+@@ -630,7 +658,10 @@ export namespace fan {
+         config.current_step = 0;
+         config.is_running = true;
+         should_stop = false;
+-        timer_task = timer_coroutine();
++        activity = false;
++        if (!in_callback) {
++          timer_task = timer_coroutine();
++        }
+       }
+ 
+       void stop() {
+@@ -639,11 +670,8 @@ export namespace fan {
+       }
+ 
+       void reset() {
+-        if (config.is_running) {
+-          stop();
+-          start();
+-        }
+-        else {
++        activity = true;
++        if (!config.is_running) {
+           start();
+         }
+       }
+@@ -672,21 +700,20 @@ export namespace fan {
+         co_return;
+       }
+ 
+-      void on_timeout() {
+-        fan::throw_error("TCP keep alive timeout");
+-      }
++      std::function<void()> timeout_cb;
+ 
+     public:
+-      explicit tcp_keep_alive_t(tcp_t& tcp_conn, auto send_keep_alive_cb)
+-        : tcp_connection(tcp_conn) {
++      explicit tcp_keep_alive_t(tcp_t& tcp_conn, auto send_keep_alive_cb, std::function<void()> on_timeout = {})
++        : tcp_connection(tcp_conn), timeout_cb(std::move(on_timeout)) {
+         timer = std::make_unique<keep_alive_timer_t<tcp_t>>(
+           tcp_connection,
+           [this, send_keep_alive_cb](tcp_t& tcp) -> fan::event::task_t {
+             co_await send_keep_alive_cb(tcp);
+           },
+-          [this]() { on_timeout(); }
++          [this]() { if (timeout_cb) { timeout_cb(); } }
+         );
+       }
++      void set_timeout_callback(std::function<void()> cb) { timeout_cb = std::move(cb); }
+       void start() { timer->start(); }
+       void stop() { timer->stop(); }
+       void reset() { timer->reset(); }
+@@ -709,13 +736,12 @@ export namespace fan {
+         co_return;
+       }
+ 
+-      void on_timeout() {
+-        fan::throw_error("UDP keep alive timeout");
+-      }
++      std::function<void()> timeout_cb;
+ 
+     public:
+       udp_keep_alive_t(udp_t& udp_conn) : udp_connection(udp_conn) {}
+ 
++      void set_timeout_callback(std::function<void()> cb) { timeout_cb = std::move(cb); }
+       void set_server(const socket_address_t& server_addr, auto send_keep_alive_cb) {
+         if (timer) {
+           timer->stop();
+@@ -728,7 +754,7 @@ export namespace fan {
+           [this, send_keep_alive_cb](udp_t& udp) -> fan::event::task_t {
+             co_await send_keep_alive_cb(udp);
+           },
+-          [this]() { on_timeout(); }
++          [this]() { if (timeout_cb) { timeout_cb(); } }
+         );
+         timer->start();
+       }
+diff --git a/fan/network/network_crypto.ixx b/fan/network/network_crypto.ixx
+new file mode 100644
+index 0000000..03cd475
+--- /dev/null
++++ b/fan/network/network_crypto.ixx
+@@ -0,0 +1,307 @@
++module;
++
++#include <openssl/crypto.h>
++#include <openssl/err.h>
++#include <openssl/evp.h>
++#include <openssl/kdf.h>
++#include <openssl/rand.h>
++#if OPENSSL_VERSION_MAJOR >= 3
++  #include <openssl/provider.h>
++#endif
++
++export module fan.network.crypto;
++
++import std;
++
++export namespace fan::network::crypto {
++  using x25519_key_t = std::array<std::uint8_t, 32>;
++  using confirm_t = std::array<std::uint8_t, 16>;
++  constexpr std::size_t tag_size = 16;
++
++  struct session_keys_t {
++    x25519_key_t c2s;
++    x25519_key_t s2c;
++    confirm_t confirm;
++    x25519_key_t tcp_c2s;
++    x25519_key_t tcp_s2c;
++  };
++
++  enum class pin_result_e {
++    pinned,
++    matched,
++    mismatch,
++    io_error
++  };
++
++  void ensure_providers() {
++  #if OPENSSL_VERSION_MAJOR >= 3
++    static bool loaded = OSSL_PROVIDER_try_load(nullptr, "default", 1) != nullptr;
++    (void)loaded;
++  #endif
++  }
++  bool x25519_public(const x25519_key_t& priv, x25519_key_t& pub) {
++    ensure_providers();
++    EVP_PKEY* k = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, priv.data(), priv.size());
++    std::size_t n = pub.size();
++    if (!k) {
++      return false;
++    }
++    bool ok = EVP_PKEY_get_raw_public_key(k, pub.data(), &n) == 1 && n == pub.size();
++    EVP_PKEY_free(k);
++    return ok;
++  }
++  bool x25519_keygen(x25519_key_t& priv, x25519_key_t& pub) {
++    return RAND_bytes(priv.data(), priv.size()) == 1 && x25519_public(priv, pub);
++  }
++  bool x25519(const x25519_key_t& priv, const x25519_key_t& peer, std::uint8_t* out) {
++    ensure_providers();
++    EVP_PKEY* k = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, priv.data(), priv.size());
++    EVP_PKEY* p = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peer.data(), peer.size());
++    EVP_PKEY_CTX* c = k ? EVP_PKEY_CTX_new(k, nullptr) : nullptr;
++    std::size_t n = 32;
++    bool ok = c && p
++      && EVP_PKEY_derive_init(c) == 1
++      && EVP_PKEY_derive_set_peer(c, p) == 1
++      && EVP_PKEY_derive(c, out, &n) == 1 && n == 32;
++    EVP_PKEY_CTX_free(c);
++    EVP_PKEY_free(p);
++    EVP_PKEY_free(k);
++    return ok;
++  }
++  bool hkdf(const std::uint8_t* ikm, std::size_t ikm_size, const std::uint8_t* salt, std::size_t salt_size, std::string_view info, std::uint8_t* out, std::size_t out_size) {
++    ensure_providers();
++    EVP_PKEY_CTX* c = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr);
++    bool ok = c
++      && EVP_PKEY_derive_init(c) == 1
++      && EVP_PKEY_CTX_set_hkdf_md(c, EVP_sha256()) == 1
++      && EVP_PKEY_CTX_set1_hkdf_salt(c, salt, salt_size) == 1
++      && EVP_PKEY_CTX_set1_hkdf_key(c, ikm, ikm_size) == 1
++      && EVP_PKEY_CTX_add1_hkdf_info(c, (const unsigned char*)info.data(), info.size()) == 1
++      && EVP_PKEY_derive(c, out, &out_size) == 1;
++    EVP_PKEY_CTX_free(c);
++    return ok;
++  }
++  bool derive(const std::uint8_t* dh, const x25519_key_t& client_pub, const x25519_key_t& server_eph_pub, const x25519_key_t& server_static_pub, std::string_view context, session_keys_t& out) {
++    std::uint8_t salt[96];
++    std::memcpy(salt, client_pub.data(), 32);
++    std::memcpy(salt + 32, server_eph_pub.data(), 32);
++    std::memcpy(salt + 64, server_static_pub.data(), 32);
++    static_assert(sizeof(session_keys_t) == 32 * 4 + 16);
++    bool ok = hkdf(dh, 64, salt, sizeof(salt), context, (std::uint8_t*)&out, sizeof(out));
++    return ok;
++  }
++  bool client_handshake(const x25519_key_t& client_priv, const x25519_key_t& client_pub, const x25519_key_t& server_eph_pub, const x25519_key_t& server_static_pub, std::string_view context, session_keys_t& out) {
++    std::uint8_t dh[64];
++    bool ok = x25519(client_priv, server_eph_pub, dh)
++      && x25519(client_priv, server_static_pub, dh + 32)
++      && derive(dh, client_pub, server_eph_pub, server_static_pub, context, out);
++    OPENSSL_cleanse(dh, sizeof(dh));
++    return ok;
++  }
++  bool server_handshake(const x25519_key_t& static_priv, const x25519_key_t& static_pub, const x25519_key_t& client_pub, std::string_view context, x25519_key_t& eph_pub, session_keys_t& out) {
++    x25519_key_t eph_priv;
++    std::uint8_t dh[64];
++    bool ok = x25519_keygen(eph_priv, eph_pub)
++      && x25519(eph_priv, client_pub, dh)
++      && x25519(static_priv, client_pub, dh + 32)
++      && derive(dh, client_pub, eph_pub, static_pub, context, out);
++    OPENSSL_cleanse(dh, sizeof(dh));
++    OPENSSL_cleanse(eph_priv.data(), eph_priv.size());
++    return ok;
++  }
++  bool confirm_equal(const confirm_t& a, const std::uint8_t* b) {
++    return CRYPTO_memcmp(a.data(), b, a.size()) == 0;
++  }
++  void cleanse(void* p, std::size_t size) {
++    OPENSSL_cleanse(p, size);
++  }
++  bool aead(bool enc, const x25519_key_t& key, std::uint64_t counter, const std::uint8_t* aad, std::size_t aad_size, std::uint8_t* data, std::size_t size, std::uint8_t* tag) {
++    ensure_providers();
++    std::uint8_t nonce[12] = {};
++    std::memcpy(nonce + 4, &counter, 8);
++    EVP_CIPHER_CTX* c = EVP_CIPHER_CTX_new();
++    int n = 0;
++    bool ok = c
++      && EVP_CipherInit_ex(c, EVP_chacha20_poly1305(), nullptr, key.data(), nonce, enc) == 1
++      && (enc || EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_AEAD_SET_TAG, tag_size, tag) == 1)
++      && EVP_CipherUpdate(c, nullptr, &n, aad, aad_size) == 1
++      && (size == 0 || EVP_CipherUpdate(c, data, &n, data, size) == 1)
++      && EVP_CipherFinal_ex(c, data + size, &n) == 1
++      && (!enc || EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_AEAD_GET_TAG, tag_size, tag) == 1);
++    EVP_CIPHER_CTX_free(c);
++    return ok;
++  }
++  std::string to_hex(const std::uint8_t* data, std::size_t size) {
++    static constexpr char digits[] = "0123456789abcdef";
++    std::string r(size * 2, 0);
++    for (std::size_t i = 0; i < size; ++i) {
++      r[i * 2] = digits[data[i] >> 4];
++      r[i * 2 + 1] = digits[data[i] & 15];
++    }
++    return r;
++  }
++  std::string openssl_error() {
++    char buf[256];
++    unsigned long e = ERR_get_error();
++    if (!e) {
++      return "no openssl error queued";
++    }
++    ERR_error_string_n(e, buf, sizeof(buf));
++    ERR_clear_error();
++    return buf;
++  }
++  bool load_or_create_key(const std::string& path, x25519_key_t& priv, x25519_key_t& pub, std::string* error = nullptr) {
++    auto fail = [&](std::string msg) {
++      if (error) {
++        std::error_code ec;
++        *error = msg + " (" + std::filesystem::absolute(path, ec).string() + ")";
++      }
++      return false;
++    };
++    std::error_code ec;
++    if (std::filesystem::exists(path, ec)) {
++      std::ifstream in(path, std::ios::binary);
++      if (!in.read((char*)priv.data(), priv.size())) {
++        return fail("key file is shorter than 32 bytes, delete it to generate a new one");
++      }
++      return x25519_public(priv, pub) || fail("x25519 public key derivation failed: " + openssl_error());
++    }
++    ensure_providers();
++    if (RAND_bytes(priv.data(), priv.size()) != 1) {
++      return fail("RAND_bytes failed: " + openssl_error());
++    }
++    if (!x25519_public(priv, pub)) {
++      return fail("x25519 key creation failed: " + openssl_error() + ", OpenSSL " + OpenSSL_version(OPENSSL_VERSION) + ", OPENSSL_CONF=" + (std::getenv("OPENSSL_CONF") ? std::getenv("OPENSSL_CONF") : "unset"));
++    }
++    std::ofstream out(path, std::ios::binary | std::ios::trunc);
++    if (!out) {
++      return fail("cannot create key file: " + std::generic_category().message(errno));
++    }
++    out.write((const char*)priv.data(), priv.size());
++    out.close();
++    if (!out) {
++      return fail("cannot write key file");
++    }
++    std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ec);
++    return true;
++  }
++  pin_result_e check_pinned_key(const std::string& path, const std::string& host, const x25519_key_t& key) {
++    std::string hex = to_hex(key.data(), key.size());
++    std::ifstream in(path);
++    std::string h, k;
++    while (in >> h >> k) {
++      if (h == host) {
++        return k == hex ? pin_result_e::matched : pin_result_e::mismatch;
++      }
++    }
++    std::ofstream out(path, std::ios::app);
++    out << host << ' ' << hex << '\n';
++    return out ? pin_result_e::pinned : pin_result_e::io_error;
++  }
++
++  struct replay_window_t {
++    bool accept(std::uint64_t n) {
++      if (n + window_size <= top) {
++        return false;
++      }
++      if (n >= top) {
++        for (std::uint64_t i = top; i <= n && i < top + window_size; ++i) {
++          seen.reset(i % window_size);
++        }
++        top = n + 1;
++      }
++      else if (seen[n % window_size]) {
++        return false;
++      }
++      seen.set(n % window_size);
++      return true;
++    }
++    static constexpr std::size_t window_size = 1024;
++    std::bitset<window_size> seen;
++    std::uint64_t top = 0;
++  };
++
++  struct secure_channel_t {
++    void set(const x25519_key_t& send, const x25519_key_t& recv) {
++      *this = {};
++      send_key = send;
++      recv_key = recv;
++      ready = true;
++    }
++    void set_client(const session_keys_t& keys) {
++      set(keys.c2s, keys.s2c);
++    }
++    void set_server(const session_keys_t& keys) {
++      set(keys.s2c, keys.c2s);
++    }
++    std::size_t seal(std::uint8_t* packet, std::size_t header_size, std::size_t size, std::uint64_t nonce) {
++      return ready && aead(true, send_key, nonce, packet, header_size, packet + header_size, size - header_size, packet + size) ? size + tag_size : 0;
++    }
++    std::size_t open(std::uint8_t* packet, std::size_t header_size, std::size_t size, std::uint64_t nonce) {
++      if (!ready || size < header_size + tag_size) {
++        return 0;
++      }
++      size -= tag_size;
++      return aead(false, recv_key, nonce, packet, header_size, packet + header_size, size - header_size, packet + size) && window.accept(nonce) ? size : 0;
++    }
++    x25519_key_t send_key{};
++    x25519_key_t recv_key{};
++    std::uint64_t send_nonce = 0;
++    replay_window_t window;
++    bool ready = false;
++  };
++
++  struct secure_stream_t {
++    void set(const x25519_key_t& send, const x25519_key_t& recv) {
++      *this = {};
++      send_key = send;
++      recv_key = recv;
++      ready = true;
++    }
++    std::vector<char> seal(const char* data, std::size_t size) {
++      std::vector<char> out;
++      out.reserve(size + (size / max_record + 1) * (2 + tag_size));
++      while (size) {
++        std::uint16_t n = (std::uint16_t)std::min(size, max_record);
++        std::size_t at = out.size();
++        out.resize(at + 2 + n + tag_size);
++        auto p = (std::uint8_t*)out.data() + at;
++        std::memcpy(p, &n, 2);
++        std::memcpy(p + 2, data, n);
++        aead(true, send_key, send_counter++, p, 2, p + 2, n, p + 2 + n);
++        data += n;
++        size -= n;
++      }
++      return out;
++    }
++    bool open(const char* data, std::size_t size, std::vector<char>& out) {
++      pending.insert(pending.end(), data, data + size);
++      std::size_t off = 0;
++      while (pending.size() - off >= 2) {
++        std::uint16_t n;
++        std::memcpy(&n, pending.data() + off, 2);
++        if (n == 0 || n > max_record) {
++          return false;
++        }
++        if (pending.size() - off < 2 + n + tag_size) {
++          break;
++        }
++        auto p = (std::uint8_t*)pending.data() + off;
++        if (!aead(false, recv_key, recv_counter++, p, 2, p + 2, n, p + 2 + n)) {
++          return false;
++        }
++        out.insert(out.end(), p + 2, p + 2 + n);
++        off += 2 + n + tag_size;
++      }
++      pending.erase(pending.begin(), pending.begin() + off);
++      return true;
++    }
++    static constexpr std::size_t max_record = 16384;
++    x25519_key_t send_key{};
++    x25519_key_t recv_key{};
++    std::uint64_t send_counter = 0;
++    std::uint64_t recv_counter = 0;
++    std::vector<char> pending;
++    bool ready = false;
++  };
++}
+\ No newline at end of file
+diff --git a/fan/network/network_impl.cpp b/fan/network/network_impl.cpp
+index 25ca9af..bef2110 100644
+--- a/fan/network/network_impl.cpp
++++ b/fan/network/network_impl.cpp
+@@ -223,7 +223,7 @@ namespace fan {
+     raw_writer_t& raw_writer_t::operator=(raw_writer_t&&) noexcept = default;
+ 
+     raw_writer_t::raw_writer_t(const tcp_t& tcp) :
+-      data(new writer_data_t{ std::reinterpret_pointer_cast<uv_stream_t>(tcp.socket) }) {
++      data(new writer_data_t{ std::reinterpret_pointer_cast<uv_stream_t>(tcp.socket) }), secure(tcp.secure) {
+       data->write_handle.data = data.get();
+     }
+ 
+@@ -234,12 +234,15 @@ namespace fan {
+       return data->status;
+     }
+ 
+-    int raw_writer_t::write(const buffer_t& some_data) {
++    int raw_writer_t::write(buffer_t some_data) {
+       if (!uv_is_writable(data->stream.get())) { 
+         fan::throw_error("tcp write failed: socket not writable (not connected)");
+       }
++      if (secure && secure->ready) {
++        some_data = secure->seal(some_data.data(), some_data.size());
++      }
+ 
+-      data->to_write = some_data;
++      data->to_write = std::move(some_data);
+       data->status = 1;
+       uv_buf_t buf = uv_buf_init(data->to_write.data(), data->to_write.size());
+       int r = uv_write(&data->write_handle, data->stream.get(), &buf, 1,
+@@ -313,7 +316,7 @@ namespace fan {
+ 
+     reader_t::reader_t(const tcp_t& tcp)
+       : stream{ std::reinterpret_pointer_cast<uv_stream_t>(tcp.socket) },
+-      temp_buf(default_buffer_size) {
++      temp_buf(default_buffer_size), secure(tcp.secure) {
+       stream->data = this;
+     }
+ 
+@@ -327,10 +330,30 @@ namespace fan {
+       bytes_read{ r.bytes_read },
+       reading_header{ r.reading_header },
+       is_raw_read{ r.is_raw_read },
+-      is_fixed_size_read{ r.is_fixed_size_read } {
++      is_fixed_size_read{ r.is_fixed_size_read },
++      secure{ std::move(r.secure) },
++      plain{ std::move(r.plain) } {
+       stream->data = this;
+     }
+ 
++    void reader_t::decrypt_buffered() {
++      std::size_t n = accumulated_buf.size();
++      if (!n) {
++        return;
++      }
++      std::vector<char> raw(n);
++      accumulated_buf.peek(raw.data(), n);
++      accumulated_buf.consume(n);
++      plain.clear();
++      if (!secure->open(raw.data(), n, plain)) {
++        nread = UV_EPROTO;
++        return;
++      }
++      if (!plain.empty()) {
++        accumulated_buf.push_back(plain.data(), plain.size());
++      }
++    }
++
+     void reader_t::setup_fixed_size_read(ssize_t len) {
+       reading_header = false;
+       expected_size = len;
+@@ -368,10 +391,22 @@ namespace fan {
+         [](uv_stream_t* req, ssize_t nread, const uv_buf_t* buf) {
+           auto self = static_cast<reader_t*>(req->data);
+           self->nread = nread;
+-          if (nread > 0) {
++          if (nread > 0 && self->secure && self->secure->ready) {
++            self->plain.clear();
++            if (!self->secure->open(self->temp_buf.data(), nread, self->plain)) {
++              self->nread = nread = UV_EPROTO;
++            }
++            else if (self->plain.empty()) {
++              self->nread = nread = 0;
++            }
++            else {
++              self->accumulated_buf.push_back(self->plain.data(), self->plain.size());
++            }
++          }
++          else if (nread > 0) {
+             self->accumulated_buf.push_back(self->temp_buf.data(), nread);
+           }
+-          [[likely]] if (self->co_handle && nread != 0) {
++          [[likely]] if (self->co_handle && (nread < 0 || self->await_ready())) {
+             self->co_handle();
+           }
+         }
+@@ -399,9 +434,7 @@ namespace fan {
+     message_t reader_t::await_resume() {
+       if (nread < 0) {
+         co_handle = nullptr;
+-        auto error_status = nread;
+-        nread = 0;
+-        return { .status = error_status, .done = true };
++        return { .status = nread, .done = true };
+       }
+ 
+       co_handle = nullptr;
+@@ -478,7 +511,7 @@ namespace fan {
+         reinterpret_cast<const char*>(&data_size) + sizeof(std::uint64_t)
+       );
+       message_data.insert(message_data.end(), user_data.begin(), user_data.end());
+-      return raw_writer.write(message_data);
++      return raw_writer.write(std::move(message_data));
+     }
+ 
+     client_handler_t::nr_t client_handler_t::add_client() {
+@@ -511,6 +544,20 @@ namespace fan {
+       uv_tcp_init((uv_loop_t*)fan::event::get_loop(), socket.get());
+     }
+ 
++    void tcp_t::enable_secure(const crypto::x25519_key_t& send_key, const crypto::x25519_key_t& recv_key) {
++      secure->set(send_key, recv_key);
++      if (reader) {
++        reader->decrypt_buffered();
++      }
++    }
++
++    void tcp_t::reset() {
++      reader.reset();
++      secure = std::make_shared<crypto::secure_stream_t>();
++      socket = std::shared_ptr<uv_tcp_t>(new uv_tcp_t, tcp_deleter_t{});
++      uv_tcp_init((uv_loop_t*)fan::event::get_loop(), socket.get());
++    }
++
+     tcp_t::~tcp_t() {
+       if (nr.iic()) {
+         return;
+@@ -731,11 +778,14 @@ namespace fan {
+       return uv_udp_recv_start(socket.get(),
+         [](uv_handle_t* handle, std::size_t suggested_size, uv_buf_t* buf) {
+           auto self = static_cast<udp_recv_t*>(handle->data);
+-          self->datagram.data.resize(2000);
+-          *buf = uv_buf_init(self->datagram.data.data(), 2000);
++          self->datagram.data.resize(udp_recvfrom_t::max_datagram_size);
++          *buf = uv_buf_init(self->datagram.data.data(), self->datagram.data.size());
+         },
+         [](uv_udp_t* handle, ssize_t nread, const uv_buf_t* buf, const struct sockaddr* addr, unsigned flags) {
+           auto self = static_cast<udp_recv_t*>(handle->data);
++          if (nread >= 0 && (!addr || (flags & UV_UDP_PARTIAL))) {
++            return;
++          }
+           self->datagram.status = nread;
+           self->ready = true;
+           if (nread > 0 && addr) {
+@@ -763,16 +813,18 @@ namespace fan {
+       stop();
+     }
+ 
+-    udp_recvfrom_t::udp_recvfrom_t(const udp_t& udp) : socket(udp.socket) {
++    udp_recvfrom_t::udp_recvfrom_t(const udp_t& udp) : socket(udp.socket), recv_buffer(max_datagram_size) {
+       socket->data = this;
+     }
+ 
+     udp_recvfrom_t::udp_recvfrom_t(udp_recvfrom_t&& r) noexcept :
+       socket{ std::move(r.socket) },
+       co_handle{ std::move(r.co_handle) },
+-      datagram{ std::move(r.datagram) },
+-      ready{ r.ready },
+-      receiving{ r.receiving } {
++      queue{ std::move(r.queue) },
++      recv_buffer{ std::move(r.recv_buffer) },
++      receiving{ std::exchange(r.receiving, false) },
++      filter_sender{ r.filter_sender },
++      expected_sender{ r.expected_sender } {
+       if (socket) {
+         socket->data = this;
+       }
+@@ -789,9 +841,23 @@ namespace fan {
+     }
+ 
+     bool udp_recvfrom_t::matches_expected_sender(const socket_address_t& actual_sender) const {
+-      if (!filter_sender) return true;
+-      return (expected_sender.get_ip() == actual_sender.get_ip() &&
+-        expected_sender.get_port() == actual_sender.get_port());
++      return matches_expected_sender(actual_sender.sockaddr_ptr());
++    }
++
++    bool udp_recvfrom_t::matches_expected_sender(const struct sockaddr* sa) const {
++      if (!filter_sender) {
++        return true;
++      }
++      auto& e = expected_sender.addr;
++      if (sa->sa_family != e.generic.sa_family) {
++        return false;
++      }
++      if (sa->sa_family == AF_INET) {
++        auto a = reinterpret_cast<const sockaddr_in*>(sa);
++        return a->sin_port == e.ipv4.sin_port && a->sin_addr.s_addr == e.ipv4.sin_addr.s_addr;
++      }
++      auto a = reinterpret_cast<const sockaddr_in6*>(sa);
++      return a->sin6_port == e.ipv6.sin6_port && std::memcmp(&a->sin6_addr, &e.ipv6.sin6_addr, sizeof(a->sin6_addr)) == 0;
+     }
+ 
+     int udp_recvfrom_t::start() {
+@@ -802,27 +868,21 @@ namespace fan {
+       return uv_udp_recv_start(socket.get(),
+         [](uv_handle_t* handle, std::size_t suggested_size, uv_buf_t* buf) {
+           auto self = static_cast<udp_recvfrom_t*>(handle->data);
+-          self->datagram.data.resize(2000);
+-          *buf = uv_buf_init(self->datagram.data.data(), 2000);
++          *buf = uv_buf_init(self->recv_buffer.data(), self->recv_buffer.size());
+         },
+         [](uv_udp_t* handle, ssize_t nread, const uv_buf_t* buf, const struct sockaddr* addr, unsigned flags) {
+           auto self = static_cast<udp_recvfrom_t*>(handle->data);
+-          if (nread > 0 && addr) {
+-            socket_address_t sender_addr(addr);
+-            if (self->filter_sender && !self->matches_expected_sender(sender_addr)) {
++          if (nread >= 0) {
++            if (nread == 0 || !addr || (flags & UV_UDP_PARTIAL) || self->queue.size() >= max_queue_size || !self->matches_expected_sender(addr)) {
+               return;
+             }
+-            self->datagram.status = nread;
+-            self->datagram.data.resize(nread);
+-            self->datagram.sender = sender_addr;
++            self->queue.emplace_back(buffer_t(buf->base, buf->base + nread), socket_address_t(addr), nread);
+           }
+           else {
+-            self->datagram.status = nread;
+-            self->datagram.data.clear();
++            self->queue.emplace_back(buffer_t{}, socket_address_t{}, nread);
+           }
+-          self->ready = true;
+-          if (self->co_handle) {
+-            self->co_handle();
++          if (auto h = std::exchange(self->co_handle, nullptr)) {
++            h();
+           }
+         }
+       );
+@@ -843,9 +903,10 @@ namespace fan {
+     }
+ 
+     udp_datagram_t udp_recvfrom_t::await_resume() {
+-      ready = false;
+       co_handle = nullptr;
+-      return std::move(datagram);
++      udp_datagram_t datagram = std::move(queue.front());
++      queue.pop_front();
++      return datagram;
+     }
+ 
+     udp_recvfrom_t::~udp_recvfrom_t() {
+@@ -884,8 +945,12 @@ namespace fan {
+         }
+       }
+ 
++      udp_recvfrom_t receiver{ *this };
++      if (!bind_) {
++        receiver.set_expected_sender(ip, port);
++      }
+       while (true) {
+-        auto datagram = co_await recvfrom(ip, port);
++        auto datagram = co_await receiver;
+         if (datagram.is_error()) {
+           if (datagram.status == UV_EOF) {
+             break;
+diff --git a/xmake.lua b/xmake.lua
+index 4014b77..a51b328 100644
+--- a/xmake.lua
++++ b/xmake.lua
+@@ -570,7 +570,7 @@ local module_files = {
+   "fan/types/flat_hash_map.ixx", "fan/types/bitset.ixx", "fan/memory/memory.ixx",
+   "fan/math/math.ixx", "fan/math/intersection.ixx", "fan/system/time.ixx", "fan/utils/mpl.ixx",
+   "fan/utils/utility.ixx", "fan/debug/formatter.ixx", "fan/debug/print_error.ixx", "fan/debug/print.ixx",
+-  "fan/utils/random.ixx", "fan/debug/log_dispatcher.ixx", "fan/utils/crypto.ixx", "fan/system/process.ixx",
++  "fan/utils/random.ixx", "fan/debug/log_dispatcher.ixx", "fan/utils/crypto.ixx", "fan/network/network_crypto.ixx", "fan/system/process.ixx",
+   "fan/system/dynamic_library.ixx", "fan/system/hot_reload.ixx",
+   "fan/io/io_types.ixx", "fan/io/directory.ixx", "fan/io/file.ixx", "fan/io/io_prompt.ixx",
+   "fan/event/event_types.ixx", "fan/event/event.ixx", "fan/event/uv_raw.ixx", "fan/utils/compression.ixx"
+@@ -833,7 +833,7 @@ if has_config("FAN_2D") then
+   add_linkdirs("third_party/fan/lib")
+ 
+   if is_plat("linux") then
+-    add_links("stdc++exp")
++    add_links("stdc++exp", "crypto")
+     if has_config("static_runtime") then add_ldflags("-static-libstdc++", "-static-libgcc", {force = true}) end
+     add_packages("libuv")
+     if has_config("FAN_WINDOW") then
+@@ -841,7 +841,7 @@ if has_config("FAN_2D") then
+     end
+ 
+     if has_config("FAN_AUDIO") then add_links("opus", "pulse-simple", "pulse") end
+-    if has_config("FAN_NETWORK") then add_links("ssl", "crypto", "curl") end
++    if has_config("FAN_NETWORK") then add_links("ssl", "curl") end
+     if has_config("FAN_GUI") then add_packages("freetype", "lunasvg") end
+     if has_config("FAN_PHYSICS_2D") then add_packages("box2d") end
+     if has_config("FAN_3D") then add_links("assimp") end

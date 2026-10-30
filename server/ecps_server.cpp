@@ -508,8 +508,8 @@ int main(int argc, char** argv) {
 
   RAND_hard_ram(g_pile->ServerRandom, sizeof(g_pile->ServerRandom));
 
-  if (!fan::network::crypto::load_or_create_key("ecps_server.key", g_pile->StaticPrivate, g_pile->StaticPublic)) {
-    WriteError("failed to load or create ecps_server.key\r\n");
+  if (std::string key_error; !fan::network::crypto::load_or_create_key("ecps_server.key", g_pile->StaticPrivate, g_pile->StaticPublic, &key_error)) {
+    fan::print("failed to load or create ecps_server.key:", key_error);
     __abort();
   }
   fan::print("server key:", fan::network::crypto::to_hex(g_pile->StaticPublic.data(), g_pile->StaticPublic.size()));

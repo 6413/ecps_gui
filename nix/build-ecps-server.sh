@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Builds the headless ecps server inside a fan source tree using only libraries
 # already installed in the environment, like build-ecps.sh does for the client.
-# The server only imports fan.event and fan.print, so fan is built with every
-# optional feature off: no window, Vulkan, shaderc or GUI.
+# The server only imports fan.event, fan.print and fan.network.crypto (a core module
+# on OpenSSL), so fan is built with every optional feature off: no window, Vulkan,
+# shaderc or GUI.
 #
 # Usage: build-ecps-server.sh <writable-fan-src> <ecps-src> [gcc|clang]
 # Extra flags can be passed with ECPS_EXTRA_CFLAGS / ECPS_EXTRA_LDFLAGS.

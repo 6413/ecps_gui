@@ -108,6 +108,7 @@ clangStdenv.mkDerivation {
   patchPhase = ''
     runHook prePatch
     patch -d fan -p1 < ecps_gui/nix/fan-ecps.patch
+    patch -d fan -p1 < ecps_gui/nix/fan-network.patch
 
     # same layout install.sh produces with git clone
     inc=fan/third_party/fan/include
