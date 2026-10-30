@@ -829,6 +829,16 @@ struct ecps_gui_t {
               gui::spacing();
               if (is_host_of_selected) {
                 stream_button_renderer_t::render_stream_toggle_button(This->selected_channel_id);
+                if (gui::checkbox("Preview own stream", &This->show_own_stream)) {
+                  if (auto rt = get_render_thread(); rt) {
+                    if (This->show_own_stream) {
+                      rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
+                    }
+                    else {
+                      rt->network_frame.set_image(engine.default_texture);
+                    }
+                  }
+                }
               }
 
               gui::end_tab_item();

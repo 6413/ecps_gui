@@ -161,13 +161,13 @@ case Protocol_C2S_t::JoinChannel:{
       jc);
   }
 
+  Channel_BroadcastSessionList(ChannelID);
   ScreenShare_SendFlagTo(ChannelID, {ChannelID, ChannelSessionID});
 
   goto StateDone_gt;
 }
 case Protocol_C2S_t::QuitChannel:{
   /* not implemented yet */
-  __abort();
   goto StateDone_gt;
 }
 case Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag:{
@@ -415,68 +415,7 @@ case Protocol_C2S_t::RequestChannelSessionList: {
     goto StateDone_gt;
   }
   
-  auto& Channel = g_pile->ChannelList[ChannelID];
-  
-  uint16_t session_count = 0;
-  auto nr = Channel.SessionList.GetNodeFirst();
-  while (nr != Channel.SessionList.dst) {
-    auto n = Channel.SessionList.GetNodeByReference(nr);
-    session_count++;
-    nr = n->NextNodeReference;
-  }
-  
-  size_t response_size = sizeof(Protocol_S2C_t::ChannelSessionList_t) + 
-                        (session_count * sizeof(Protocol_S2C_t::SessionInfo_t));
-  
-  uint8_t* response_buffer = (uint8_t*)malloc(response_size);
-  if (!response_buffer) {
-    goto StateDone_gt;
-  }
-  
-  auto session_list = (Protocol_S2C_t::ChannelSessionList_t*)response_buffer;
-  session_list->ChannelID = ChannelID;
-  session_list->SessionCount = session_count;
-  
-  auto session_info_array = (Protocol_S2C_t::SessionInfo_t*)(response_buffer + sizeof(Protocol_S2C_t::ChannelSessionList_t));
-  uint16_t info_index = 0;
-  
-  Protocol_SessionID_t host_session = GetChannelHost(ChannelID);
-  
-  nr = Channel.SessionList.GetNodeFirst();
-  while (nr != Channel.SessionList.dst && info_index < session_count) {
-    auto n = Channel.SessionList.GetNodeByReference(nr);
-    
-    auto& info = session_info_array[info_index++];
-    Protocol_ChannelSessionID_t channel_session_id(nr);
-      
-    info.SessionID = n->data.SessionID;
-    info.ChannelSessionID = channel_session_id;
-      
-    auto& user_session = g_pile->SessionList[n->data.SessionID];
-    info.AccountID = user_session.AccountID;
-      
-    info.IsHost = (n->data.SessionID == host_session) ? 1 : 0;
-    info.JoinedAt = 0;
-      
-    const char* username = GetSessionUsername(n->data.SessionID);
-    strncpy((char*)info.Username, username, sizeof(info.Username) - 1);
-    info.Username[sizeof(info.Username) - 1] = '\0';
-    
-    nr = n->NextNodeReference;
-  }
-  
-  TCP_WriteCommand(
-    peer,
-    BasePacket->ID,
-    Protocol_S2C_t::ChannelSessionList,
-    *session_list
-  );
-  
-  if (session_count > 0) {
-    TCP_write_DynamicPointer(peer, session_info_array, session_count * sizeof(Protocol_S2C_t::SessionInfo_t));
-  }
-  
-  free(response_buffer);
+  Channel_SendSessionList(peer, BasePacket->ID, ChannelID);
   
   goto StateDone_gt;
 }

@@ -432,8 +432,6 @@ struct render_thread_t {
   std::atomic<bool> has_task_work {false};
   std::atomic<bool> should_stop {false};
 
-  fan::graphics::image_t screen_image = engine.image_create();
-
   fan::graphics::universal_image_renderer_t network_frame {{
       .position = fan::vec3(fan::vec2(0), 1),
       .size = gloco()->window.get_size() / 2,
@@ -769,10 +767,12 @@ ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, ChannelSessionList) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::ChannelSessionList_t>();
     Protocol_ChannelID_t channel_id = msg->ChannelID;
-    backend.channel_sessions[channel_id.i].clear();
-    backend.channel_sessions[channel_id.i].reserve(msg->SessionCount);
+    uint16_t session_count = msg->SessionCount;
+    // keep the old list until the new one is fully read, the gui draws from it between reads
+    std::vector<ecps_backend_t::session_info_t> sessions;
+    sessions.reserve(session_count);
 
-    for (uint16_t i = 0; i < msg->SessionCount; ++i) {
+    for (uint16_t i = 0; i < session_count; ++i) {
       auto session_info = co_await backend.tcp_client.read<Protocol_S2C_t::SessionInfo_t>();
       ecps_backend_t::session_info_t info;
       info.session_id = session_info->SessionID;
@@ -781,7 +781,14 @@ ecps_backend_t::ecps_backend_t() {
       info.username = std::string((const char*)session_info->Username, strnlen((const char*)session_info->Username, 31));
       info.is_host = (session_info->IsHost != 0);
       info.joined_at = session_info->JoinedAt;
-      backend.channel_sessions[channel_id.i].push_back(info);
+      sessions.push_back(info);
+    }
+    backend.channel_sessions[channel_id.i] = std::move(sessions);
+    for (auto& channel : backend.available_channels) {
+      if (channel.channel_id.i == channel_id.i) {
+        channel.user_count = session_count;
+        break;
+      }
     }
   };
 
@@ -1315,7 +1322,7 @@ int main() {
           render_thread_instance.screen_decoder.graphics_queue.clear();
         }
 
-        if (render_thread_instance.ecps_gui.show_own_stream == false) {
+        {
           auto flnr = render_thread_instance.FrameList.GetNodeFirst();
           if (flnr != render_thread_instance.FrameList.dst) {
 
@@ -1627,32 +1634,6 @@ int main() {
           continue;
         }
 
-        if (rt->ecps_gui.show_own_stream && rt->screen_encoder.screen_buffer) {
-          uint32_t width = rt->screen_encoder.mdscr.Geometry.Resolution.x;
-          uint32_t height = rt->screen_encoder.mdscr.Geometry.Resolution.y;
-
-          if (width > 0 && height > 0) {
-            rt->ecps_gui.backend_queue([=]() -> fan::event::task_t {
-              auto* current_rt = render_thread_ptr.load(std::memory_order_acquire);
-              if (!current_rt) co_return;
-
-              try {
-                fan::graphics::image_load_properties_t props;
-                props.format = fan::graphics::image_format_e::bgra;
-                props.visual_output = fan::graphics::image_filter_e::linear;
-
-                fan::image::info_t image_info;
-                image_info.data = current_rt->screen_encoder.screen_buffer;
-                image_info.size = fan::vec2ui(width, height);
-
-                current_rt->engine.image_reload(current_rt->screen_image, image_info, props);
-              }
-              catch (...) {}
-              co_return;
-            });
-          }
-        }
-
         if (!rt->screen_encoder.encode_write()) {
           rt->screen_encoder.sleep_thread();
           continue;
@@ -1677,6 +1658,24 @@ int main() {
         size_t encoded_size = rt->screen_encoder.encode_read(&encoded_data);
 
         if (encoded_size > 0 && encoded_data) {
+          if (rt->ecps_gui.show_own_stream) {
+            try {
+              auto decode_result = rt->screen_decoder.decode(encoded_data, encoded_size, rt->network_frame);
+              if (decode_result.type == 1 && !decode_result.data[0].empty()) {
+                std::unique_lock<std::timed_mutex> frame_lock(render_mutex, std::defer_lock);
+                if (frame_lock.try_lock_for(std::chrono::milliseconds(5))) {
+                  while (rt->FrameList.Usage() > 0) {
+                    rt->FrameList.unlrec(rt->FrameList.GetNodeFirst());
+                  }
+                  rt->screen_decoder.decoded_size = decode_result.image_size;
+                  auto flnr = rt->FrameList.NewNodeLast();
+                  rt->FrameList[flnr] = std::move(decode_result);
+                }
+              }
+            }
+            catch (...) {}
+          }
+
           static std::vector<uint8_t> last_sps;
           static std::vector<uint8_t> last_pps;
           static int64_t pts90k = 0;

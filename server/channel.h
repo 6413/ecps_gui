@@ -139,6 +139,47 @@ const char* GetSessionUsername(Protocol_SessionID_t SessionID) {
   return username_buffer;
 }
 
+void Channel_SendSessionList(NET_TCP_peer_t *peer, uint32_t ID, Protocol_ChannelID_t ChannelID) {
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  Protocol_SessionID_t host_session = GetChannelHost(ChannelID);
+
+  std::vector<Protocol_S2C_t::SessionInfo_t> infos;
+  auto nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+
+    Protocol_S2C_t::SessionInfo_t info{};
+    info.SessionID = n->data.SessionID;
+    info.ChannelSessionID = Protocol_ChannelSessionID_t(nr);
+    info.AccountID = g_pile->SessionList[n->data.SessionID].AccountID;
+    info.IsHost = (n->data.SessionID == host_session) ? 1 : 0;
+    info.JoinedAt = 0;
+    strncpy((char*)info.Username, GetSessionUsername(n->data.SessionID), sizeof(info.Username) - 1);
+    info.Username[sizeof(info.Username) - 1] = '\0';
+    infos.push_back(info);
+
+    nr = n->NextNodeReference;
+  }
+
+  Protocol_S2C_t::ChannelSessionList_t session_list;
+  session_list.ChannelID = ChannelID;
+  session_list.SessionCount = (uint16_t)infos.size();
+  TCP_WriteCommand(peer, ID, Protocol_S2C_t::ChannelSessionList, session_list);
+  if (!infos.empty()) {
+    TCP_write_DynamicPointer(peer, infos.data(), infos.size() * sizeof(Protocol_S2C_t::SessionInfo_t));
+  }
+}
+
+void Channel_BroadcastSessionList(Protocol_ChannelID_t ChannelID) {
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  auto nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+    Channel_SendSessionList(g_pile->SessionList[n->data.SessionID].TCP.peer, 0, ChannelID);
+    nr = n->NextNodeReference;
+  }
+}
+
 void NotifyChannelListChanged() {
   auto nr = g_pile->SessionList.GetNodeFirst();
   while (nr != g_pile->SessionList.dst) {

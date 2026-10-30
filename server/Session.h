@@ -70,6 +70,7 @@ void Close(Protocol_SessionID_t SessionID){
           g_pile->ChannelList.unlrec(ChannelID);
           goto gt_NextChannel;
         }
+        Channel_BroadcastSessionList(ChannelID);
         break;
       }
     }

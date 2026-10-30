@@ -395,12 +395,11 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
   NET_addr_t dstaddr;
   IO_ssize_t size = NET_recvfrom(&g_pile->udp, buffer, sizeof(buffer), &dstaddr);
   if (size < 0) {
-    WriteInformation("%lx\r\n", size);
-    __abort();
+    return;
   }
   if (size == sizeof(buffer)) {
-    WriteInformation("where is mtu for this packet??\r\n");
-    __abort();
+    fan::print_throttled("udp packet too big, dropping\r\n");
+    return;
   }
 
   if ((uintptr_t)size < sizeof(ProtocolUDP::BasePacket_t)) {
