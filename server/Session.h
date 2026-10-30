@@ -28,7 +28,7 @@ Protocol_SessionID_t OpenFromTCPPeer(NET_TCP_peer_t *peer){
   Session->ChannelList.Open();
 
   Session->TCP.peer = peer;
-  Session->TCP.Crypto = {};
+  new (&Session->TCP.Crypto) fan::network::crypto::secure_stream_t();
 
   Session->UDP.Address.ip = 0;
   Session->UDP.Crypto = {};
