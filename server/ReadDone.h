@@ -6,6 +6,36 @@ case Protocol_C2S_t::KeepAlive:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::KeyExchange:{
+  auto Request = (Protocol_C2S_t::KeyExchange_t *)RestPacket;
+
+  if(Session->TCP.Crypto.ready){
+    goto StateDone_gt;
+  }
+
+  fan::network::crypto::x25519_key_t ClientPublic, ServerEphemeral;
+  fan::network::crypto::session_keys_t Keys;
+  __builtin_memcpy(ClientPublic.data(), Request->ClientPublic, ClientPublic.size());
+  if(!fan::network::crypto::server_handshake(g_pile->StaticPrivate, g_pile->StaticPublic, ClientPublic, Protocol::CryptoContext, ServerEphemeral, Keys)){
+    goto StateDone_gt;
+  }
+
+  Protocol_S2C_t::KeyExchange_t rest;
+  __builtin_memcpy(rest.ServerEphemeral, ServerEphemeral.data(), ServerEphemeral.size());
+  __builtin_memcpy(rest.ServerStatic, g_pile->StaticPublic.data(), g_pile->StaticPublic.size());
+  __builtin_memcpy(rest.Confirm, Keys.confirm.data(), Keys.confirm.size());
+  TCP_WriteCommand(
+    peer,
+    BasePacket->ID,
+    Protocol_S2C_t::KeyExchange,
+    rest);
+
+  Session->UDP.Crypto.set_server(Keys);
+  Session->TCP.Crypto.set(Keys.tcp_s2c, Keys.tcp_c2s);
+  fan::network::crypto::cleanse(&Keys, sizeof(Keys));
+
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::Request_Login:{
   auto Request = (Protocol_C2S_t::Request_Login_t *)RestPacket;
 

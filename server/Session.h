@@ -14,14 +14,6 @@ bool IsInvalid(Protocol_SessionID_t SessionID){
   return false;
 }
 
-bool IsIdentifyInvalid(Protocol_SessionID_t SessionID, uint64_t IdentifySecret){
-  auto Session = &g_pile->SessionList[SessionID];
-  if(Session->UDP.IdentifySecret != IdentifySecret){
-    return true;
-  }
-  return false;
-}
-
 void WriteCommand(Protocol_SessionID_t SessionID, uint32_t ID, Protocol_CI_t Command, auto&&...args){
   auto Session = &g_pile->SessionList[SessionID];
   TCP_WriteCommand(Session->TCP.peer, ID, Command, args...);
@@ -36,10 +28,10 @@ Protocol_SessionID_t OpenFromTCPPeer(NET_TCP_peer_t *peer){
   Session->ChannelList.Open();
 
   Session->TCP.peer = peer;
+  Session->TCP.Crypto = {};
 
-  Session->UDP.LastInvalidIdentifyAt = 0;
   Session->UDP.Address.ip = 0;
-  Session->UDP.IdentifySecret = RAND_hard_64();
+  Session->UDP.Crypto = {};
 
   return SessionID;
 }
@@ -72,6 +64,9 @@ void Close(Protocol_SessionID_t SessionID){
         auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
         if(ChannelData->HostSessionID == SessionID){
           _Close_ChannelClose(ChannelID);
+          Channel->SessionList.Close();
+          ChannelData->~Channel_ScreenShare_Data_t();
+          A_resize(Channel->Buffer, 0);
           g_pile->ChannelList.unlrec(ChannelID);
           goto gt_NextChannel;
         }

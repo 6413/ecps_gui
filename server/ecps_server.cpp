@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <string>
 #include <sstream>
+#include <array>
+#include <bitset>
+#include <vector>
 
 #include <WITCH/WITCH.h>
 #include <WITCH/STR/psh.h>
@@ -22,6 +25,7 @@ import fan.types.vector;
 import fan.event.types;
 import fan.time;
 import fan.print;
+import fan.network.crypto;
 
 #include "Base.h"
 
@@ -46,13 +50,16 @@ UDP_send(
   auto BasePacket = (ProtocolUDP::BasePacket_t*)buffer;
   BasePacket->SessionID = SessionID;
   BasePacket->ID = ID;
-  BasePacket->IdentifySecret = 0;
+  BasePacket->Nonce = Session->UDP.Crypto.send_nonce++;
   BasePacket->Command = Command;
   auto CommandDataPacket = (T*)&BasePacket[1];
   *CommandDataPacket = CommandData;
   auto RestPacket = (uint8_t*)CommandDataPacket + T::dss;
   __builtin_memcpy(RestPacket, data, size);
-  uint16_t TotalSize = sizeof(ProtocolUDP::BasePacket_t) + T::dss + size;
+  uint16_t TotalSize = Session->UDP.Crypto.seal(buffer, sizeof(ProtocolUDP::BasePacket_t), sizeof(ProtocolUDP::BasePacket_t) + T::dss + size, BasePacket->Nonce);
+  if (!TotalSize) {
+    return;
+  }
   IO_ssize_t r = NET_sendto(&g_pile->udp, buffer, TotalSize, &Session->UDP.Address);
   if (r != TotalSize) {
     if (r == 0) {
@@ -70,6 +77,16 @@ UDP_send(
 #include "TCPPeer.h"
 
 #include "ScreenShare.h"
+
+bool TCP_Seal(NET_TCP_peer_t *peer, const void *Data, uintptr_t Size, std::vector<char> &Out){
+  auto PeerData = (TCPMain_PeerData_t *)NET_TCP_GetPeerData(peer, g_pile->extid);
+  auto &Crypto = g_pile->SessionList[PeerData->SessionID].TCP.Crypto;
+  if(!Crypto.ready){
+    return false;
+  }
+  Out = Crypto.seal((const char *)Data, Size);
+  return true;
+}
 
 uint32_t TCPMain_state_cb(NET_TCP_peer_t* peer, TCPMain_SockData_t* SockData, TCPMain_PeerData_t* PeerData, uint32_t flag) {
   if (flag & NET_TCP_state_succ_e) {
@@ -122,8 +139,22 @@ uint32_t TCPMain_read_cb(
     __abort();
   }
   }
+  std::vector<char> Plain;
+  auto& TCPCrypto = g_pile->SessionList[PeerData->SessionID].TCP.Crypto;
+  if (TCPCrypto.ready) {
+    if (!TCPCrypto.open((const char*)ReadData, ReadSize, Plain)) {
+      NET_TCP_CloseHard(peer);
+      return NET_TCP_EXT_PeerIsClosed_e;
+    }
+    ReadData = (uint8_t*)Plain.data();
+    ReadSize = Plain.size();
+  }
   NET_TCP_UpdatePeerTimer(peer->parent->listener, peer->parent, peer);
-  for (uintptr_t iSize = 0; iSize < ReadSize;) {
+  auto IsBodyless = [PeerData] {
+    return PeerData->state == PeerState_Waitting_Data_e &&
+      Protocol_C2S.NA(((ProtocolBasePacket_t*)PeerData->Buffer)->Command)->m_DSS == 0;
+  };
+  for (uintptr_t iSize = 0; iSize < ReadSize || IsBodyless();) {
     switch (PeerData->state) {
     case PeerState_Idle_e: {
       PeerData->iBuffer = 0;
@@ -149,6 +180,13 @@ uint32_t TCPMain_read_cb(
           TWriteErrorClient("BasePacket->Command >= Protocol_C2S_t::GetMemberAmount()\r\n");
           TWriteErrorClient("Command: %u, Max: %u\r\n", BasePacket->Command, Protocol_C2S_t::GetMemberAmount());
           A_resize(PeerData->Buffer, 0);
+          PeerData->state = PeerState_Idle_e;
+          NET_TCP_CloseHard(peer);
+          return NET_TCP_EXT_PeerIsClosed_e;
+        }
+        if (!TCPCrypto.ready && BasePacket->Command != Protocol_C2S_t::KeyExchange) {
+          A_resize(PeerData->Buffer, 0);
+          PeerData->state = PeerState_Idle_e;
           NET_TCP_CloseHard(peer);
           return NET_TCP_EXT_PeerIsClosed_e;
         }
@@ -295,76 +333,29 @@ void evio_stdin_cb(EV_t* listener, EV_event_t* evio_stdin, uint32_t flag) {
   }
 }
 
-struct server_frame_tracker_t {
-  std::set<uint16_t> received_packets;
-  uint16_t expected_count = 0;
-  uint64_t first_packet_time = 0;
-  Protocol_SessionID_t host_session_id;
+struct recovery_request_t {
+  uint16_t sequence;
+  uint16_t missing_count;
 };
 
-std::unordered_map<uint16_t, server_frame_tracker_t> g_server_frames;
-uint64_t g_last_server_cleanup = 0;
-
-void cleanup_server_frames() {
-  uint64_t now = EV_nowi(&g_pile->listener);
-  if (now - g_last_server_cleanup < 5000000000ULL) return;
-
-  auto it = g_server_frames.begin();
-  while (it != g_server_frames.end()) {
-    if (now - it->second.first_packet_time > 10000000000ULL) {
-      it = g_server_frames.erase(it);
-    }
-    else {
-      ++it;
-    }
-  }
-  g_last_server_cleanup = now;
-}
-
-void request_missing_from_host(Protocol_SessionID_t host_session_id,
-  Protocol_ChannelID_t channel_id,
-  uint16_t sequence,
-  const std::vector<uint16_t>& missing_packets) {
-  struct recovery_request_t {
-    uint16_t sequence;
-    uint16_t missing_count;
-  };
-
-  size_t request_size = sizeof(recovery_request_t) + missing_packets.size() * sizeof(uint16_t);
-  uint8_t request_buffer[2048];
-
+void request_missing_from_host(Protocol_SessionID_t host_session_id, Protocol_ChannelID_t channel_id, ScreenShare_FrameTracker_t& frame) {
+  uint8_t request_buffer[sizeof(recovery_request_t) + 512 * sizeof(uint16_t)];
   auto req = (recovery_request_t*)request_buffer;
-  req->sequence = sequence;
-  req->missing_count = missing_packets.size();
-
-  auto missing_data = (uint16_t*)(req + 1);
-  for (size_t i = 0; i < missing_packets.size(); i++) {
-    missing_data[i] = missing_packets[i];
-  }
-
-  ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest_t recovery_packet;
-  recovery_packet.ChannelID = channel_id;
-  recovery_packet.ChannelSessionID = Protocol_ChannelSessionID_t((Protocol_ChannelSessionID_t::Type)-1);
-
-  UDP_send(host_session_id, 0, ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest,
-    recovery_packet, request_buffer, request_size);
-}
-
-void drop_old_incomplete_frames() {
-  uint64_t now = EV_nowi(&g_pile->listener);
-  auto it = g_server_frames.begin();
-  while (it != g_server_frames.end()) {
-    uint64_t estimated_rtt = 50000000ULL; // 50ms default if unknown
-    uint64_t adaptive_timeout = 50000000ULL + estimated_rtt * 2 + 30000000ULL;
-    adaptive_timeout = std::clamp<uint64_t>(adaptive_timeout, 80000000ULL, 300000000ULL);
-
-    if (now - it->second.first_packet_time > adaptive_timeout) {
-      it = g_server_frames.erase(it);
-    }
-    else {
-      ++it;
+  auto missing = (uint16_t*)(req + 1);
+  req->sequence = frame.Sequence;
+  req->missing_count = 0;
+  for (uint16_t i = 0; i < frame.Expected && req->missing_count < 512; ++i) {
+    if (!frame.Got[i]) {
+      missing[req->missing_count++] = i;
     }
   }
+  if (!req->missing_count) {
+    return;
+  }
+  ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest_t rest;
+  rest.ChannelID = channel_id;
+  UDP_send(host_session_id, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest,
+    rest, request_buffer, sizeof(recovery_request_t) + req->missing_count * sizeof(uint16_t));
 }
 
 void track_server_packet(Protocol_SessionID_t host_session_id,
@@ -372,43 +363,33 @@ void track_server_packet(Protocol_SessionID_t host_session_id,
   uint16_t sequence,
   uint16_t current,
   uint16_t possible) {
-  auto& frame = g_server_frames[sequence];
+  auto ChannelData = (Channel_ScreenShare_Data_t*)g_pile->ChannelList[channel_id].Buffer;
+  uint64_t now = EV_nowi(&g_pile->listener);
 
+  auto& frame = ChannelData->Frames[sequence % ChannelData->Frames.size()];
+  if (frame.Sequence != sequence) {
+    frame = {};
+    frame.Sequence = sequence;
+    frame.LastRequestAt = now;
+  }
   if (current == 0) {
-    frame.expected_count = possible;
-    frame.first_packet_time = EV_nowi(&g_pile->listener);
-    frame.host_session_id = host_session_id;
+    frame.Expected = possible;
+  }
+  if (current < frame.Got.size() && !frame.Got[current]) {
+    frame.Got.set(current);
+    ++frame.Received;
   }
 
-  frame.received_packets.insert(current);
-
-  if (frame.expected_count > 0 && frame.received_packets.size() < frame.expected_count) {
-    uint64_t now = EV_nowi(&g_pile->listener);
-    if (now - frame.first_packet_time > 30000000ULL) {
-      std::vector<uint16_t> missing;
-      for (uint16_t i = 0; i < frame.expected_count; i++) {
-        if (frame.received_packets.find(i) == frame.received_packets.end()) {
-          missing.push_back(i);
-        }
-      }
-      if (!missing.empty()) {
-        request_missing_from_host(host_session_id, channel_id, sequence, missing);
-        g_server_frames.erase(sequence);
-      }
+  for (auto& f : ChannelData->Frames) {
+    bool incomplete = f.Sequence != (uint16_t)-1 && f.Expected && f.Received < f.Expected;
+    if (incomplete && f.Requests < 3 && now - f.LastRequestAt > 30000000ULL && f.Sequence != sequence) {
+      request_missing_from_host(host_session_id, channel_id, f);
+      f.LastRequestAt = now;
+      ++f.Requests;
     }
   }
-  else if (frame.received_packets.size() >= frame.expected_count) {
-    g_server_frames.erase(sequence);
-  }
-
-  cleanup_server_frames();
-  drop_old_incomplete_frames();
 }
 
-struct recovery_request_t {
-  uint16_t sequence;
-  uint16_t missing_count;
-};
 void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
   uint8_t buffer[0x800];
   NET_addr_t dstaddr;
@@ -433,20 +414,8 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
     return;
   }
   auto Session = &g_pile->SessionList[SessionID];
-  if (Session::IsIdentifyInvalid(SessionID, BasePacket->IdentifySecret) == true) {
-    uint64_t CurrentTime = EV_nowi(&g_pile->listener);
-    if (CurrentTime < Session->UDP.LastInvalidIdentifyAt + Protocol::InformInvalidIdentifyAt) {
-      return;
-    }
-    Session->UDP.LastInvalidIdentifyAt = CurrentTime;
-    Protocol_S2C_t::InformInvalidIdentify_t rest;
-    rest.ClientIdentify = BasePacket->IdentifySecret;
-    rest.ServerIdentify = Session->UDP.IdentifySecret;
-    Session::WriteCommand(
-      SessionID,
-      0,
-      Protocol_S2C_t::InformInvalidIdentify,
-      rest);
+  size = Session->UDP.Crypto.open(buffer, sizeof(ProtocolUDP::BasePacket_t), size, BasePacket->Nonce);
+  if (!size) {
     return;
   }
 
@@ -516,7 +485,7 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
 
     auto missing_indices = (uint16_t*)(req + 1);
 
-    ProcessRecoveryRequest(RestPacket->ChannelID, req->sequence, missing_indices, req->missing_count);
+    ProcessRecoveryRequest(SessionID, RestPacket->ChannelID, req->sequence, missing_indices, req->missing_count);
 
     break;
   }
@@ -538,6 +507,12 @@ int main(int argc, char** argv) {
   sint32_t err;
 
   RAND_hard_ram(g_pile->ServerRandom, sizeof(g_pile->ServerRandom));
+
+  if (!fan::network::crypto::load_or_create_key("ecps_server.key", g_pile->StaticPrivate, g_pile->StaticPublic)) {
+    WriteError("failed to load or create ecps_server.key\r\n");
+    __abort();
+  }
+  fan::print("server key:", fan::network::crypto::to_hex(g_pile->StaticPublic.data(), g_pile->StaticPublic.size()));
 
   EV_open(&g_pile->listener);
 
@@ -565,7 +540,7 @@ int main(int argc, char** argv) {
   udpaddr.port = port;
   err = NET_bind(&g_pile->udp, &udpaddr);
   if (err) {
-    WriteInformation("%lx\r\n");
+    WriteInformation("udp bind error %ld\r\n", err);
     __abort();
   }
 

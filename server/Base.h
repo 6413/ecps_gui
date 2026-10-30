@@ -10,10 +10,11 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   ProtocolBasePacket_t BasePacket;
   BasePacket.ID = ID;
   BasePacket.Command = Command;
-  TCP_write_DynamicPointer(peer, &BasePacket, sizeof(BasePacket));
-  (
-    TCP_write_DynamicPointer(peer, &args, sizeof(args)),
-  ...);
+  uint8_t Buffer[sizeof(BasePacket) + (sizeof(args) + ... + 0)];
+  __builtin_memcpy(Buffer, &BasePacket, sizeof(BasePacket));
+  uintptr_t Offset = sizeof(BasePacket);
+  ((__builtin_memcpy(&Buffer[Offset], &args, sizeof(args)), Offset += sizeof(args)), ...);
+  TCP_write_DynamicPointer(peer, Buffer, sizeof(Buffer));
 }
 
 #define BLL_set_Language 1
@@ -119,11 +120,11 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   SessionChannelList_t ChannelList; \
   struct{ \
     NET_TCP_peer_t *peer; \
+    fan::network::crypto::secure_stream_t Crypto; \
   }TCP; \
   struct{ \
-    uint64_t LastInvalidIdentifyAt; \
     NET_addr_t Address; \
-    uint64_t IdentifySecret; \
+    fan::network::crypto::secure_channel_t Crypto; \
   }UDP;
 #define BLL_set_IsNodeRecycled 1
 #include <BLL/BLL.h>
@@ -141,10 +142,20 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
 #define BLL_set_IsNodeRecycled 1
 #include <BLL/BLL.h>
 
+struct ScreenShare_FrameTracker_t{
+  uint64_t LastRequestAt = 0;
+  uint16_t Sequence = (uint16_t)-1;
+  uint16_t Expected = 0;
+  uint16_t Received = 0;
+  uint8_t Requests = 0;
+  std::bitset<0x1000> Got;
+};
+
 struct Channel_ScreenShare_Data_t{
-  uint8_t Flag;
+  uint8_t Flag = 0;
   Protocol_SessionID_t HostSessionID;
   std::unordered_map<uint16_t, std::vector<std::vector<uint8_t>>> SentPackets;
+  std::array<ScreenShare_FrameTracker_t, 8> Frames;
 };
 
 struct pile_t{
@@ -157,6 +168,9 @@ struct pile_t{
   /* need to be unique to every server */
   /* user will hash secure things with it */
   uint8_t ServerRandom[HASH_SHA512_size];
+
+  fan::network::crypto::x25519_key_t StaticPrivate;
+  fan::network::crypto::x25519_key_t StaticPublic;
 
   SessionList_t SessionList;
   AccountList_t AccountList;

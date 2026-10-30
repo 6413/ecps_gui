@@ -207,7 +207,10 @@ struct ecps_gui_t {
     if (ip.size() && port.size()) {
       backend_queue([=]() -> fan::event::task_t {
         try {
-          co_await ecps_backend.connect(ip, string_to_number(port));
+          if (!co_await ecps_backend.connect(ip, string_to_number(port))) {
+            ecps_backend.restore_own_channel = true;
+            co_return;
+          }
           co_await ecps_backend.login();
 
           auto channel_id = co_await ecps_backend.channel_create();

@@ -17,7 +17,14 @@ void _print(uint32_t fd, const char *format, ...){
 #define WriteInformation(...) _print(FD_OUT, __VA_ARGS__)
 #define WriteError(...) _print(FD_ERR, __VA_ARGS__)
 
+bool TCP_Seal(NET_TCP_peer_t *peer, const void *Data, uintptr_t Size, std::vector<char> &Out);
+
 void TCP_write_DynamicPointer(NET_TCP_peer_t *peer, void *Data, uintptr_t Size){
+  std::vector<char> Sealed;
+  if(TCP_Seal(peer, Data, Size, Sealed)){
+    Data = Sealed.data();
+    Size = Sealed.size();
+  }
   NET_TCP_Queue_t Queue;
   Queue.DynamicPointer.ptr = Data;
   Queue.DynamicPointer.size = Size;

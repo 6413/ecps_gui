@@ -6,21 +6,11 @@ struct ecps_backend_t {
   ecps_backend_t();
   ~ecps_backend_t() {
     should_stop_tcp_read.store(true);
-    udp_keep_alive.stop();
-    tcp_keep_alive.stop();
-
-    auto start_time = std::chrono::steady_clock::now();
-    while ((task_tcp_read.owner || task_udp_listen.owner) &&
-      std::chrono::steady_clock::now() - start_time < std::chrono::milliseconds(100)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    if (task_tcp_read.owner) {
-      task_tcp_read = {};
-    }
-    if (task_udp_listen.owner) {
-      task_udp_listen = {};
-    }
+    task_supervisor = {};
+    task_restore = {};
+    task_keep_alive = {};
+    task_tcp_read = {};
+    task_udp_listen = {};
   #if use_input_control == 1
     MD_Mice_Close(&mice);
     MD_Keyboard_close(&keyboard);
@@ -59,53 +49,39 @@ struct ecps_backend_t {
     while (!should_stop_tcp_read.load()) {
       fan::network::typed_message_t<tcp::ProtocolBasePacket_t> msg;
       try {
-        if (should_stop_tcp_read.load()) {
-          co_return;
-        }
-
         msg = co_await tcp_client.read<tcp::ProtocolBasePacket_t>();
-
-        if (should_stop_tcp_read.load()) {
-          co_return;
-        }
-
-        if (msg.status != 0) {
-          continue;
-        }
       }
       catch (const std::exception& e) {
-        if (should_stop_tcp_read.load()) {
-          co_return;
-        }
-        fan::print("TCP read error: " + std::string(e.what()));
-        continue;
-      }
-      catch (...) {
+        mark_disconnected(e.what());
         co_return;
       }
-
-      if (msg.status != 0 || msg->Command >= Protocol_S2C.size()) {
-        fan::print("invalid command, ignoring...");
-        continue;
+      catch (const fan::exception_t& e) {
+        mark_disconnected(e.reason);
+        co_return;
       }
-
+      if (should_stop_tcp_read.load()) {
+        co_return;
+      }
+      if (msg.status != 0 || msg->Command >= Protocol_S2C.size()) {
+        mark_disconnected(msg.status != 0 ? "connection lost" : "invalid command");
+        co_return;
+      }
+      last_rx = fan::event::now();
       try {
-        if (should_stop_tcp_read.load()) {
-          co_return;
-        }
-
         co_await(*Protocol_S2C.NA(msg->Command))(*this, msg.data);
       }
       catch (const std::exception& e) {
         fan::print("Message processing error: " + std::string(e.what()));
-        continue;
-      }
-      catch (...) {
-        continue;
       }
     }
   }
   fan::event::runv_t<uint32_t> tcp_write(int command, void* data, uint32_t len) {
+    while (command != Protocol_C2S_t::KeyExchange && !tcp_secure_ready) {
+      if (!connected) {
+        fan::throw_error("not connected");
+      }
+      co_await fan::co_sleep(5);
+    }
     static int id = 0;
     tcp::ProtocolBasePacket_t bp;
     bp.ID = id++;
@@ -118,7 +94,7 @@ struct ecps_backend_t {
     if (len) {
       std::memcpy(packet.data() + sizeof(bp), data, len);
     }
-    co_await tcp_client.write_raw(packet);
+    co_await tcp_client.write_raw(std::move(packet));
     co_return bp.ID;
   }
   template <typename T>
@@ -133,13 +109,16 @@ struct ecps_backend_t {
     auto BasePacket = (ProtocolUDP::BasePacket_t*)buffer;
     BasePacket->SessionID = session_id;
     BasePacket->ID = ID;
-    BasePacket->IdentifySecret = identify_secret;
+    BasePacket->Nonce = udp_crypto.send_nonce++;
     BasePacket->Command = Command;
     auto CommandDataPacket = (T*)&BasePacket[1];
     *CommandDataPacket = CommandData;
     auto RestPacket = (uint8_t*)CommandDataPacket + T::dss;
     __builtin_memcpy(RestPacket, data, size);
-    uint16_t TotalSize = sizeof(ProtocolUDP::BasePacket_t) + T::dss + size;
+    uint16_t TotalSize = udp_crypto.seal(buffer, sizeof(ProtocolUDP::BasePacket_t), sizeof(ProtocolUDP::BasePacket_t) + T::dss + size, BasePacket->Nonce);
+    if (!TotalSize) {
+      co_return;
+    }
     co_await udp_client.send(fan::network::buffer_t((uint8_t*)buffer, (uint8_t*)buffer + TotalSize), ip, port);
     //IO_ssize_t r = NET_sendto(&g_pile->UDP.udp, buffer, TotalSize, &g_pile->UDP.Address);
   }
@@ -162,6 +141,7 @@ struct ecps_backend_t {
     std::vector<uint16_t> m_MissingPackets;
     uint32_t m_PacketCounter = 0;
     bool m_AckSent = false;
+    uint8_t m_RecoveryRetries = 0;
 
     static constexpr uint32_t recovery_ack_interval = 1;
     std::function<void(std::vector<uint8_t>)> recovery_callback;
@@ -233,13 +213,13 @@ struct ecps_backend_t {
       UpdateMissingPackets();
       if (m_MissingPackets.empty()) {
         m_AckSent = false;
+        m_RecoveryRetries = 0;
         return;
       }
 
-      static int retry_count = 0;
-      if (!m_AckSent || retry_count < 3) {
+      if (!m_AckSent || m_RecoveryRetries < 3) {
         SendRecoveryRequest();
-        retry_count++;
+        m_RecoveryRetries++;
       }
     }
 
@@ -323,6 +303,7 @@ struct ecps_backend_t {
       m_Sequence = sequence;
       m_Possible = (uint16_t)-1;
       m_AckSent = false;
+      m_RecoveryRetries = 0;
       m_MissingPackets.clear();
       __builtin_memset(m_DataCheck.data(), 0, m_DataCheck.size());
       // timed from the frame's first packet, see the udp receive path
@@ -369,10 +350,7 @@ struct ecps_backend_t {
       );
 
       if (m_SentPackets.size() > 50) {
-        auto it = m_SentPackets.begin();
-        for (int i = 0; i < 10 && it != m_SentPackets.end(); ++i) {
-          it = m_SentPackets.erase(it);
-        }
+        std::erase_if(m_SentPackets, [sequence](const auto& p) { return ((sequence - p.first) & 0xfff) > 32; });
       }
     }
 
@@ -404,6 +382,7 @@ struct ecps_backend_t {
 #endif
         std::vector<uint8_t> vec;
         uintptr_t SentOffset;
+        bool keyframe = false;
       };
 #include <fan/memory/fan_bll_preset.h>
 #define BLL_set_prefix FrameList
@@ -415,7 +394,7 @@ struct ecps_backend_t {
 #include <BLL/BLL.h>
       FrameList_t FrameList;
       uint64_t WantedInterval = 5000000;
-      uint64_t Bucket; /* in bit */
+      int64_t Bucket; /* in bit, negative = debt */
       uint64_t BucketSize; /* in bit */
       uint64_t TimerLastCallAt;
       uint64_t TimerCallCount;
@@ -449,14 +428,7 @@ struct ecps_backend_t {
     }
 
     uintptr_t BufferSize = (uintptr_t)DataWillBeAt - (uintptr_t)buffer + DataSize;
-    share.StorePacketForRecovery(share.frame_index, Current, buffer, BufferSize);
-    if (share.m_NetworkFlow.Bucket < BufferSize * 8) {
-      int64_t deficit_threshold = static_cast<int64_t>(share.m_NetworkFlow.BucketSize) * 0.1;
-      if (static_cast<int64_t>(share.m_NetworkFlow.Bucket) < -deficit_threshold) {
-        co_return 1;
-      }
-    }
-    share.m_NetworkFlow.Bucket -= BufferSize * 8;
+    share.StorePacketForRecovery(share.frame_index & 0xfff, Current, buffer, BufferSize);
 
     __builtin_memcpy(DataWillBeAt, Data, DataSize);
 
@@ -495,23 +467,13 @@ struct ecps_backend_t {
     this->ip = ip;
     this->port = port;
 
+    connected = false;
+    tcp_secure_ready = false;
+    restore_own_channel = false;
+    restore_streaming = false;
     should_stop_tcp_read.store(true);
-    udp_keep_alive.stop();
-    tcp_keep_alive.stop();
-
-    if (task_tcp_read.owner) {
-      for (int i = 0; i < 50 && task_tcp_read.owner; ++i) {
-        co_await fan::co_sleep(10);
-      }
-
-      if (task_tcp_read.owner) {
-        task_tcp_read = {};
-      }
-    }
-
-    if (task_udp_listen.owner) {
-      task_udp_listen = {};
-    }
+    task_tcp_read = {};
+    task_udp_listen = {};
 
     pending_requests.clear();
     channel_info.clear();
@@ -519,8 +481,12 @@ struct ecps_backend_t {
     channel_sessions.clear();
     channel_list_received = false;
     session_id = {};
-    identify_secret = 0;
+    udp_crypto = {};
 
+    if (!task_supervisor.valid()) {
+      task_supervisor = supervise();
+    }
+    tcp_client.reset();
     try {
       co_await tcp_client.connect(ip, port);
     }
@@ -528,27 +494,29 @@ struct ecps_backend_t {
 
     should_stop_tcp_read.store(false);
 
-    udp_keep_alive.set_server(
-      fan::network::socket_address_t{ ip, port },
-      [this](fan::network::udp_t& udp) -> fan::event::task_t {
-        keepalive_sent_time = fan::event::now();
-        co_await udp_write(0, ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0);
-      }
-    );
     // udp read
     task_udp_listen = udp_client.listen(
       fan::network::listen_address_t{ this->ip, this->port },
       [this, ip, port](const fan::network::udp_t& udp, const fan::network::udp_datagram_t& datagram) -> fan::event::task_t {
 
+        uint8_t packet[2048];
         auto size = datagram.data.size();
+        if (size < sizeof(udp::BasePacket_t) || size > sizeof(packet)) {
+          co_return;
+        }
+        __builtin_memcpy(packet, datagram.data.data(), size);
 
-        udp::BasePacket_t bp = *(udp::BasePacket_t*)datagram.data.data();
+        udp::BasePacket_t bp = *(udp::BasePacket_t*)packet;
         if (bp.SessionID != session_id) {
+          co_return;
+        }
+        size = udp_crypto.open(packet, sizeof(bp), size, bp.Nonce);
+        if (!size) {
           co_return;
         }
 
         if (bp.Command == ProtocolUDP::S2C_t::KeepAlive) {
-          if (sizeof(bp) != datagram.data.size()) {
+          if (sizeof(bp) != size) {
             fan::print("size is not same as sizeof expected arrival");
           }
         #if ecps_debug_prints >= 2
@@ -559,17 +527,15 @@ struct ecps_backend_t {
             ping_ms = (now - keepalive_sent_time) / 1000000.0;
             keepalive_sent_time = 0;
           }
-          udp_keep_alive.reset();
         }
         else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData) {
           uintptr_t relative_size = size - sizeof(bp);
-          auto command_data = (ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t*)&(((udp::BasePacket_t*)datagram.data.data())[1]);
-          set_channel_viewing(command_data->ChannelID, true);
-
+          auto command_data = (ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t*)&(((udp::BasePacket_t*)packet)[1]);
           if (relative_size < sizeof(*command_data)) {
             co_return;
           }
           relative_size -= sizeof(*command_data);
+          set_channel_viewing(command_data->ChannelID, true);
 
           if (relative_size < sizeof(ScreenShare_StreamHeader_Body_t)) {
             co_return;
@@ -619,7 +585,7 @@ struct ecps_backend_t {
           uint16_t current = body->GetCurrent();
 
           if (current == 0) {
-            if ((uintptr_t)size < sizeof(ScreenShare_StreamHeader_Head_t)) {
+            if (relative_size < sizeof(ScreenShare_StreamHeader_Head_t)) {
               co_return;
             }
             if (view.m_Possible != (uint16_t)-1) {
@@ -663,8 +629,17 @@ struct ecps_backend_t {
             printf("UDP: packet index %u exceeds buffer capacity\n", current);
           #endif
           }
-
-          udp_keep_alive.reset();
+        }
+        else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest) {
+          uintptr_t offset = sizeof(bp) + sizeof(ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest_t);
+          if (size < offset + sizeof(recovery_request_t)) {
+            co_return;
+          }
+          auto req = (recovery_request_t*)&packet[offset];
+          if (size < offset + sizeof(recovery_request_t) + req->missing_count * sizeof(uint16_t)) {
+            co_return;
+          }
+          share.ProcessRecoveryRequest(req->sequence, (const uint16_t*)(req + 1), req->missing_count);
         }
         else {
           fan::print("unprocessed udp data came");
@@ -673,10 +648,97 @@ struct ecps_backend_t {
       }
     );
 
-    tcp_keep_alive.reset();
-    udp_keep_alive.reset();
+    connected = true;
+    last_rx = fan::event::now();
     task_tcp_read = tcp_read();
+    try {
+      if (!fan::network::crypto::x25519_keygen(handshake_private, handshake_public)) {
+        fan::throw_error("x25519 keygen failed");
+      }
+      Protocol_C2S_t::KeyExchange_t rest;
+      __builtin_memcpy(rest.ClientPublic, handshake_public.data(), handshake_public.size());
+      co_await tcp_write(Protocol_C2S_t::KeyExchange, &rest, sizeof(rest));
+    }
+    catch (...) {
+      mark_disconnected("key exchange send failed");
+      co_return false;
+    }
     co_return true;
+  }
+  void mark_disconnected(const char* reason) {
+    if (!connected) {
+      return;
+    }
+    connected = false;
+    tcp_secure_ready = false;
+    should_stop_tcp_read.store(true);
+    for (const auto& channel : channel_info) {
+      if (channel.is_own) {
+        restore_own_channel = true;
+        restore_streaming = channel.is_streaming;
+      }
+    }
+    session_id = {};
+    udp_crypto = {};
+    fan::print("disconnected from server:", reason);
+  }
+  fan::event::task_t supervise() {
+    std::uint32_t backoff_ms = 500;
+    while (true) {
+      co_await fan::co_sleep(connected ? 1000 : backoff_ms);
+      if (connected) {
+        if (fan::event::now() - last_rx > tcp_timeout_ns) {
+          mark_disconnected("timed out");
+          continue;
+        }
+        task_keep_alive = send_keep_alive();
+        continue;
+      }
+      bool own = restore_own_channel, streaming = restore_streaming;
+      if (!co_await connect(ip, port)) {
+        restore_own_channel = own;
+        restore_streaming = streaming;
+        backoff_ms = std::min(backoff_ms * 2, 8000u);
+        continue;
+      }
+      backoff_ms = 500;
+      fan::print("reconnected to", ip + ":" + std::to_string(port));
+      task_restore = restore(own, streaming);
+    }
+  }
+  fan::event::task_t send_keep_alive() {
+    try {
+      if (!tcp_secure_ready) {
+        co_return;
+      }
+      co_await tcp_write(Protocol_C2S_t::KeepAlive, 0, 0);
+      keepalive_sent_time = fan::event::now();
+      co_await udp_write(0, ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0);
+    }
+    catch (...) {
+      mark_disconnected("keep alive write failed");
+    }
+  }
+  fan::event::task_t restore(bool own, bool streaming) {
+    try {
+      co_await login();
+      if (own) {
+        auto channel_id = co_await channel_create();
+        co_await channel_join(channel_id, true);
+        if (streaming) {
+          share.m_NetworkFlow.Bucket = 0;
+          share.m_NetworkFlow.TimerLastCallAt = fan::event::now();
+          share.m_NetworkFlow.TimerCallCount = 0;
+          share.CalculateNetworkFlowBucket();
+          set_channel_streaming(channel_id, true);
+        }
+        if (reconnected_cb) {
+          reconnected_cb(channel_id);
+        }
+      }
+      co_await request_channel_list();
+    }
+    catch (...) {}
   }
   fan::event::task_t login() {
     // while (1) {
@@ -692,6 +754,16 @@ struct ecps_backend_t {
     //co_await fan::co_sleep(1000);
     //co_await connect(ip, port);
  // }
+  }
+  bool verify_server_key(const fan::network::crypto::x25519_key_t& key) {
+    using namespace fan::network::crypto;
+    std::string host = ip + ":" + std::to_string(port);
+    switch (check_pinned_key(known_hosts_path, host, key)) {
+      case pin_result_e::matched: return true;
+      case pin_result_e::pinned: fan::print("pinned server key for", host, to_hex(key.data(), key.size())); return true;
+      case pin_result_e::mismatch: fan::print("server key for", host, "changed, refusing. delete its line in", known_hosts_path, "if this is expected"); return false;
+      default: fan::print("failed to write", known_hosts_path); return false;
+    }
   }
   fan::event::runv_t<Protocol_ChannelID_t> channel_create() {
     Protocol_C2S_t::CreateChannel_t rest;
@@ -711,8 +783,8 @@ struct ecps_backend_t {
     channel_info_t ci;
     ci.channel_id = channel_id;
     ci.joined_at.start();
+    ci.is_own = is_own_channel;
     channel_info.emplace_back(ci);
-    udp_keep_alive.reset();
     {
       ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t rest;
       rest.ChannelID = channel_info.back().channel_id;
@@ -795,12 +867,16 @@ struct ecps_backend_t {
 
   std::function<void(fan::exception_t)> login_fail_cb;
 
-  fan::network::tcp_keep_alive_t tcp_keep_alive{
-    tcp_client,
-    [this](fan::network::tcp_t& tcp) -> fan::event::task_t {
-      co_await tcp_write(Protocol_C2S_t::KeepAlive, 0, 0);
-    }
-  };
+  std::function<void(Protocol_ChannelID_t)> reconnected_cb;
+  fan::event::task_t task_supervisor;
+  fan::event::task_t task_restore;
+  fan::event::task_t task_keep_alive;
+  static constexpr std::uint64_t tcp_timeout_ns = 6'000'000'000;
+  std::uint64_t last_rx = 0;
+  bool connected = false;
+  bool tcp_secure_ready = false;
+  bool restore_own_channel = false;
+  bool restore_streaming = false;
 
   fan::event::task_t request_channel_list() {
     uint8_t a;
@@ -982,7 +1058,6 @@ struct ecps_backend_t {
   void update_host_mouse_coordinate(Protocol_ChannelID_t channel_id, const fan::vec2ui& pos);
 
   bool channel_list_received = false;
-  fan::network::udp_keep_alive_t udp_keep_alive{ udp_client };
 
   struct pending_request_t {
     uint32_t request_id;
@@ -992,7 +1067,10 @@ struct ecps_backend_t {
   };
   std::unordered_map<uint32_t, pending_request_t> pending_requests;
 
-  uint64_t identify_secret = 0;
+  fan::network::crypto::x25519_key_t handshake_private{};
+  fan::network::crypto::x25519_key_t handshake_public{};
+  fan::network::crypto::secure_channel_t udp_crypto;
+  inline static const std::string known_hosts_path = "known_hosts";
 
   Protocol_SessionID_t session_id;
 
@@ -1003,6 +1081,7 @@ struct ecps_backend_t {
     bool is_streaming = false;
     fan::time::timer stream_start_timer;
     bool is_viewing = false;
+    bool is_own = false;
     fan::time::timer joined_at;
     int flag = 0;
   };

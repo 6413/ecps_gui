@@ -89,14 +89,11 @@ void StorePacketForRecovery(Protocol_ChannelID_t channel_id, uint16_t sequence,
   );
   
   if (ChannelData->SentPackets.size() > 50) {
-    auto it = ChannelData->SentPackets.begin();
-    for (int i = 0; i < 10 && it != ChannelData->SentPackets.end(); ++i) {
-      it = ChannelData->SentPackets.erase(it);
-    }
+    std::erase_if(ChannelData->SentPackets, [sequence](const auto& p) { return ((sequence - p.first) & 0xfff) > 32; });
   }
 }
 
-void ProcessRecoveryRequest(Protocol_ChannelID_t channel_id, uint16_t sequence, 
+void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t channel_id, uint16_t sequence,
                            const uint16_t* missing_indices, uint16_t missing_count) {
   if (IsChannelInvalid(channel_id)) return;
   
@@ -109,29 +106,17 @@ void ProcessRecoveryRequest(Protocol_ChannelID_t channel_id, uint16_t sequence,
   }
   
   auto& packets = it->second;
-  
+  auto Session = &g_pile->SessionList[requester];
+  if(Session->UDP.Address.ip == 0){
+    return;
+  }
+  ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t cd;
+  cd.ChannelID = channel_id;
   for (uint16_t i = 0; i < missing_count; ++i) {
     uint16_t packet_index = missing_indices[i];
     if (packet_index < packets.size() && !packets[packet_index].empty()) {
-      
-      ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t cd;
-      cd.ChannelID = channel_id;
-      
-      auto nr = Channel->SessionList.GetNodeFirst();
-      ChannelSessionList_Node_t *n;
-      for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
-        n = Channel->SessionList.GetNodeByReference(nr);
-        if(n->data.SessionID == ChannelData->HostSessionID){
-          continue; // Don't send to host
-        }
-        auto Session = &g_pile->SessionList[n->data.SessionID];
-        if(Session->UDP.Address.ip == 0){
-          continue; // No UDP address
-        }
-        
-        UDP_send(n->data.SessionID, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData, 
-                cd, packets[packet_index].data(), packets[packet_index].size());
-      }
+      UDP_send(requester, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData,
+              cd, packets[packet_index].data(), packets[packet_index].size());
     }
   }
 }

@@ -91,7 +91,7 @@ struct udp {
   struct BasePacket_t {
     Protocol_SessionID_t SessionID;
     uint32_t ID;
-    uint64_t IdentifySecret;
+    uint64_t Nonce;
     Protocol_CI_t Command;
   };
 };
@@ -111,7 +111,7 @@ struct ProtocolChannel {
 };
 
 struct Protocol {
-  inline static constexpr uint64_t InformInvalidIdentifyAt = 1000000000;
+  inline static constexpr const char* CryptoContext = "ecps udp v1";
   inline static constexpr uint32_t ChannelType_Amount = 1;
   enum {
     ChannelType_ScreenShare_e
@@ -146,7 +146,7 @@ struct ProtocolUDP {
   struct BasePacket_t {
     Protocol_SessionID_t SessionID;
     uint32_t ID;
-    uint64_t IdentifySecret;
+    uint64_t Nonce;
     Protocol_CI_t Command;
   };
   struct C2S_t : __dme_inherit(C2S_t) {
@@ -165,11 +165,18 @@ struct ProtocolUDP {
     __dme(Channel_ScreenShare_View_StreamData,
       Protocol_ChannelID_t ChannelID;
     );
+    __dme(Channel_ScreenShare_RecoveryRequest,
+      Protocol_ChannelID_t ChannelID;
+    );
   }S2C;
 };
 
 struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
   __dme(KeepAlive);
+
+  __dme(KeyExchange,
+    uint8_t ClientPublic[32];
+  );
   
   __dme(Request_Login,
     Protocol::LoginType_t Type;
@@ -186,10 +193,6 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
   __dme(QuitChannel,
     Protocol_ChannelID_t ChannelID;
     Protocol_ChannelSessionID_t ChannelSessionID;
-  );
-  
-  __dme(Response_UDPIdentifySecret,
-    uint64_t UDPIdentifySecret;
   );
   
   __dme(RequestChannelList,
@@ -266,10 +269,11 @@ struct S2C_callback_t : S2C_callback_inherit_t {
 
 struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
    __dme(KeepAlive);
-  
-  __dme(InformInvalidIdentify,
-    uint64_t ClientIdentify;
-    uint64_t ServerIdentify;
+
+  __dme(KeyExchange,
+    uint8_t ServerEphemeral[32];
+    uint8_t ServerStatic[32];
+    uint8_t Confirm[16];
   );
   
   __dme(Response_Login,
@@ -300,12 +304,6 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
   __dme(KickedFromChannel,
     Protocol_ChannelID_t ChannelID;
     Protocol::KickedFromChannel_Reason_t Reason;
-  );
-  
-  __dme(Request_UDPIdentifySecret);
-  
-  __dme(UseThisUDPIdentifySecret,
-    uint64_t UDPIdentifySecret;
   );
   
   struct ChannelInfo_t {
@@ -420,7 +418,7 @@ struct ScreenShare_StreamHeader_Head_t{
     return *(uint16_t *)&pf[0] & 0x00ff | (*(uint16_t *)&pf[0] & 0xf000) >> 4;
   }
   void SetFlag(uint8_t Flag){
-    *(uint8_t *)&pf[1] ^= *(uint16_t *)&pf[2] & 0x0f;
+    pf[1] ^= pf[1] & 0x0f;
     *(uint8_t *)&pf[1] |= Flag & 0x0f;
   }
   uint8_t GetFlag(){

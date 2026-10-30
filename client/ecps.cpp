@@ -87,13 +87,8 @@ std::atomic<bool> render_thread_ready {false};
 struct dynamic_config_t {
   static uint32_t get_target_framerate();
 
-  static uint32_t get_adaptive_bucket_size() {
-    uint32_t fps = get_target_framerate();
-    uint32_t base_bitrate = get_adaptive_bitrate();
-    if (fps >= 144) return base_bitrate * 4;
-    else if (fps >= 120) return base_bitrate * 3;
-    else if (fps >= 60) return base_bitrate * 2;
-    else return base_bitrate;
+  static uint64_t get_adaptive_bucket_size() {
+    return get_adaptive_bitrate() / 4;
   }
 
   static uint64_t get_adaptive_bitrate();
@@ -136,12 +131,7 @@ struct dynamic_config_t {
   }
 
   static f32_t get_adaptive_bucket_multiplier() {
-    uint32_t fps = get_target_framerate();
-    if (fps >= 144) return 10.0f;
-    else if (fps >= 120) return 8.0f;
-    else if (fps >= 90) return 6.5f;
-    else if (fps >= 60) return 5.0f;
-    else return 3.5f;
+    return 1.5f;
   }
 };
 
@@ -682,18 +672,28 @@ struct webrtc_rate_limiter_t {
 
 ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, KeepAlive) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    backend.tcp_keep_alive.reset();
     co_return;
   };
 
-  __dme_get(Protocol_S2C, InformInvalidIdentify) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::InformInvalidIdentify_t>();
-    if (msg->ClientIdentify != identify_secret) {
+  __dme_get(Protocol_S2C, KeyExchange) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::KeyExchange_t>();
+    fan::network::crypto::x25519_key_t server_ephemeral, server_static;
+    fan::network::crypto::session_keys_t keys;
+    std::memcpy(server_ephemeral.data(), msg->ServerEphemeral, server_ephemeral.size());
+    std::memcpy(server_static.data(), msg->ServerStatic, server_static.size());
+    bool ok = msg.status == 0
+      && fan::network::crypto::client_handshake(backend.handshake_private, backend.handshake_public, server_ephemeral, server_static, Protocol::CryptoContext, keys)
+      && fan::network::crypto::confirm_equal(keys.confirm, msg->Confirm)
+      && backend.verify_server_key(server_static);
+    fan::network::crypto::cleanse(backend.handshake_private.data(), backend.handshake_private.size());
+    if (!ok) {
+      backend.mark_disconnected("server key exchange failed");
       co_return;
     }
-    identify_secret = msg->ServerIdentify;
-    co_await backend.udp_write(0, ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0);
-    co_return;
+    backend.udp_crypto.set_client(keys);
+    backend.tcp_client.enable_secure(keys.tcp_c2s, keys.tcp_s2c);
+    backend.tcp_secure_ready = true;
+    fan::network::crypto::cleanse(&keys, sizeof(keys));
   };
 
   __dme_get(Protocol_S2C, Response_Login) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
@@ -1212,6 +1212,11 @@ fan::event::task_t start_both_servers() {
 
 #endif
 int main() {
+  ecps_backend.reconnected_cb = [](ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
+      rt->ecps_gui.selected_channel_id = channel_id;
+    }
+  };
   ecps_backend.login_fail_cb = [](fan::exception_t e) {
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
     if (rt) {// might be able to be removed
@@ -1752,9 +1757,15 @@ int main() {
 
             auto flnr = ecps_backend.share.m_NetworkFlow.FrameList.NewNodeLast();
             auto f = &ecps_backend.share.m_NetworkFlow.FrameList[flnr];
-            f->vec.resize(encoded_size);
-            std::memcpy(f->vec.data(), encoded_data, encoded_size);
+            f->vec.assign(encoded_data, encoded_data + encoded_size);
             f->SentOffset = 0;
+            f->keyframe = is_idr;
+            for (size_t i = 0; !f->keyframe && i + 4 < std::min<size_t>(encoded_size, 64); ++i) {
+              if (!encoded_data[i] && !encoded_data[i + 1] && !encoded_data[i + 2] && encoded_data[i + 3] == 1) {
+                uint8_t nal_type = encoded_data[i + 4] & 0x1F;
+                f->keyframe = nal_type == 5 || nal_type == 7;
+              }
+            }
           }
         }
 
@@ -1972,115 +1983,36 @@ int main() {
     double seconds_elapsed = static_cast<double>(DeltaTime) / 1000000000.0;
     double bits_to_add = seconds_elapsed * rt->screen_encoder.config_.bitrate * bucket_multiplier;
 
-    ecps_backend.share.m_NetworkFlow.Bucket += static_cast<uint64_t>(bits_to_add);
+    auto& flow = ecps_backend.share.m_NetworkFlow;
+    flow.Bucket = std::min(flow.Bucket + static_cast<int64_t>(bits_to_add), static_cast<int64_t>(flow.BucketSize));
 
-    if (ecps_backend.share.m_NetworkFlow.Bucket > ecps_backend.share.m_NetworkFlow.BucketSize) {
-      ecps_backend.share.m_NetworkFlow.Bucket = ecps_backend.share.m_NetworkFlow.BucketSize;
-    }
-
-    auto flnr = ecps_backend.share.m_NetworkFlow.FrameList.GetNodeFirst();
-    if (flnr == ecps_backend.share.m_NetworkFlow.FrameList.dst) {
+    auto flnr = flow.FrameList.GetNodeFirst();
+    if (flnr == flow.FrameList.dst) {
       co_return 0;
     }
 
-    auto f = &ecps_backend.share.m_NetworkFlow.FrameList[flnr];
+    auto f = &flow.FrameList[flnr];
 
     size_t max_chunks = dynamic_config_t::get_adaptive_chunk_count();
 
-    uint8_t Flag = 0;
+    uint8_t Flag = f->keyframe ? ecps_backend_t::ProtocolChannel::ScreenShare::StreamHeadFlag::KeyFrame : 0;
     uint16_t Possible = (f->vec.size() / 0x400) + !!(f->vec.size() % 0x400);
     uint16_t sent_offset = f->SentOffset;
-    bool is_likely_keyframe = f->vec.size() > 30000;
-    size_t affordable_chunks = ecps_backend.share.m_NetworkFlow.Bucket / (0x400 * 8);
-
+    bool is_likely_keyframe = f->keyframe || f->vec.size() > 30000;
+    int64_t min_bucket = is_likely_keyframe ? -static_cast<int64_t>(flow.BucketSize) : 0;
     if (is_likely_keyframe) {
       max_chunks *= 2;
-      affordable_chunks = (ecps_backend.share.m_NetworkFlow.Bucket + ecps_backend.share.m_NetworkFlow.BucketSize * 0.1) / (0x400 * 8);
     }
 
-    size_t chunks_to_send = std::min({
-     static_cast<size_t>(Possible - sent_offset),
-     max_chunks,
-     affordable_chunks
-      });
-
-    if (is_likely_keyframe && chunks_to_send == 0 && sent_offset < Possible) {
-      size_t remaining_chunks = static_cast<size_t>(Possible - sent_offset);
-      chunks_to_send = std::min(remaining_chunks, static_cast<size_t>(8));
-
-      if (ecps_backend.share.m_NetworkFlow.Bucket < (0x400 * 8)) {
-        ecps_backend.share.m_NetworkFlow.Bucket += (0x400 * 8 * chunks_to_send);
-      }
-    }
-
-    if (is_likely_keyframe && chunks_to_send < 3 && sent_offset < Possible) {
-      size_t remaining_chunks = static_cast<size_t>(Possible - sent_offset);
-      chunks_to_send = std::min(remaining_chunks, static_cast<size_t>(3));
-    }
-
-    size_t chunks_sent = 0;
-    bool transmission_failed = false;
-
-    for (; sent_offset < Possible && chunks_sent < chunks_to_send; sent_offset++, chunks_sent++) {
-      uintptr_t DataSize = f->vec.size() - sent_offset * 0x400;
-      if (DataSize > 0x400) {
-        DataSize = 0x400;
-      }
-
-      bool can_afford = true;
-      if (!is_likely_keyframe) {
-        can_afford = (ecps_backend.share.m_NetworkFlow.Bucket >= DataSize * 8);
-      }
-      else {
-        int64_t deficit_threshold = static_cast<int64_t>(ecps_backend.share.m_NetworkFlow.BucketSize) * 0.1;
-        can_afford = (static_cast<int64_t>(ecps_backend.share.m_NetworkFlow.Bucket) >=
-          -deficit_threshold);
-      }
-
-      if (!can_afford) {
-        if (is_likely_keyframe && chunks_sent == 0 && sent_offset == 0) {
-        }
-        else {
-          break;
-        }
-      }
-
-      bool ret = co_await ecps_backend.write_stream(sent_offset, Possible, Flag,
-        &f->vec[sent_offset * 0x400], DataSize);
-      if (ret != false) {
-        transmission_failed = true;
+    for (size_t chunks_sent = 0; sent_offset < Possible && chunks_sent < max_chunks; sent_offset++, chunks_sent++) {
+      uintptr_t DataSize = std::min<uintptr_t>(f->vec.size() - sent_offset * 0x400, 0x400);
+      if (flow.Bucket - static_cast<int64_t>(DataSize * 8) < min_bucket) {
         break;
       }
-
-      if (is_likely_keyframe) {
-        ecps_backend.share.m_NetworkFlow.Bucket =
-          static_cast<int64_t>(ecps_backend.share.m_NetworkFlow.Bucket) - static_cast<int64_t>(DataSize * 8);
+      if (co_await ecps_backend.write_stream(sent_offset, Possible, Flag, &f->vec[sent_offset * 0x400], DataSize)) {
+        break;
       }
-      else {
-        ecps_backend.share.m_NetworkFlow.Bucket -= DataSize * 8;
-      }
-
-      int64_t max_deficit = static_cast<int64_t>(ecps_backend.share.m_NetworkFlow.BucketSize) / -2; // -50% max deficit
-      if (static_cast<int64_t>(ecps_backend.share.m_NetworkFlow.Bucket) < max_deficit) {
-        ecps_backend.share.m_NetworkFlow.Bucket = static_cast<uint64_t>(max_deficit);
-      }
-    }
-
-    if (is_likely_keyframe && !transmission_failed && chunks_sent > 0 && sent_offset < Possible) {
-      size_t keyframe_completion = (chunks_sent * 100) / static_cast<size_t>(Possible);
-      if (keyframe_completion < 30) {
-      #if ecps_debug_prints >= 1
-        ecps_print_throttled("NETWORK: Incomplete keyframe transmission: {}% ({}/{})",
-          keyframe_completion, chunks_sent, Possible);
-      #endif
-
-        static uint64_t failed_keyframe_count = 0;
-        if (++failed_keyframe_count % 3 == 0) {
-          ecps_backend.share.m_NetworkFlow.Bucket += static_cast<uint64_t>(
-            static_cast<double>(ecps_backend.share.m_NetworkFlow.BucketSize) * 0.2
-            );
-        }
-      }
+      flow.Bucket -= static_cast<int64_t>(DataSize * 8);
     }
 
     f->SentOffset = sent_offset;
