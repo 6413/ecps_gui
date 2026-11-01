@@ -1618,8 +1618,7 @@ struct ecps_gui_t {
       gui::push_item_width(-1);
       if (gui::combo("##aspect_ratio", &selected_aspect_ratio,
         aspect_cstrings.data(), aspect_cstrings.size())) {
-        update_available_resolutions();
-        sync_dropdown_to_current_resolution(current_width, current_height);
+        apply_closest_resolution(current_height);
       }
       gui::pop_item_width();
 
@@ -1694,10 +1693,13 @@ struct ecps_gui_t {
       f32_t current_aspect = static_cast<f32_t>(current_width) / current_height;
       auto aspect_options = rt->screen_encoder.resolution_manager.get_aspect_ratio_options();
 
-      for (int i = 0; i < aspect_options.size(); i++) {
-        if (std::abs(aspect_options[i].second - current_aspect) < 0.02f) {
-          selected_aspect_ratio = i;
-          break;
+      // auto can match the same ratio as a named option, keep what the user picked
+      if (std::abs(aspect_options[selected_aspect_ratio].second - current_aspect) >= 0.02f) {
+        for (int i = 0; i < aspect_options.size(); i++) {
+          if (std::abs(aspect_options[i].second - current_aspect) < 0.02f) {
+            selected_aspect_ratio = i;
+            break;
+          }
         }
       }
 
@@ -1713,8 +1715,17 @@ struct ecps_gui_t {
       }
     }
 
-    void update_available_resolutions() {
-      selected_resolution = 0;
+    void apply_closest_resolution(uint32_t current_height) {
+      auto resolutions = get_filtered_resolutions();
+      auto height_distance = [&](const auto& resolution) {
+        return std::abs((int)resolution.height - (int)current_height);
+      };
+      auto closest = std::min_element(resolutions.begin(), resolutions.end(), [&](const auto& a, const auto& b) {
+        return height_distance(a) < height_distance(b);
+      });
+      if (closest != resolutions.end()) {
+        apply_resolution(*closest);
+      }
     }
 
     void apply_resolution(const resolution_system_t::resolution_t& resolution) {
