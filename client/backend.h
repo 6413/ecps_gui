@@ -139,11 +139,14 @@ struct ecps_backend_t {
     std::vector<uint8_t> m_DataCheck = std::vector<uint8_t>(0x201);
     std::vector<uint8_t> m_data = std::vector<uint8_t>(0x400400);
     std::vector<uint16_t> m_MissingPackets;
-    uint32_t m_PacketCounter = 0;
+    uint32_t m_ReceivedCount = 0;
+    uint16_t m_HighestCurrent = 0;
+    uint64_t m_GapSince = 0;
+    uint64_t m_LastRecoveryAt = 0;
     bool m_AckSent = false;
     uint8_t m_RecoveryRetries = 0;
 
-    static constexpr uint32_t recovery_ack_interval = 1;
+    static constexpr uint64_t recovery_delay_ns = 5000000;
     std::function<void(std::vector<uint8_t>)> recovery_callback;
 
     struct {
@@ -200,70 +203,47 @@ struct ecps_backend_t {
         uint64_t adaptive_timeout = get_adaptive_timeout();
 
         if (frame_age > adaptive_timeout) {
+          m_stats.Frame_Drop++;
           SetNewSequence((m_Sequence + 1) % 0x1000);
+          RequestKeyframe();
           return;
         }
       }
 
-      m_PacketCounter++;
-      if (m_PacketCounter % 1 != 0) {
-        return;
-      }
-
-      UpdateMissingPackets();
-      if (m_MissingPackets.empty()) {
+      // packets arrive in order, so only a hole below the newest packet can be a loss;
+      // anything above it is still on its way and asking for it just doubles the traffic
+      if (m_Possible == (uint16_t)-1 || m_ReceivedCount > m_HighestCurrent) {
+        m_GapSince = 0;
         m_AckSent = false;
         m_RecoveryRetries = 0;
         return;
       }
-
-      if (!m_AckSent || m_RecoveryRetries < 3) {
-        SendRecoveryRequest();
-        m_RecoveryRetries++;
+      if (m_GapSince == 0) {
+        m_GapSince = current_time;
       }
+      if (current_time - m_GapSince < recovery_delay_ns || m_RecoveryRetries >= 3 ||
+        current_time - m_LastRecoveryAt < recovery_delay_ns) {
+        return;
+      }
+
+      UpdateMissingPackets(m_HighestCurrent);
+      SendRecoveryRequest();
+      m_LastRecoveryAt = current_time;
+      m_RecoveryRetries++;
     }
 
     void FixFrameOnComplete();
 
-    void ApplyImprovedErrorConcealment() {
-      for (uint16_t missing : m_MissingPackets) {
-        if (missing > 0 && missing < m_Possible - 1) {
-          uint8_t* dst = &m_data[missing * 0x400];
-          const uint8_t* prev = &m_data[(missing - 1) * 0x400];
-          const uint8_t* next = &m_data[(missing + 1) * 0x400];
-
-          for (int i = 0; i < 0x400; i += 4) {
-            dst[i] = static_cast<uint8_t>((prev[i] + next[i]) / 2);
-            dst[i + 1] = static_cast<uint8_t>((prev[i + 1] + next[i + 1]) / 2);
-            dst[i + 2] = static_cast<uint8_t>((prev[i + 2] + next[i + 2]) / 2);
-            dst[i + 3] = static_cast<uint8_t>((prev[i + 3] + next[i + 3]) / 2);
-          }
-        }
-        else if (missing > 0) {
-          uint8_t* dst = &m_data[missing * 0x400];
-          const uint8_t* src = &m_data[(missing - 1) * 0x400];
-          for (int i = 0; i < 0x400; i += 4) {
-            dst[i] = static_cast<uint8_t>(src[i] * 0.8f);
-            dst[i + 1] = static_cast<uint8_t>(src[i + 1] * 0.8f);
-            dst[i + 2] = static_cast<uint8_t>(src[i + 2] * 0.8f);
-            dst[i + 3] = static_cast<uint8_t>(src[i + 3] * 0.8f);
-          }
-        }
-        else {
-          memset(&m_data[missing * 0x400], 0, 0x400);
-        }
-      }
-    }
-
     void RequestKeyframe();
 
-    void UpdateMissingPackets() {
+    void UpdateMissingPackets(uint16_t Limit = (uint16_t)-1) {
       m_MissingPackets.clear();
       if (m_Possible == (uint16_t)-1) {
         return;
       }
 
-      for (uint16_t i = 0; i < m_Possible; i++) {
+      Limit = std::min(Limit, m_Possible);
+      for (uint16_t i = 0; i < Limit; i++) {
         if (!GetDataCheck(i)) {
           m_MissingPackets.push_back(i);
         }
@@ -308,7 +288,9 @@ struct ecps_backend_t {
       __builtin_memset(m_DataCheck.data(), 0, m_DataCheck.size());
       // timed from the frame's first packet, see the udp receive path
       frame_start_time = 0;
-      m_PacketCounter = 0;
+      m_ReceivedCount = 0;
+      m_HighestCurrent = 0;
+      m_GapSince = 0;
     }
 
     bool IsSequencePast(uint16_t PacketSequence) {
@@ -428,9 +410,9 @@ struct ecps_backend_t {
     }
 
     uintptr_t BufferSize = (uintptr_t)DataWillBeAt - (uintptr_t)buffer + DataSize;
-    share.StorePacketForRecovery(share.frame_index & 0xfff, Current, buffer, BufferSize);
-
     __builtin_memcpy(DataWillBeAt, Data, DataSize);
+
+    share.StorePacketForRecovery(share.frame_index & 0xfff, Current, buffer, BufferSize);
 
     ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t rest;
     Protocol_ChannelID_t streaming_channel_id;
@@ -606,7 +588,11 @@ struct ecps_backend_t {
 
           if (current < view.m_data.size() / 0x400) {
             __builtin_memcpy(&view.m_data[current * 0x400], packet_data, packet_size);
-            view.SetDataCheck(current);
+            if (!view.GetDataCheck(current)) {
+              view.SetDataCheck(current);
+              ++view.m_ReceivedCount;
+            }
+            view.m_HighestCurrent = std::max(view.m_HighestCurrent, current);
 
             view.last_valid_packet_time = fan::event::now();
             if (view.frame_start_time == 0) {

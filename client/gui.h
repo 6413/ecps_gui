@@ -1348,6 +1348,17 @@ struct ecps_gui_t {
 
         gui::spacing();
 
+        gui::text("=== MS PER FRAME ===");
+        if (auto rt = get_render_thread(); rt) {
+          gui::text(rt->screen_encoder.encoder_.uses_gpu_frames() ? "Encode path: GPU" : "Encode path: CPU");
+        }
+        gui::text("Capture: " + fan::to_string(stage_times.capture.ms.load(), 2));
+        gui::text("Encode: " + fan::to_string(stage_times.encode.ms.load(), 2));
+        gui::text("Decode: " + fan::to_string(stage_times.decode.ms.load(), 2));
+        gui::text("Upload: " + fan::to_string(stage_times.upload.ms.load(), 2));
+
+        gui::spacing();
+
         gui::text("=== PACKET STATS ===");
         gui::text("Total Packets: " + std::to_string(stats.Packet_Total));
         gui::text("Head Drops: " + std::to_string(stats.Packet_HeadDrop));
