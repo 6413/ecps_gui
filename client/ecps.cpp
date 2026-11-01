@@ -972,8 +972,9 @@ int main() {
           last_idr_time = now;
         }
 
-        // waits for the next frame of the desktop
+        // waits for the next frame of the desktop, but a failed read returns at once
         if (!rt->screen_encoder.screen_read()) {
+          rt->screen_encoder.sleep_thread();
           continue;
         }
         stage_times.capture.add(rt->screen_encoder.capture_time_ns);
