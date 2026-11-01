@@ -166,6 +166,33 @@ ScreenShare_SendFlagTo(
     rest);
 }
 
+/* the flag alone isnt enough, anyone logged in can name any channel */
+bool
+ScreenShare_CanControlHost(
+  ChannelList_NodeReference_t ChannelID,
+  Protocol_SessionID_t SessionID
+){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+
+  if(!(ChannelData->Flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
+    return false;
+  }
+  if(ChannelData->HostSessionID == SessionID){
+    return false;
+  }
+
+  auto nr = Channel->SessionList.GetNodeFirst();
+  ChannelSessionList_Node_t *n;
+  for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
+    n = Channel->SessionList.GetNodeByReference(nr);
+    if(n->data.SessionID == SessionID){
+      return true;
+    }
+  }
+  return false;
+}
+
 void
 ScreenShare_FlagIsChanged
 (

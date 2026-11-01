@@ -23,7 +23,12 @@
 
 #include <WITCH/WITCH.h>
 
-#define use_input_control 0
+// linux hosts have no working backend yet: wayland has none and x11 needs libXtst
+#if defined(_WIN32)
+  #define use_input_control 0
+#else
+  #define use_input_control 0
+#endif
 
 #if use_input_control == 1
   #include <WITCH/MD/Mice.h>
@@ -292,6 +297,37 @@ struct render_thread_t {
 
 };
 
+#if use_input_control == 1
+// the host's own setting decides, the server can't turn control on by itself
+static bool host_allows_input(ecps_backend_t& backend, auto channel_id) {
+  auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+  if (!rt || rt->ecps_gui.stream_settings.input_control == 0) {
+    return false;
+  }
+  return std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
+    return channel.is_streaming && channel.channel_id.i == channel_id.i;
+  });
+}
+
+// viewers send stream pixels, the stream can be smaller than the desktop
+static bool stream_to_desktop(const fan::vec2si& position, std::uint32_t& x, std::uint32_t& y) {
+  auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+  if (!rt) {
+    return false;
+  }
+  auto& capture = rt->screen_encoder.mdscr;
+  auto& config = rt->screen_encoder.config_;
+  std::int64_t desktop_width = capture.Geometry.Resolution.x;
+  std::int64_t desktop_height = capture.Geometry.Resolution.y;
+  if (position.x < 0 || position.y < 0 || !desktop_width || !desktop_height || !config.width || !config.height) {
+    return false;
+  }
+  x = capture.desktop_origin.x + (std::uint32_t)std::min(position.x * desktop_width / config.width, desktop_width - 1);
+  y = capture.desktop_origin.y + (std::uint32_t)std::min(position.y * desktop_height / config.height, desktop_height - 1);
+  return true;
+}
+#endif
+
 ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, KeepAlive) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     co_return;
@@ -444,16 +480,9 @@ ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseCoordinate) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate_t>();
   #if use_input_control == 1
-    bool input_control_enabled = false;
-    for (const auto& channel : backend.channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i) {
-        input_control_enabled = (channel.flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl) != 0;
-        break;
-      }
-    }
-
-    if (input_control_enabled) {
-      MD_Mice_Error err = MD_Mice_Coordinate_Write(&mice, msg->pos.x, msg->pos.y);
+    std::uint32_t x, y;
+    if (host_allows_input(backend, msg->ChannelID) && stream_to_desktop(msg->pos, x, y)) {
+      MD_Mice_Error err = MD_Mice_Coordinate_Write(&mice, x, y);
       if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
         fan::print("mouse coordinate write failed");
       }
@@ -465,15 +494,7 @@ ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseMotion) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion_t>();
   #if use_input_control == 1
-    bool input_control_enabled = false;
-    for (const auto& channel : backend.channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i) {
-        input_control_enabled = (channel.flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl) != 0;
-        break;
-      }
-    }
-
-    if (input_control_enabled) {
+    if (host_allows_input(backend, msg->ChannelID)) {
       MD_Mice_Error err = MD_Mice_Motion_Write(&mice, msg->Motion.x, msg->Motion.y);
       if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
         fan::print("mouse motion write failed");
@@ -486,17 +507,10 @@ ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseButton) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton_t>();
   #if use_input_control == 1
-    bool input_control_enabled = false;
-    for (const auto& channel : backend.channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i) {
-        input_control_enabled = (channel.flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl) != 0;
-        break;
-      }
-    }
-
-    if (input_control_enabled) {
-      if (msg->pos != fan::vec2i(-1)) {
-        MD_Mice_Error err = MD_Mice_Coordinate_Write(&mice, msg->pos.x, msg->pos.y);
+    if (host_allows_input(backend, msg->ChannelID)) {
+      std::uint32_t x, y;
+      if (stream_to_desktop(msg->pos, x, y)) {
+        MD_Mice_Error err = MD_Mice_Coordinate_Write(&mice, x, y);
         if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
           fan::print("mouse coordinate write failed");
         }
@@ -514,15 +528,7 @@ ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostKeyboard) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t>();
   #if use_input_control == 1
-    bool input_control_enabled = false;
-    for (const auto& channel : backend.channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i) {
-        input_control_enabled = (channel.flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl) != 0;
-        break;
-      }
-    }
-
-    if (input_control_enabled) {
+    if (host_allows_input(backend, msg->ChannelID)) {
       MD_Keyboard_Error err = MD_Keyboard_WriteKey(&keyboard, msg->Scancode, msg->State);
       if (err == MD_Keyboard_Error_UnknownArgument) {
         fan::print("unknown keyboard scancode:", msg->Scancode);

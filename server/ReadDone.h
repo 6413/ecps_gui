@@ -238,7 +238,7 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseCoordinate:{
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  if(!(ChannelData->Flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
+  if(!ScreenShare_CanControlHost(ChannelID, SessionID)){
     goto StateDone_gt;
   }
 
@@ -264,7 +264,7 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseMotion:{
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  if(!(ChannelData->Flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
+  if(!ScreenShare_CanControlHost(ChannelID, SessionID)){
     goto StateDone_gt;
   }
 
@@ -290,7 +290,7 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton:{
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  if(!(ChannelData->Flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
+  if(!ScreenShare_CanControlHost(ChannelID, SessionID)){
     goto StateDone_gt;
   }
 
@@ -318,7 +318,7 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard:{
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  if(!(ChannelData->Flag & ProtocolChannel::ScreenShare::ChannelFlag::InputControl)){
+  if(!ScreenShare_CanControlHost(ChannelID, SessionID)){
     goto StateDone_gt;
   }
 
