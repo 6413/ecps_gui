@@ -42,11 +42,9 @@ clangStdenv.mkDerivation {
   '';
   sourceRoot = ".";
 
-  # the client's fan patch only touches graphics, video and window code, which the
-  # headless build leaves out; the network patch adds fan.network.crypto, which it imports
+  # the client's fan patch only touches video code, which the headless build leaves out
   patchPhase = ''
     runHook prePatch
-    patch -d fan -p1 < ecps_gui/nix/fan-network.patch
     inc=fan/third_party/fan/include
     mkdir -p $inc
     ${lib.concatMapStrings (name: ''
