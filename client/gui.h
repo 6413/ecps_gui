@@ -1776,11 +1776,8 @@ struct ecps_gui_t {
       return;
     }
 
-    static std::vector<fan::audio::loopback_device_t> devices;
+    auto& devices = refresh_loopback_devices(false);
     static bool combo_was_open = false;
-    if (devices.empty()) {
-      devices = fan::audio::get_loopback_devices();
-    }
     std::string preview = stream_settings.audio_device.empty() ? devices.front().name : "(unplugged device)";
     for (const auto& device : devices) {
       if (!stream_settings.audio_device.empty() && device.id == stream_settings.audio_device) {
@@ -1794,7 +1791,7 @@ struct ecps_gui_t {
     if (combo_open) {
       // re-list on open so newly plugged devices show up
       if (!combo_was_open) {
-        devices = fan::audio::get_loopback_devices();
+        refresh_loopback_devices(true);
       }
       for (const auto& device : devices) {
         gui::push_id(device.id.empty() ? std::string("default") : device.id);
@@ -1820,10 +1817,13 @@ struct ecps_gui_t {
     gui::end_disabled();
     if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
       gui::set_tooltip(can_exclude
-        ? "Records every app except Discord, so voice calls are not shared.\nRecords all outputs, not only the selected device."
+        ? "Records every app except Discord, so voice calls are not shared.\nRecords all outputs, not only the selected device.\nWith SteelSeries Sonar it records the Sonar - Gaming device instead."
         : "Not supported on this platform yet");
     }
-    if (exclude && audio_share.capture.is_running()) {
+    if (exclude && !find_sonar_gaming().empty()) {
+      gui::text_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
+    }
+    else if (exclude && audio_share.capture.is_running()) {
       gui::text_disabled(audio_share.capture.get_excluded_pid()
         ? "Recording all apps except Discord"
         : audio_share.exclude_failed ? "Could not exclude Discord, recording the device" : "Discord is not running");
@@ -1838,14 +1838,46 @@ struct ecps_gui_t {
     gui::pop_item_width();
   }
 
+  // the list is re-read at most every 10 s unless forced (it also detects Sonar starting or stopping)
+  const std::vector<fan::audio::loopback_device_t>& refresh_loopback_devices(bool force) {
+    auto now = std::chrono::steady_clock::now();
+    if (force || loopback_devices.empty() || now - loopback_devices_listed > std::chrono::seconds(10)) {
+      loopback_devices = fan::audio::get_loopback_devices();
+      loopback_devices_listed = now;
+    }
+    return loopback_devices;
+  }
+
+  // SteelSeries Sonar re-plays its Chat (Discord) and Mic monitoring mixes from its own process, so
+  // process loopback excluding Discord still records them; its Gaming device carries only game apps
+  std::string find_sonar_gaming() {
+    for (const auto& device : refresh_loopback_devices(false)) {
+      if (device.name.find("Sonar - Gaming") != std::string::npos) {
+        return device.id;
+      }
+    }
+    return {};
+  }
+
   fan::audio::loopback_capture_t::options_t get_capture_options() {
     auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
+    bool exclude = settings.exclude_discord && fan::audio::loopback_capture_t::can_exclude_processes();
+    std::string device_id = stream_settings.audio_device;
+    if (exclude && stream_settings.share_audio) {
+      if (std::string sonar = find_sonar_gaming(); !sonar.empty()) {
+        device_id = std::move(sonar);
+        exclude = false;
+      }
+    }
     return {
-      .device_id = stream_settings.audio_device,
-      .exclude_discord = settings.exclude_discord && fan::audio::loopback_capture_t::can_exclude_processes(),
+      .device_id = device_id,
+      .exclude_discord = exclude,
       .gain = settings.gain,
     };
   }
+
+  std::vector<fan::audio::loopback_device_t> loopback_devices;
+  std::chrono::steady_clock::time_point loopback_devices_listed;
 
   void render_play_audio_controls() {
     if (gui::checkbox("Play audio", &stream_settings.play_audio)) {
