@@ -5,6 +5,7 @@
 #include <fan/types/dme.h>
 #include <cstring>
 #include <unordered_map>
+#include <map>
 #include <exception>
 #include <coroutine>
 #include <string>
