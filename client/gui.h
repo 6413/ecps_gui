@@ -195,6 +195,13 @@ struct ecps_gui_t {
       config = fan::json::parse(data);
     }
 
+    if (config.contains("audio")) {
+      fan::json audio = config["audio"];
+      stream_settings.share_audio = audio.value("share", stream_settings.share_audio);
+      stream_settings.play_audio = audio.value("play", stream_settings.play_audio);
+      stream_settings.audio_volume = audio.value("volume", stream_settings.audio_volume);
+    }
+
     std::string ip, port;
     if (config.contains("server")) {
       if (config["server"].contains("ip")) {
@@ -420,6 +427,9 @@ struct ecps_gui_t {
     int selected_decoder = 0;
     int input_control = 0;
     bool show_in_stream_view = false;
+    bool share_audio = false;
+    bool play_audio = true;
+    f32_t audio_volume = 1.f;
 
     f32_t bitrate_mbps = 10;
     bool use_adaptive_bitrate = true;
@@ -839,6 +849,7 @@ struct ecps_gui_t {
                     }
                   }
                 }
+                This->render_share_audio_checkbox();
               }
 
               gui::end_tab_item();
@@ -981,8 +992,12 @@ struct ecps_gui_t {
           gui::pop_item_width();
         } while (0);
 
+        gui::separator();
+        This->render_share_audio_checkbox();
       }
       if (ecps_backend.is_viewing_any_channel()) {
+        This->render_play_audio_controls();
+        gui::separator();
         do {
 
           static auto decoder_names = [] {
@@ -1701,10 +1716,19 @@ struct ecps_gui_t {
   }
 
   void send_input_control_flag() {
-    backend_queue([input_control = stream_settings.input_control != 0]() -> fan::event::task_t {
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (channel.is_streaming) {
+        input_control_channel = channel.channel_id;
+        break;
+      }
+    }
+    backend_queue([input_control = stream_settings.input_control != 0, channel_id = input_control_channel]() -> fan::event::task_t {
+      if (!input_control) {
+        host_input.close();
+      }
       try {
         for (const auto& channel : ecps_backend.channel_info) {
-          if (channel.is_streaming) {
+          if (channel.channel_id.i == channel_id.i) {
             ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t rest;
             rest.ChannelID = channel.channel_id;
             rest.ChannelSessionID = channel.session_id;
@@ -1721,6 +1745,38 @@ struct ecps_gui_t {
       }
       catch (...) {}
     });
+  }
+
+  void render_share_audio_checkbox() {
+    if (!fan::audio::loopback_capture_t::is_supported()) {
+      return;
+    }
+    if (gui::checkbox("Share audio", &stream_settings.share_audio)) {
+      save_audio_settings();
+    }
+  }
+
+  void render_play_audio_controls() {
+    if (gui::checkbox("Play audio", &stream_settings.play_audio)) {
+      save_audio_settings();
+    }
+    if (stream_settings.play_audio) {
+      gui::text("Volume");
+      gui::push_item_width(-1);
+      gui::slider("##audio_volume", &stream_settings.audio_volume, 0.f, 2.f, gui::slider_flags_always_clamp);
+      if (gui::is_item_deactivated_after_edit()) {
+        save_audio_settings();
+      }
+      gui::pop_item_width();
+    }
+  }
+
+  void save_audio_settings() {
+    fan::json audio;
+    audio["share"] = stream_settings.share_audio;
+    audio["play"] = stream_settings.play_audio;
+    audio["volume"] = stream_settings.audio_volume;
+    write_to_config("audio", audio);
   }
 
   void queue_host_input(int command, auto rest) {
@@ -1789,8 +1845,8 @@ struct ecps_gui_t {
     }
 
     fan::vec2 mouse_position = engine.get_mouse_position();
-    fan::vec2 frame_size = rt->network_frame.get_size();
-    fan::vec2 frame_min = rt->network_frame.get_position() - frame_size / 2;
+    fan::vec2 frame_size = rt->network_frame.get_size() * 2;
+    fan::vec2 frame_min = fan::vec2(rt->network_frame.get_position()) - frame_size / 2;
     fan::vec2 frame_max = frame_min + frame_size;
     fan::vec2ui stream_size = rt->screen_decoder.decoded_size;
 
@@ -1867,13 +1923,15 @@ struct ecps_gui_t {
 
   void update_input_control() {
     // every stream starts with control off, the host opts in each time
-    if (!ecps_backend.is_streaming_to_any_channel()) {
+    if (!ecps_backend.is_streaming_to_any_channel() && stream_settings.input_control != 0) {
       stream_settings.input_control = 0;
+      send_input_control_flag();
     }
     forward_input();
   }
 
   void render() {
+    audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume);
     if (is_fullscreen_stream) {
       render_fullscreen_stream();
       update_input_control();
@@ -1925,6 +1983,7 @@ struct ecps_gui_t {
 
   bool show_own_stream = false;
   ecps_backend_t::Protocol_ChannelID_t selected_channel_id{ (uint16_t)-1 };
+  ecps_backend_t::Protocol_ChannelID_t input_control_channel{ (uint16_t)-1 };
 
 #undef This
 #undef engine

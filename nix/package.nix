@@ -30,6 +30,8 @@
   wayland,
   pipewire,
   dbus,
+  libopus,
+  libpulseaudio,
   # capture through xdg-desktop-portal + PipeWire instead of the X11 root window
   withWaylandCapture ? true,
   # sources, pinned by the flake
@@ -93,7 +95,7 @@ clangStdenv.mkDerivation {
     libuv glfw libpng libwebp freetype fmt shaderc zlib ffmpeg-full
     vulkanHeaders vulkan-loader gtk3 openssl curl
     xorg.libX11 xorg.libxcb xorg.libXrandr xorg.libXinerama xorg.libXcursor xorg.libXi
-    libxkbcommon wayland lunasvg box2d
+    libxkbcommon wayland lunasvg box2d libopus
   ] ++ lib.optionals withWaylandCapture [ pipewire dbus ];
 
   # fan's xmake.lua and the ecps sources sit next to each other, like the dev layout
@@ -190,7 +192,7 @@ clangStdenv.mkDerivation {
     exec $out/libexec/ecps "\$@"
     EOF
     chmod +x $out/bin/ecps
-    wrapProgram $out/bin/ecps --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader ]}
+    wrapProgram $out/bin/ecps --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio xorg.libX11 xorg.libXtst ]}
     runHook postInstall
   '';
 

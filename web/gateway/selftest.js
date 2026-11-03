@@ -1,7 +1,7 @@
 // Checks the protocol code without a server: run with `npm run selftest`.
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
-import { deriveKeys, open, parseStreamHeader, seal, writeStreamHeader } from './ecps.js'
+import { deriveKeys, open, parseAudioPacket, parseStreamHeader, seal, writeAudioPacket, writeStreamHeader } from './ecps.js'
 
 // RFC 8439 section 2.8.2 AEAD test vector, nonce rebuilt from the ecps layout
 {
@@ -60,6 +60,16 @@ import { deriveKeys, open, parseStreamHeader, seal, writeStreamHeader } from './
   assert.deepEqual([...writeStreamHeader(0xabc, 0, 1, 0)].slice(0, 3), [0xbc, 0xa0, 0x00])
   // SetCurrent(0x234): low nibble in the bottom of sc[1], the rest in sc[2]
   assert.deepEqual([...writeStreamHeader(0, 0x234, 0, 0)], [0x00, 0x04, 0x23])
+}
+
+{
+  const packet = writeAudioPacket(0x1234, Buffer.from([0xfc, 1, 2]))
+  assert.deepEqual([...packet], [0x34, 0x12, 0xfc, 1, 2])
+  const parsed = parseAudioPacket(packet)
+  assert.equal(parsed.sequence, 0x1234)
+  assert.deepEqual([...parsed.opus], [0xfc, 1, 2])
+  assert.equal(writeAudioPacket(0x10000, Buffer.from([1])).readUInt16LE(0), 0)
+  assert.equal(parseAudioPacket(Buffer.from([1, 2])), null)
 }
 
 console.log('selftest ok')

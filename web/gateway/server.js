@@ -5,7 +5,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
-import { EcpsClient, FRAME_KEY } from './ecps.js'
+import { EcpsClient, FRAME_AUDIO, FRAME_KEY } from './ecps.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const distDir = path.join(here, '..', 'dist')
@@ -79,6 +79,11 @@ function bridge(ws) {
       send({ t: 'closed', reason })
       ws.close()
     })
+    ecps.on('audio', packet => {
+      if (ws.readyState == ws.OPEN && ws.bufferedAmount <= MAX_BUFFERED) {
+        ws.send(Buffer.concat([Buffer.from([FRAME_AUDIO]), packet]), { binary: true })
+      }
+    })
     ecps.on('frame', (data, keyframe) => {
       if (ws.readyState != ws.OPEN) {
         return
@@ -135,7 +140,10 @@ function bridge(ws) {
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
-      if (authed && data.length > 1 && data.length <= MAX_FRAME) {
+      if (authed && data.length > 1 && data[0] & FRAME_AUDIO) {
+        ecps.sendAudio(data.subarray(1))
+      }
+      else if (authed && data.length > 1 && data.length <= MAX_FRAME) {
         if (!ecps.sendFrame(data.subarray(1), (data[0] & FRAME_KEY) != 0)) {
           send({ t: 'keyframe' })
         }

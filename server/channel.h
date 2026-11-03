@@ -106,7 +106,7 @@ const char* GetChannelName(Protocol_ChannelID_t ChannelID) {
       snprintf(name_buffer, sizeof(name_buffer), "Screen Share");
       break;
     default:
-      snprintf(name_buffer, sizeof(name_buffer), "Channel #%d");
+      snprintf(name_buffer, sizeof(name_buffer), "Channel #%u", (unsigned)ChannelID.i);
       break;
   }
   return name_buffer;

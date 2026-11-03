@@ -148,6 +148,26 @@ void ScreenShare_StreamPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_siz
   }
 }
 
+void ScreenShare_AudioPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_size_t DataSize) {
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelSubData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+
+  ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData_t cd;
+  cd.ChannelID = ChannelID;
+  auto nr = Channel->SessionList.GetNodeFirst();
+  ChannelSessionList_Node_t *n;
+  for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
+    n = Channel->SessionList.GetNodeByReference(nr);
+    if(n->data.SessionID == ChannelSubData->HostSessionID){
+      continue;
+    }
+    if(g_pile->SessionList[n->data.SessionID].UDP.Address.ip == 0){
+      continue;
+    }
+    UDP_send(n->data.SessionID, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData, cd, Data, DataSize);
+  }
+}
+
 void
 ScreenShare_SendFlagTo(
   ChannelList_NodeReference_t ChannelID,

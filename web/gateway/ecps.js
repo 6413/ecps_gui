@@ -33,8 +33,8 @@ const S2C = {
 // body size of every S2C command, in protocol order
 const S2C_SIZE = [0, 80, 8, 7, 1, 7, 1, 3, 2, 4, 3, 10, 10, 10, 12, 5, 4, 4]
 
-const UDP_C2S = { KeepAlive: 0, HostStreamData: 1 }
-const UDP_S2C = { KeepAlive: 0, ViewStreamData: 1 }
+const UDP_C2S = { KeepAlive: 0, HostStreamData: 1, HostAudioData: 3 }
+const UDP_S2C = { KeepAlive: 0, ViewStreamData: 1, ViewAudioData: 3 }
 
 const TCP_HEADER = 6
 const UDP_HEADER = 18
@@ -48,8 +48,11 @@ const SESSION_INFO = 53
 const RESET_IDR = 2
 const KEYFRAME_FLAG = 1
 const CRYPTO_CONTEXT = 'ecps udp v1'
+const MAX_OPUS = 1275
 
 export const FRAME_KEY = 1
+export const FRAME_AUDIO = 0x80
+export const AUDIO_HEADER = 2
 
 function nonceFor(counter) {
   const nonce = Buffer.alloc(12)
@@ -128,6 +131,17 @@ export function writeStreamHeader(sequence, current, possible, flag) {
     b[4] = (possible >> 4 & 0xf0) | (flag & 0x0f)
   }
   return b
+}
+
+export function writeAudioPacket(sequence, opus) {
+  return Buffer.concat([u16(sequence & 0xffff), opus])
+}
+
+export function parseAudioPacket(b) {
+  if (b.length <= AUDIO_HEADER) {
+    return null
+  }
+  return { sequence: b.readUInt16LE(0), opus: b.subarray(AUDIO_HEADER) }
 }
 
 function isKeyframe(data) {
@@ -480,10 +494,15 @@ export class EcpsClient extends EventEmitter {
     if (!plain || !this.udpReplay.accept(Number(nonce))) {
       return
     }
-    if (msg.readUInt16LE(16) == UDP_S2C.ViewStreamData && plain.length >= 2 + STREAM_BODY) {
-      if (plain.readUInt16LE(0) == this.channel?.id) {
-        this.onStreamPacket(plain.subarray(2))
-      }
+    const command = msg.readUInt16LE(16)
+    if (plain.length < 2 || plain.readUInt16LE(0) != this.channel?.id) {
+      return
+    }
+    if (command == UDP_S2C.ViewStreamData && plain.length >= 2 + STREAM_BODY) {
+      this.onStreamPacket(plain.subarray(2))
+    }
+    else if (command == UDP_S2C.ViewAudioData && parseAudioPacket(plain.subarray(2))) {
+      this.emit('audio', plain.subarray(2))
     }
   }
 
@@ -577,6 +596,17 @@ export class EcpsClient extends EventEmitter {
     return true
   }
 
+  sendAudio(opus) {
+    if (!this.channel || !opus.length || opus.length > MAX_OPUS) {
+      return
+    }
+    const target = Buffer.alloc(6)
+    target.writeUInt16LE(this.channel.id, 0)
+    target.writeUInt32LE(this.channel.sessionId, 2)
+    this.writeUdp(UDP_C2S.HostAudioData, Buffer.concat([target, writeAudioPacket(this.audioSequence++, opus)]))
+    this.audioSequence &= 0xffff
+  }
+
   async pumpFrames() {
     const target = Buffer.alloc(6)
     target.writeUInt16LE(this.channel.id, 0)
@@ -614,4 +644,5 @@ export class EcpsClient extends EventEmitter {
   sendQueue = []
   sending = false
   frameIndex = 0
+  audioSequence = 0
 }

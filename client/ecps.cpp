@@ -23,18 +23,6 @@
 
 #include <WITCH/WITCH.h>
 
-// linux hosts have no working backend yet: wayland has none and x11 needs libXtst
-#if defined(_WIN32)
-  #define use_input_control 0
-#else
-  #define use_input_control 0
-#endif
-
-#if use_input_control == 1
-  #include <WITCH/MD/Mice.h>
-  #include <WITCH/MD/Keyboard/Keyboard.h>
-#endif
-
 extern "C" {
   #include <libavutil/pixfmt.h>
 }
@@ -192,6 +180,106 @@ std::atomic<bool> render_thread_ready {false};
 
 #include "backend.h"
 
+fan::window::input_injector_t host_input;
+
+struct audio_share_t {
+  using header_t = ecps_backend_t::ScreenShare_AudioHeader_t;
+
+  void update(bool share, bool play, f32_t volume) {
+    bool want_capture = share && ecps_backend.is_streaming_to_any_channel();
+    if (want_capture && !capture.is_running() && !capture_failed) {
+      capture_failed = !encoder.open() || !capture.start([this](const f32_t* pcm, std::uint32_t) { encode(pcm); });
+      if (capture_failed) {
+        fan::print("audio sharing failed:", capture.get_error());
+      }
+    }
+    else if (!want_capture && capture.is_running()) {
+      capture.stop();
+    }
+    capture_failed = capture_failed && share;
+
+    bool want_play = play && ecps_backend.is_viewing_any_channel();
+    play_enabled.store(want_play, std::memory_order_relaxed);
+    if (want_play && !player.is_running() && !player_failed) {
+      player_failed = !player.start();
+      if (player_failed) {
+        fan::print("audio playback failed to start");
+      }
+    }
+    else if (!want_play && player.is_running()) {
+      player.stop();
+      receiving = false;
+    }
+    player_failed = player_failed && play;
+    player.set_volume(volume);
+  }
+
+  void encode(const f32_t* pcm) {
+    std::vector<std::uint8_t> packet(sizeof(header_t) + fan::audio::stream_max_packet);
+    ((header_t*)packet.data())->Sequence = send_sequence++;
+    std::int32_t size = encoder.encode(pcm, packet.data() + sizeof(header_t), fan::audio::stream_max_packet);
+    if (size <= 0) {
+      return;
+    }
+    packet.resize(sizeof(header_t) + size);
+    std::lock_guard<std::mutex> lock(outgoing_mutex);
+    if (outgoing.size() < max_outgoing) {
+      outgoing.push_back(std::move(packet));
+    }
+  }
+
+  fan::event::task_t send_pending() {
+    std::vector<std::vector<std::uint8_t>> packets;
+    {
+      std::lock_guard<std::mutex> lock(outgoing_mutex);
+      packets.swap(outgoing);
+    }
+    for (const auto& packet : packets) {
+      co_await ecps_backend.write_audio(packet);
+    }
+  }
+
+  void on_packet(const std::uint8_t* data, std::uintptr_t size) {
+    if (!play_enabled.load(std::memory_order_relaxed) || (!decoder.state && !decoder.open())) {
+      return;
+    }
+    std::uint16_t sequence = ((const header_t*)data)->Sequence;
+    std::int16_t gap = (std::int16_t)(sequence - expected_sequence);
+    if (receiving && gap < 0 && gap > -max_late) {
+      return;
+    }
+    std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> pcm;
+    for (std::int16_t i = 0; receiving && i < std::min<std::int16_t>(gap, max_concealed); ++i) {
+      if (decoder.conceal(pcm.data()) > 0) {
+        player.push(pcm.data(), fan::audio::stream_frame_size);
+      }
+    }
+    receiving = true;
+    expected_sequence = sequence + 1;
+    std::int32_t frames = decoder.decode(data + sizeof(header_t), (std::int32_t)(size - sizeof(header_t)), pcm.data());
+    if (frames > 0) {
+      player.push(pcm.data(), frames);
+    }
+  }
+
+  static constexpr std::size_t max_outgoing = 25;
+  static constexpr std::int16_t max_concealed = 3;
+  static constexpr std::int16_t max_late = 50;
+
+  fan::audio::loopback_capture_t capture;
+  fan::audio::opus_encoder_t encoder;
+  fan::audio::opus_decoder_t decoder;
+  fan::audio::live_player_t player;
+  std::mutex outgoing_mutex;
+  std::vector<std::vector<std::uint8_t>> outgoing;
+  std::uint16_t send_sequence = 0;
+  std::uint16_t expected_sequence = 0;
+  bool receiving = false;
+  bool capture_failed = false;
+  bool player_failed = false;
+  std::atomic<bool> play_enabled = false;
+}audio_share;
+
 struct dynamic_config_t {
   static uint32_t get_target_framerate();
 
@@ -297,36 +385,57 @@ struct render_thread_t {
 
 };
 
-#if use_input_control == 1
+static fan::vec2i capture_origin(render_thread_t* rt) {
+#if defined(_WIN32)
+  return rt->screen_encoder.mdscr.desktop_origin;
+#else
+  return fan::vec2i(0, 0);
+#endif
+}
+
 // the host's own setting decides, the server can't turn control on by itself
 static bool host_allows_input(ecps_backend_t& backend, auto channel_id) {
   auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-  if (!rt || rt->ecps_gui.stream_settings.input_control == 0) {
+  bool allowed = rt && rt->ecps_gui.stream_settings.input_control != 0 &&
+    std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
+      return channel.is_streaming && channel.channel_id.i == channel_id.i;
+    });
+  if (!allowed) {
+    host_input.close();
     return false;
   }
-  return std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
-    return channel.is_streaming && channel.channel_id.i == channel_id.i;
-  });
+  static bool reported = false;
+  if (!host_input.is_open() && !host_input.open()) {
+    if (!reported) {
+      fan::print("input control: no way to inject input here, on wayland /dev/uinput must be writable");
+    }
+    reported = true;
+    return false;
+  }
+  reported = false;
+  auto& geometry = rt->screen_encoder.mdscr.Geometry;
+  fan::vec2i origin = capture_origin(rt);
+  host_input.set_desktop(origin.x, origin.y, geometry.Resolution.x, geometry.Resolution.y);
+  return true;
 }
 
 // viewers send stream pixels, the stream can be smaller than the desktop
-static bool stream_to_desktop(const fan::vec2si& position, std::uint32_t& x, std::uint32_t& y) {
+static bool stream_to_desktop(const fan::vec2si& position, std::int32_t& x, std::int32_t& y) {
   auto* rt = render_thread_ptr.load(std::memory_order_acquire);
   if (!rt) {
     return false;
   }
-  auto& capture = rt->screen_encoder.mdscr;
   auto& config = rt->screen_encoder.config_;
-  std::int64_t desktop_width = capture.Geometry.Resolution.x;
-  std::int64_t desktop_height = capture.Geometry.Resolution.y;
+  std::int64_t desktop_width = rt->screen_encoder.mdscr.Geometry.Resolution.x;
+  std::int64_t desktop_height = rt->screen_encoder.mdscr.Geometry.Resolution.y;
   if (position.x < 0 || position.y < 0 || !desktop_width || !desktop_height || !config.width || !config.height) {
     return false;
   }
-  x = capture.desktop_origin.x + (std::uint32_t)std::min(position.x * desktop_width / config.width, desktop_width - 1);
-  y = capture.desktop_origin.y + (std::uint32_t)std::min(position.y * desktop_height / config.height, desktop_height - 1);
+  fan::vec2i origin = capture_origin(rt);
+  x = origin.x + (std::int32_t)std::min<std::int64_t>((std::int64_t)position.x * desktop_width / config.width, desktop_width - 1);
+  y = origin.y + (std::int32_t)std::min<std::int64_t>((std::int64_t)position.y * desktop_height / config.height, desktop_height - 1);
   return true;
 }
-#endif
 
 ecps_backend_t::ecps_backend_t() {
   __dme_get(Protocol_S2C, KeepAlive) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
@@ -479,79 +588,40 @@ ecps_backend_t::ecps_backend_t() {
 
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseCoordinate) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate_t>();
-  #if use_input_control == 1
-    std::uint32_t x, y;
-    if (host_allows_input(backend, msg->ChannelID) && stream_to_desktop(msg->pos, x, y)) {
-      MD_Mice_Error err = MD_Mice_Coordinate_Write(&mice, x, y);
-      if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
-        fan::print("mouse coordinate write failed");
-      }
+    std::int32_t x, y;
+    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID) && stream_to_desktop(msg->pos, x, y)) {
+      host_input.move(x, y);
     }
-  #endif
     co_return;
   };
 
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseMotion) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion_t>();
-  #if use_input_control == 1
-    if (host_allows_input(backend, msg->ChannelID)) {
-      MD_Mice_Error err = MD_Mice_Motion_Write(&mice, msg->Motion.x, msg->Motion.y);
-      if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
-        fan::print("mouse motion write failed");
-      }
+    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID)) {
+      host_input.move_relative(msg->Motion.x, msg->Motion.y);
     }
-  #endif
     co_return;
   };
 
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseButton) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton_t>();
-  #if use_input_control == 1
-    if (host_allows_input(backend, msg->ChannelID)) {
-      std::uint32_t x, y;
+    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID)) {
+      std::int32_t x, y;
       if (stream_to_desktop(msg->pos, x, y)) {
-        MD_Mice_Error err = MD_Mice_Coordinate_Write(&mice, x, y);
-        if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
-          fan::print("mouse coordinate write failed");
-        }
+        host_input.move(x, y);
       }
-
-      MD_Mice_Error err = MD_Mice_Button_Write(&mice, msg->key, msg->state);
-      if (err != MD_Mice_Error_Success && err != MD_Mice_Error_Temporary) {
-        fan::print("mouse button write failed");
-      }
+      host_input.button(msg->key, msg->state);
     }
-  #endif
     co_return;
   };
 
   __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostKeyboard) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t>();
-  #if use_input_control == 1
-    if (host_allows_input(backend, msg->ChannelID)) {
-      MD_Keyboard_Error err = MD_Keyboard_WriteKey(&keyboard, msg->Scancode, msg->State);
-      if (err == MD_Keyboard_Error_UnknownArgument) {
-        fan::print("unknown keyboard scancode:", msg->Scancode);
-      }
-      else if (err != MD_Keyboard_Error_Success && err != MD_Keyboard_Error_Temporary) {
-        fan::print("keyboard write failed");
-      }
+    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID) && !host_input.key(msg->Scancode, msg->State)) {
+      ecps_print_throttled("input control: can't press scancode {:#x}", msg->Scancode);
     }
-  #endif
     co_return;
   };
-
-#if use_input_control == 1
-  MD_Mice_Error mice_err = MD_Mice_Open(&mice);
-  if (mice_err != MD_Mice_Error_Success) {
-    fan::print("Failed to initialize mouse device");
-  }
-
-  MD_Keyboard_Error keyboard_err = MD_Keyboard_open(&keyboard);
-  if (keyboard_err != MD_Keyboard_Error_Success) {
-    fan::print("Failed to initialize keyboard device");
-  }
-#endif
 }
 
 fan::event::task_t ecps_backend_t::default_s2c_cb(ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) {
@@ -767,6 +837,9 @@ int main() {
     if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
       rt->ecps_gui.selected_channel_id = channel_id;
     }
+  };
+  ecps_backend.audio_cb = [](const uint8_t* data, uintptr_t size) {
+    audio_share.on_packet(data, size);
   };
   ecps_backend.login_fail_cb = [](fan::exception_t e) {
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
@@ -1144,6 +1217,7 @@ int main() {
   }
 
   auto network_task = fan::event::every(1, []() -> fan::event::runv_t<bool> {
+    co_await audio_share.send_pending();
     /*if (ecps_backend.cleanup_disconnected_channels()) {
       auto* rt = render_thread_ptr.load(std::memory_order_acquire);
       if (rt) {

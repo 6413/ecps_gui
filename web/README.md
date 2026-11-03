@@ -47,5 +47,7 @@ cloudflared tunnel --url http://localhost:8080
 - Hosts must stream H.264. HEVC and AV1 streams won't play.
 - Phone browsers can't capture the screen, so sharing is PC only.
 - There is no remote mouse or keyboard control.
+- Audio needs WebCodecs: playing works in Chrome, Edge and Safari, sharing in Chrome and Edge. Chrome shares
+  system audio on Windows and ChromeOS, elsewhere only a tab's audio. Tick "Share audio" in the picker too.
 - Video goes over TCP to the browser, so it has more delay than the desktop app.
 - Browsers without WebCodecs, such as Firefox on Android, use a slower MP4 fallback. Add `?mse` to the link to force it elsewhere.

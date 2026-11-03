@@ -321,8 +321,9 @@ void evio_stdin_cb(EV_t* listener, EV_event_t* evio_stdin, uint32_t flag) {
   uint8_t* buffer = _buffer;
   IO_ssize_t size;
   size = IO_read(&event_fd, buffer, sizeof(_buffer));
-  if (size < 0) {
-    __abort();
+  if (size <= 0) {
+    EV_event_stop(listener, evio_stdin);
+    return;
   }
   while (1) {
     if (!IsInputLineDone(&buffer, (uintptr_t*)&size)) {
@@ -456,6 +457,22 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
     track_server_packet(SessionID, RestPacket->ChannelID, sequence, current, possible);
 
     ScreenShare_StreamPacket(RestPacket->ChannelID, StreamData, StreamSize);
+    break;
+  }
+  case ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket) + sizeof(ScreenShare_AudioHeader_t)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
+      break;
+    }
+    auto AudioData = (uint8_t*)&RestPacket[1];
+    ScreenShare_AudioPacket(RestPacket->ChannelID, AudioData, size - (AudioData - buffer));
     break;
   }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {

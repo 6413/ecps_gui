@@ -159,6 +159,10 @@ struct ProtocolUDP {
       Protocol_ChannelID_t ChannelID;
       Protocol_ChannelSessionID_t ChannelSessionID;
     );
+    __dme(Channel_ScreenShare_Host_AudioData,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+    );
   }C2S;
   struct S2C_t : __dme_inherit(S2C_t) {
     __dme(KeepAlive);
@@ -166,6 +170,9 @@ struct ProtocolUDP {
       Protocol_ChannelID_t ChannelID;
     );
     __dme(Channel_ScreenShare_RecoveryRequest,
+      Protocol_ChannelID_t ChannelID;
+    );
+    __dme(Channel_ScreenShare_View_AudioData,
       Protocol_ChannelID_t ChannelID;
     );
   }S2C;
@@ -377,6 +384,10 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
 }Protocol_S2C;
 
 #pragma pack(push, 1)
+
+struct ScreenShare_AudioHeader_t {
+  uint16_t Sequence;
+};
 
 struct ScreenShare_StreamHeader_Body_t {
   uint8_t sc[3];

@@ -2,11 +2,31 @@
   import { onDestroy } from 'svelte'
   import { Viewer, Sharer, canView, canShare } from './media.js'
   import { MseViewer, canUseMse } from './mse.js'
+  import { AudioPlayer, AudioSharer, FRAME_AUDIO, canPlayAudio, canShareAudio } from './audio.js'
 
   const shareSupported = canShare()
   // ?mse forces the fallback player on browsers that have WebCodecs
   const useMse = canUseMse() && (!canView() || new URLSearchParams(location.search).has('mse'))
   const viewSupported = canView() || useMse
+  const audioPlaySupported = canPlayAudio()
+  const audioShareSupported = canShareAudio()
+
+  function loadSetting(key, fallback) {
+    try {
+      const value = localStorage.getItem(key)
+      return value == null ? fallback : value == 'true'
+    }
+    catch {
+      return fallback
+    }
+  }
+
+  function saveSetting(key, value) {
+    try {
+      localStorage.setItem(key, String(value))
+    }
+    catch {}
+  }
 
   let status = $state('connecting')
   let password = $state('')
@@ -23,10 +43,14 @@
   let zoom = $state(1)
   let panX = $state(0)
   let panY = $state(0)
+  let shareAudio = $state(loadSetting('ecps.shareAudio', true))
+  let audioMuted = $state(loadSetting('ecps.audioMuted', false))
 
   let ws = null
   let viewer = null
   let sharer = null
+  let audio = null
+  let audioSharer = null
   let pendingStream = null
   let pendingJoin = null
   let reconnectTimer = null
@@ -60,6 +84,9 @@
     socket.onmessage = e => {
       if (typeof e.data == 'string') {
         onControl(JSON.parse(e.data))
+      }
+      else if (new Uint8Array(e.data, 0, 1)[0] & FRAME_AUDIO) {
+        audio?.push(e.data)
       }
       else {
         viewer?.push(e.data)
@@ -145,6 +172,9 @@
     const requestKeyframe = () => send({ t: 'keyframe' })
     const onError = text => { error = text }
     viewer = useMse ? new MseViewer(video, requestKeyframe, onError) : new Viewer(canvas, requestKeyframe, onError)
+    if (audioPlaySupported) {
+      audio = new AudioPlayer(1, audioMuted)
+    }
   }
 
   async function startSharing() {
@@ -162,6 +192,22 @@
     )
     if (!await sharer.start()) {
       leave()
+      return
+    }
+    const track = stream.getAudioTracks()[0]
+    if (track && audioShareSupported) {
+      audioSharer = new AudioSharer(
+        track,
+        packet => {
+          if (ws?.readyState == WebSocket.OPEN) {
+            ws.send(packet)
+          }
+        },
+        text => { error = text }
+      )
+      if (!await audioSharer.start()) {
+        audioSharer = null
+      }
     }
   }
 
@@ -171,6 +217,10 @@
     resetZoom()
     sharer?.stop()
     sharer = null
+    audio?.close()
+    audio = null
+    audioSharer?.stop()
+    audioSharer = null
   }
 
   // the server can't leave a channel yet, a new session does the same thing
@@ -201,7 +251,8 @@
     try {
       pendingStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 60 },
-        audio: false
+        audio: shareAudio && audioShareSupported,
+        systemAudio: 'include'
       })
     }
     catch {
@@ -213,6 +264,16 @@
     else {
       send({ t: 'share' })
     }
+  }
+
+  function toggleShareAudio() {
+    saveSetting('ecps.shareAudio', shareAudio)
+  }
+
+  function toggleMute() {
+    audioMuted = !audioMuted
+    saveSetting('ecps.audioMuted', audioMuted)
+    audio?.setVolume(1, audioMuted)
   }
 
   function fullscreen() {
@@ -370,6 +431,12 @@
       {/if}
 
       <div class="actions">
+        {#if shareSupported && audioShareSupported}
+          <label class="check">
+            <input type="checkbox" bind:checked={shareAudio} onchange={toggleShareAudio} disabled={current?.role == 'host'}>
+            Share audio
+          </label>
+        {/if}
         {#if shareSupported}
           <button class="primary" disabled={status != 'online' || current?.role == 'host'} onclick={share}>
             Share screen
@@ -412,6 +479,9 @@
         <button aria-label="Zoom out" disabled={zoom <= 1} onclick={() => zoomAt(zoom / ZOOM_STEP)}>-</button>
         <button aria-label="Reset zoom" disabled={zoom == 1} onclick={resetZoom}>{Math.round(zoom * 100)}%</button>
         <button aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onclick={() => zoomAt(zoom * ZOOM_STEP)}>+</button>
+        {#if audioPlaySupported}
+          <button aria-pressed={!audioMuted} onclick={toggleMute}>{audioMuted ? 'Unmute' : 'Mute'}</button>
+        {/if}
         <button onclick={fullscreen}>Fullscreen</button>
       </div>
     {:else if current?.role == 'host'}
@@ -509,6 +579,17 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .check input {
+    width: auto;
+    min-height: 0;
+    margin: 0;
   }
   .primary {
     background: var(--accent);

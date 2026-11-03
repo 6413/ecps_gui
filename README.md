@@ -14,6 +14,26 @@ Built in encoders and decoders:
 ![image](https://github.com/user-attachments/assets/b5268106-993f-4d6a-a611-9c7bed6cc685)
 ![image](https://github.com/user-attachments/assets/d0f2ce5d-b866-4474-b4bc-d870fedc3a08)
 
+## Audio
+
+The host can share what the computer is playing ("Share audio" next to the stream button or in
+Stream Settings), viewers turn it on and off with "Play audio". Audio is Opus, 48 kHz stereo in
+20 ms packets, sent over UDP next to the video.
+
+- Windows: WASAPI loopback of the default output device.
+- Linux: the monitor of the default PulseAudio/PipeWire sink.
+
+## Remote control
+
+The host picks "Mouse + Keyboard" under Input Control, viewers then click the stream to control it.
+Control turns off when the stream stops.
+
+- Windows: SendInput. Windows doesn't let it reach programs running as administrator.
+- Linux X11: XTest (libXtst).
+- Linux Wayland: a virtual mouse and keyboard through `/dev/uinput`, which needs write access, e.g.
+  `sudo setfacl -m u:$USER:rw /dev/uinput` or a udev rule. On several monitors the compositor
+  decides how the virtual mouse maps to them.
+
 ## Web version
 
 Browsers connect through a small gateway that runs next to the ecps server.

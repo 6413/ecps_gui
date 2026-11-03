@@ -11,10 +11,6 @@ struct ecps_backend_t {
     task_keep_alive = {};
     task_tcp_read = {};
     task_udp_listen = {};
-  #if use_input_control == 1
-    MD_Mice_Close(&mice);
-    MD_Keyboard_close(&keyboard);
-  #endif
   }
 
   struct channel_create_awaiter {
@@ -445,6 +441,18 @@ struct ecps_backend_t {
     co_return 0;
   }
 
+  fan::event::task_t write_audio(const std::vector<uint8_t>& packet) {
+    for (const auto& channel : channel_info) {
+      if (channel.is_streaming) {
+        ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData_t rest;
+        rest.ChannelID = channel.channel_id;
+        rest.ChannelSessionID = channel.session_id;
+        co_await udp_write(0, ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData, rest, packet.data(), packet.size());
+        co_return;
+      }
+    }
+  }
+
   fan::event::runv_t<bool> connect(const std::string& ip, uint16_t port) {
     this->ip = ip;
     this->port = port;
@@ -614,6 +622,16 @@ struct ecps_backend_t {
           #if ecps_debug_prints >= 1
             printf("UDP: packet index %u exceeds buffer capacity\n", current);
           #endif
+          }
+        }
+        else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData) {
+          uintptr_t offset = sizeof(bp) + sizeof(ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData_t);
+          if (size < offset + sizeof(ScreenShare_AudioHeader_t)) {
+            co_return;
+          }
+          auto command_data = (ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData_t*)&packet[sizeof(bp)];
+          if (audio_cb && is_channel_joined(command_data->ChannelID)) {
+            audio_cb(&packet[offset], size - offset);
           }
         }
         else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest) {
@@ -852,6 +870,7 @@ struct ecps_backend_t {
   f32_t ping_ms = 0;
 
   std::function<void(fan::exception_t)> login_fail_cb;
+  std::function<void(const uint8_t*, uintptr_t)> audio_cb;
 
   std::function<void(Protocol_ChannelID_t)> reconnected_cb;
   fan::event::task_t task_supervisor;
@@ -1077,10 +1096,5 @@ struct ecps_backend_t {
   std::vector<channel_list_info_t> available_channels;
   std::unordered_map<Protocol_ChannelID_t::Type, std::vector<session_info_t>> channel_sessions;
   bool did_just_join = false; // need manual reset from gui
-
-#if use_input_control == 1
-  MD_Mice_t mice;
-  MD_Keyboard_t keyboard;
-#endif
 
 }ecps_backend;
