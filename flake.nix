@@ -5,8 +5,8 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     # fan engine and the header-only repos its install.sh would clone
-    fan = { url = "github:6413/fan/7ea67457435c565ce0edb5e0217db6fb2091d853"; flake = false; };
-    WITCH = { url = "github:7244/WITCH/23b108bb11c260b440042733cef46b8a08711e17"; flake = false; };
+    fan = { url = "github:6413/fan/642fd7a00b6825acbe444386a1e17821c3278276"; flake = false; };
+    WITCH = { url = "github:7244/WITCH/b94748428c247168cc08e4b8199c411936ce62cd"; flake = false; };
     BCOL = { url = "github:7244/BCOL/48de3320c1de4e34f908b5546330e73e33953fbf"; flake = false; };
     BLL = { url = "github:7244/BLL/06ae42a7d8ec242a0fe5dd28d07bde3c4e52dd3a"; flake = false; };
     BVEC = { url = "github:7244/BVEC/79138022d089d7fb7ea16d9fb510c3b057a68f99"; flake = false; };
