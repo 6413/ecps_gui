@@ -212,13 +212,31 @@ struct audio_share_t {
     }
     player_failed = player_failed && play;
     player.set_volume(volume);
+    print_stats(share, play);
+  }
+
+  // temporary: shows which hop drops audio (capture -> encode -> send -> server -> recv -> decode -> play)
+  void print_stats(bool share, bool play) {
+    auto now = std::chrono::steady_clock::now();
+    if (now - last_stats < std::chrono::seconds(2)) {
+      return;
+    }
+    last_stats = now;
+    fan::print("[audio] share:", share, "streaming:", ecps_backend.is_streaming_to_any_channel(),
+      "capture:", capture.is_running(), "captured:", stat_captured.exchange(0), "encode_fail:", stat_encode_fail.exchange(0),
+      "sent:", stat_sent.exchange(0),
+      "| play:", play, "viewing:", ecps_backend.is_viewing_any_channel(), "player:", player.is_running(),
+      "rx_raw:", ecps_backend.stat_audio_rx_raw.exchange(0), "rx:", stat_received.exchange(0),
+      "dropped:", stat_dropped.exchange(0), "decoded:", stat_decoded.exchange(0), "buffered:", player.get_buffered_frames());
   }
 
   void encode(const f32_t* pcm) {
+    ++stat_captured;
     std::vector<std::uint8_t> packet(sizeof(header_t) + fan::audio::stream_max_packet);
     ((header_t*)packet.data())->Sequence = send_sequence++;
     std::int32_t size = encoder.encode(pcm, packet.data() + sizeof(header_t), fan::audio::stream_max_packet);
     if (size <= 0) {
+      ++stat_encode_fail;
       return;
     }
     packet.resize(sizeof(header_t) + size);
@@ -236,11 +254,14 @@ struct audio_share_t {
     }
     for (const auto& packet : packets) {
       co_await ecps_backend.write_audio(packet);
+      ++stat_sent;
     }
   }
 
   void on_packet(const std::uint8_t* data, std::uintptr_t size) {
+    ++stat_received;
     if (!play_enabled.load(std::memory_order_relaxed) || (!decoder.state && !decoder.open())) {
+      ++stat_dropped;
       return;
     }
     std::uint16_t sequence = ((const header_t*)data)->Sequence;
@@ -258,6 +279,7 @@ struct audio_share_t {
     expected_sequence = sequence + 1;
     std::int32_t frames = decoder.decode(data + sizeof(header_t), (std::int32_t)(size - sizeof(header_t)), pcm.data());
     if (frames > 0) {
+      ++stat_decoded;
       player.push(pcm.data(), frames);
     }
   }
@@ -278,6 +300,9 @@ struct audio_share_t {
   bool capture_failed = false;
   bool player_failed = false;
   std::atomic<bool> play_enabled = false;
+  std::chrono::steady_clock::time_point last_stats;
+  std::atomic<std::uint32_t> stat_captured = 0, stat_encode_fail = 0, stat_sent = 0;
+  std::atomic<std::uint32_t> stat_received = 0, stat_dropped = 0, stat_decoded = 0;
 }audio_share;
 
 struct dynamic_config_t {

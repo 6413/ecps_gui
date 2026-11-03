@@ -322,7 +322,8 @@ void evio_stdin_cb(EV_t* listener, EV_event_t* evio_stdin, uint32_t flag) {
   IO_ssize_t size;
   size = IO_read(&event_fd, buffer, sizeof(_buffer));
   if (size <= 0) {
-    EV_event_stop(listener, evio_stdin);
+    // stdin closed/unreadable (no console, redirected, debugger); the WITCH
+    // EV backend can't stop a tty event on Windows (aborts), so just ignore it
     return;
   }
   while (1) {
