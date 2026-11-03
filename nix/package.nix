@@ -32,6 +32,7 @@
   dbus,
   libopus,
   libpulseaudio,
+  alsa-lib,
   # capture through xdg-desktop-portal + PipeWire instead of the X11 root window
   withWaylandCapture ? true,
   # sources, pinned by the flake
@@ -191,7 +192,7 @@ clangStdenv.mkDerivation {
     exec $out/libexec/ecps "\$@"
     EOF
     chmod +x $out/bin/ecps
-    wrapProgram $out/bin/ecps --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio xorg.libX11 xorg.libXtst ]}
+    wrapProgram $out/bin/ecps --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib xorg.libX11 xorg.libXtst ]}
     runHook postInstall
   '';
 
