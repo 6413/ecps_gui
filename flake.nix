@@ -2,7 +2,10 @@
   description = "ECPS - Every Communication Program Sucks";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # every input is a commit, not a branch or tag: resolving those costs a GitHub API call
+    # per run, and without a lock file (--no-write-lock-file) that hits the 60/hour limit
+    # nixos-unstable as of 2026-11-03
+    nixpkgs.url = "github:NixOS/nixpkgs/0bb2eedc20e4739f29e8045034f2828ad7054f8f";
 
     # fan engine and the header-only repos its install.sh would clone
     fan = { url = "github:6413/fan/8e469f1bb4da37e2dbe430b692d39eb8a84fa7d5"; flake = false; };
@@ -15,13 +18,14 @@
     pixfconv = { url = "github:7244/pixfconv/be836d06621b294f1d3cbb50d3b86665ff9fcb5b"; flake = false; };
     PIXF = { url = "github:6413/PIXF/af94c9963077e617b86ee4677fe9601a398915c2"; flake = false; };
     VulkanMemoryAllocator = { url = "github:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/3aa921224c154a0d2c43912bc88e1c42ce1f7607"; flake = false; };
-    VulkanUtilityLibraries = { url = "github:KhronosGroup/Vulkan-Utility-Libraries/vulkan-sdk-1.4.335.0"; flake = false; };
-    # must match the utility headers above (fan's xmake.lua pins the same SDK)
-    VulkanHeaders = { url = "github:KhronosGroup/Vulkan-Headers/vulkan-sdk-1.4.335.0"; flake = false; };
+    # vulkan-sdk-1.4.335.0
+    VulkanUtilityLibraries = { url = "github:KhronosGroup/Vulkan-Utility-Libraries/c010c19e796035e92fb3b0462cb887518a41a7c1"; flake = false; };
+    # must match the utility headers above (fan's xmake.lua pins the same SDK), vulkan-sdk-1.4.335.0
+    VulkanHeaders = { url = "github:KhronosGroup/Vulkan-Headers/2fa203425eb4af9dfc6b03f97ef72b0b5bcb8350"; flake = false; };
 
-    # versions fan's xmake.lua pins
-    lunasvg = { url = "github:sammycage/lunasvg/v2.4.1"; flake = false; };
-    box2d = { url = "github:erincatto/box2d/v3.1.1"; flake = false; };
+    # versions fan's xmake.lua pins: lunasvg v2.4.1, box2d v3.1.1
+    lunasvg = { url = "github:sammycage/lunasvg/4166d0cccfc059b39d5ecfc372524375e59448f9"; flake = false; };
+    box2d = { url = "github:erincatto/box2d/8c661469c9507d3ad6fbd2fea3f1aa71669c2fe3"; flake = false; };
   };
 
   outputs = { self, nixpkgs, ... }@inputs:
