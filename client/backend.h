@@ -625,7 +625,6 @@ struct ecps_backend_t {
           }
         }
         else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData) {
-          ++stat_audio_rx_raw;
           uintptr_t offset = sizeof(bp) + sizeof(ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData_t);
           if (size < offset + sizeof(ScreenShare_AudioHeader_t)) {
             co_return;
@@ -872,8 +871,6 @@ struct ecps_backend_t {
 
   std::function<void(fan::exception_t)> login_fail_cb;
   std::function<void(const uint8_t*, uintptr_t)> audio_cb;
-  std::atomic<uint32_t> stat_audio_rx_raw = 0;
-
   std::function<void(Protocol_ChannelID_t)> reconnected_cb;
   fan::event::task_t task_supervisor;
   fan::event::task_t task_restore;

@@ -200,6 +200,15 @@ struct ecps_gui_t {
       stream_settings.share_audio = audio.value("share", stream_settings.share_audio);
       stream_settings.play_audio = audio.value("play", stream_settings.play_audio);
       stream_settings.audio_volume = audio.value("volume", stream_settings.audio_volume);
+      stream_settings.audio_device = audio.value("device", std::string());
+      if (audio.contains("devices") && audio["devices"].is_object()) {
+        fan::json devices = audio["devices"];
+        for (auto it = devices.begin(); it != devices.end(); ++it) {
+          auto& settings = stream_settings.audio_devices[it.key()];
+          settings.gain = it.value().value("gain", settings.gain);
+          settings.exclude_discord = it.value().value("exclude_discord", settings.exclude_discord);
+        }
+      }
     }
 
     std::string ip, port;
@@ -430,6 +439,15 @@ struct ecps_gui_t {
     bool share_audio = false;
     bool play_audio = true;
     f32_t audio_volume = 1.f;
+
+    struct audio_device_settings_t {
+      f32_t gain = 1.f;
+      bool exclude_discord = true;
+    };
+    // loopback device to record, empty follows the default output
+    std::string audio_device;
+    // remembered per device id
+    std::map<std::string, audio_device_settings_t> audio_devices;
 
     f32_t bitrate_mbps = 10;
     bool use_adaptive_bitrate = true;
@@ -1754,6 +1772,79 @@ struct ecps_gui_t {
     if (gui::checkbox("Share audio", &stream_settings.share_audio)) {
       save_audio_settings();
     }
+    if (!stream_settings.share_audio) {
+      return;
+    }
+
+    static std::vector<fan::audio::loopback_device_t> devices;
+    static bool combo_was_open = false;
+    if (devices.empty()) {
+      devices = fan::audio::get_loopback_devices();
+    }
+    std::string preview = stream_settings.audio_device.empty() ? devices.front().name : "(unplugged device)";
+    for (const auto& device : devices) {
+      if (!stream_settings.audio_device.empty() && device.id == stream_settings.audio_device) {
+        preview = device.name;
+      }
+    }
+
+    gui::text("Capture from");
+    gui::push_item_width(-1);
+    bool combo_open = gui::begin_combo("##audio_device", preview);
+    if (combo_open) {
+      // re-list on open so newly plugged devices show up
+      if (!combo_was_open) {
+        devices = fan::audio::get_loopback_devices();
+      }
+      for (const auto& device : devices) {
+        gui::push_id(device.id.empty() ? std::string("default") : device.id);
+        if (gui::selectable(device.name, device.id == stream_settings.audio_device)) {
+          stream_settings.audio_device = device.id;
+          save_audio_settings();
+        }
+        gui::pop_id();
+      }
+      gui::end_combo();
+    }
+    combo_was_open = combo_open;
+    gui::pop_item_width();
+
+    auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
+    bool can_exclude = fan::audio::loopback_capture_t::can_exclude_processes();
+    gui::begin_disabled(!can_exclude);
+    bool exclude = can_exclude && settings.exclude_discord;
+    if (gui::checkbox("Exclude Discord", &exclude)) {
+      settings.exclude_discord = exclude;
+      save_audio_settings();
+    }
+    gui::end_disabled();
+    if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
+      gui::set_tooltip(can_exclude
+        ? "Records every app except Discord, so voice calls are not shared.\nRecords all outputs, not only the selected device."
+        : "Not supported on this platform yet");
+    }
+    if (exclude && audio_share.capture.is_running()) {
+      gui::text_disabled(audio_share.capture.get_excluded_pid()
+        ? "Recording all apps except Discord"
+        : audio_share.exclude_failed ? "Could not exclude Discord, recording the device" : "Discord is not running");
+    }
+
+    gui::text("Capture volume");
+    gui::push_item_width(-1);
+    gui::slider("##audio_gain", &settings.gain, 0.f, 2.f, gui::slider_flags_always_clamp);
+    if (gui::is_item_deactivated_after_edit()) {
+      save_audio_settings();
+    }
+    gui::pop_item_width();
+  }
+
+  fan::audio::loopback_capture_t::options_t get_capture_options() {
+    auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
+    return {
+      .device_id = stream_settings.audio_device,
+      .exclude_discord = settings.exclude_discord && fan::audio::loopback_capture_t::can_exclude_processes(),
+      .gain = settings.gain,
+    };
   }
 
   void render_play_audio_controls() {
@@ -1776,6 +1867,12 @@ struct ecps_gui_t {
     audio["share"] = stream_settings.share_audio;
     audio["play"] = stream_settings.play_audio;
     audio["volume"] = stream_settings.audio_volume;
+    audio["device"] = stream_settings.audio_device;
+    fan::json devices = fan::json::object();
+    for (const auto& [id, settings] : stream_settings.audio_devices) {
+      devices[id] = {{"gain", settings.gain}, {"exclude_discord", settings.exclude_discord}};
+    }
+    audio["devices"] = devices;
     write_to_config("audio", audio);
   }
 
@@ -1931,7 +2028,7 @@ struct ecps_gui_t {
   }
 
   void render() {
-    audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume);
+    audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
     if (is_fullscreen_stream) {
       render_fullscreen_stream();
       update_input_control();

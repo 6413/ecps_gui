@@ -80,6 +80,9 @@ void Close(Protocol_SessionID_t SessionID){
   }
   Session->ChannelList.Close();
 
+  // free the node so ids get reused; recycled ids are rejected by Session::IsInvalid
+  g_pile->SessionList.unlrec(SessionID);
+
   Channel_BroadcastChannelList();
 }
 

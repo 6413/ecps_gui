@@ -185,12 +185,22 @@ fan::window::input_injector_t host_input;
 struct audio_share_t {
   using header_t = ecps_backend_t::ScreenShare_AudioHeader_t;
 
-  void update(bool share, bool play, f32_t volume) {
+  using capture_options_t = fan::audio::loopback_capture_t::options_t;
+
+  void update(bool share, bool play, f32_t volume, const capture_options_t& options) {
     bool want_capture = share && ecps_backend.is_streaming_to_any_channel();
+    bool source_changed = options.device_id != capture_options.device_id || options.exclude_discord != capture_options.exclude_discord;
+    if (capture.is_running() && (source_changed || discord_changed(options))) {
+      capture.stop();
+      capture_failed = false;
+    }
+    capture_options = options;
+    capture.set_gain(options.gain);
     if (want_capture && !capture.is_running() && !capture_failed) {
-      capture_failed = !encoder.open() || !capture.start([this](const f32_t* pcm, std::uint32_t) { encode(pcm); });
-      if (capture_failed) {
-        fan::print("audio sharing failed:", capture.get_error());
+      capture_failed = !encoder.open() || !capture.start([this](const f32_t* pcm, std::uint32_t) { encode(pcm); }, options);
+      exclude_failed = options.exclude_discord && !capture_failed && !capture.get_error().empty();
+      if (capture_failed || exclude_failed) {
+        fan::print("audio sharing:", capture.get_error());
       }
     }
     else if (!want_capture && capture.is_running()) {
@@ -212,31 +222,27 @@ struct audio_share_t {
     }
     player_failed = player_failed && play;
     player.set_volume(volume);
-    print_stats(share, play);
   }
 
-  // temporary: shows which hop drops audio (capture -> encode -> send -> server -> recv -> decode -> play)
-  void print_stats(bool share, bool play) {
-    auto now = std::chrono::steady_clock::now();
-    if (now - last_stats < std::chrono::seconds(2)) {
-      return;
+  // discord started or restarted since the capture began, so the excluded tree is stale
+  bool discord_changed(const capture_options_t& options) {
+    if (!options.exclude_discord || exclude_failed || !fan::audio::loopback_capture_t::can_exclude_processes()) {
+      return false;
     }
-    last_stats = now;
-    fan::print("[audio] share:", share, "streaming:", ecps_backend.is_streaming_to_any_channel(),
-      "capture:", capture.is_running(), "captured:", stat_captured.exchange(0), "encode_fail:", stat_encode_fail.exchange(0),
-      "sent:", stat_sent.exchange(0),
-      "| play:", play, "viewing:", ecps_backend.is_viewing_any_channel(), "player:", player.is_running(),
-      "rx_raw:", ecps_backend.stat_audio_rx_raw.exchange(0), "rx:", stat_received.exchange(0),
-      "dropped:", stat_dropped.exchange(0), "decoded:", stat_decoded.exchange(0), "buffered:", player.get_buffered_frames());
+    auto now = std::chrono::steady_clock::now();
+    if (now - last_discord_check < std::chrono::seconds(3)) {
+      return false;
+    }
+    last_discord_check = now;
+    std::uint32_t pid = fan::audio::loopback_capture_t::find_discord_pid();
+    return pid != 0 && pid != capture.get_excluded_pid();
   }
 
   void encode(const f32_t* pcm) {
-    ++stat_captured;
     std::vector<std::uint8_t> packet(sizeof(header_t) + fan::audio::stream_max_packet);
     ((header_t*)packet.data())->Sequence = send_sequence++;
     std::int32_t size = encoder.encode(pcm, packet.data() + sizeof(header_t), fan::audio::stream_max_packet);
     if (size <= 0) {
-      ++stat_encode_fail;
       return;
     }
     packet.resize(sizeof(header_t) + size);
@@ -254,14 +260,11 @@ struct audio_share_t {
     }
     for (const auto& packet : packets) {
       co_await ecps_backend.write_audio(packet);
-      ++stat_sent;
     }
   }
 
   void on_packet(const std::uint8_t* data, std::uintptr_t size) {
-    ++stat_received;
     if (!play_enabled.load(std::memory_order_relaxed) || (!decoder.state && !decoder.open())) {
-      ++stat_dropped;
       return;
     }
     std::uint16_t sequence = ((const header_t*)data)->Sequence;
@@ -279,7 +282,6 @@ struct audio_share_t {
     expected_sequence = sequence + 1;
     std::int32_t frames = decoder.decode(data + sizeof(header_t), (std::int32_t)(size - sizeof(header_t)), pcm.data());
     if (frames > 0) {
-      ++stat_decoded;
       player.push(pcm.data(), frames);
     }
   }
@@ -300,9 +302,9 @@ struct audio_share_t {
   bool capture_failed = false;
   bool player_failed = false;
   std::atomic<bool> play_enabled = false;
-  std::chrono::steady_clock::time_point last_stats;
-  std::atomic<std::uint32_t> stat_captured = 0, stat_encode_fail = 0, stat_sent = 0;
-  std::atomic<std::uint32_t> stat_received = 0, stat_dropped = 0, stat_decoded = 0;
+  capture_options_t capture_options;
+  bool exclude_failed = false;
+  std::chrono::steady_clock::time_point last_discord_check;
 }audio_share;
 
 struct dynamic_config_t {
