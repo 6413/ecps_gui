@@ -39,6 +39,13 @@ Control turns off when the stream stops.
 Browsers connect through a small gateway that runs next to the ecps server.
 It needs Node.js.
 
+On Windows, with the ecps server running, double-click `web/start_web.bat`. It builds
+the page if needed, starts the gateway and opens the page. `web/start_web_tunnel.bat`
+also opens an HTTPS tunnel for phones, and prints the link in its window. The password
+and ports are at the top of both files.
+
+The steps by hand:
+
 1. Start the ecps server.
 2. Build the page once, and again after changing the web code:
 

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <functional>
 #include <set>
 #include <algorithm>
@@ -322,8 +323,12 @@ void evio_stdin_cb(EV_t* listener, EV_event_t* evio_stdin, uint32_t flag) {
   IO_ssize_t size;
   size = IO_read(&event_fd, buffer, sizeof(_buffer));
   if (size <= 0) {
-    // stdin closed/unreadable (no console, redirected, debugger); the WITCH
-    // EV backend can't stop a tty event on Windows (aborts), so just ignore it
+    // stdin closed/unreadable (no console, redirected, debugger)
+  #if !defined(_WIN32)
+    // a closed stdin stays readable, the event would fire again forever
+    EV_event_stop(listener, evio_stdin);
+  #endif
+    // the WITCH EV backend can't stop a tty event on Windows (aborts), so just ignore it there
     return;
   }
   while (1) {
@@ -527,7 +532,7 @@ int main(int argc, char** argv) {
 
   if (std::string key_error; !fan::network::crypto::load_or_create_key("ecps_server.key", g_pile->StaticPrivate, g_pile->StaticPublic, &key_error)) {
     fan::print("failed to load or create ecps_server.key:", key_error);
-    __abort();
+    std::exit(1);
   }
   fan::print("server key:", fan::network::crypto::to_hex(g_pile->StaticPublic.data(), g_pile->StaticPublic.size()));
 
@@ -540,8 +545,8 @@ int main(int argc, char** argv) {
   EV_event_start(&g_pile->listener, &evio_stdin);
 
   if (NET_socket2(NET_AF_INET, NET_SOCK_DGRAM | NET_SOCK_NONBLOCK, NET_IPPROTO_UDP, &g_pile->udp) < 0) {
-    WriteInformation("%lx\r\n", g_pile->udp);
-    __abort();
+    WriteInformation("failed to create udp socket %lx\r\n", g_pile->udp);
+    std::exit(1);
   }
 
   if (NET_setsockopt(&g_pile->udp, NET_SOL_SOCKET, NET_SO_SNDBUF, 8388608) < 0) {
@@ -557,8 +562,8 @@ int main(int argc, char** argv) {
   udpaddr.port = port;
   err = NET_bind(&g_pile->udp, &udpaddr);
   if (err) {
-    WriteInformation("udp bind error %ld\r\n", err);
-    __abort();
+    WriteInformation("udp bind error %ld (is another server already using port %u?)\r\n", err, (unsigned)port);
+    std::exit(1);
   }
 
   EV_event_t evio_udp;
@@ -577,8 +582,8 @@ int main(int argc, char** argv) {
   NET_TCP_open(g_pile->TCP);
   err = NET_TCP_listen(g_pile->TCP);
   if (err) {
-    WriteInformation("listen error %ld\r\n", err);
-    __abort();
+    WriteInformation("listen error %ld (is another server already using port %u?)\r\n", err, (unsigned)port);
+    std::exit(1);
   }
   EV_event_start(&g_pile->listener, &g_pile->TCP->ev);
 

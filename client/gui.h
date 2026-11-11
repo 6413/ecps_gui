@@ -400,7 +400,6 @@ struct ecps_gui_t {
     gui::push_style_var(gui::style_var_frame_rounding, 12.f);
     gui::push_style_var(gui::style_var_window_rounding, 12.f);
 
-    bool trigger_popup = false;
     {
       static fan::vec2 last_mouse = gui::get_io().MousePos;
       fan::vec2 current_mouse_pos = gui::get_io().MousePos;
@@ -417,12 +416,7 @@ struct ecps_gui_t {
       hitbox_size.y *= 0.15;
       gui::dummy(hitbox_size);
 
-      bool inside_window = gui::is_item_hovered(gui::hovered_flags_allow_when_overlapped_by_window);
-
-      bool mouse_moved = 0;
-
       last_mouse = current_mouse_pos;
-      trigger_popup = inside_window;
     }
 
     gui::pop_style_var(2);
@@ -866,6 +860,10 @@ struct ecps_gui_t {
                       rt->network_frame.set_image(engine.default_texture);
                     }
                   }
+                }
+                if (!This->show_own_stream && ecps_backend.is_streaming_to_any_channel()) {
+                  // the server doesn't send a share back to its host, without this sharing looks broken
+                  gui::text_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
                 }
                 This->render_share_audio_checkbox();
               }

@@ -1,3 +1,4 @@
 *.exe
 client/build
 *.ini
+build/
