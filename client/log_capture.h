@@ -179,3 +179,9 @@ private:
   std::uint64_t counter = 0;
   bool started = false;
 };
+
+inline log_capture_t& log_capture() {
+  // never destroyed: its reader threads outlive main
+  static log_capture_t* capture = new log_capture_t;
+  return *capture;
+}

@@ -19,12 +19,6 @@
 
 #include "log_capture.h"
 
-inline log_capture_t& log_capture() {
-  // never destroyed: its reader threads outlive main
-  static log_capture_t* capture = new log_capture_t;
-  return *capture;
-}
-
 struct remote_logs_t {
   using C2S = ecps_backend_t::Protocol_C2S_t;
   using S2C = ecps_backend_t::Protocol_S2C_t;

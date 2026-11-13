@@ -39,6 +39,8 @@ struct updater_t {
   static constexpr const char* ready_file = "ecps_update.ready";
   static constexpr const char* failed_file = "ecps_update.failed";
   static constexpr const char* log_file = "ecps_update.log";
+  // written just before the restart, the new process reads it to say it was updated and from what
+  static constexpr const char* restarted_file = "ecps_update.restarted";
 
   static constexpr bool can_install =
 #if defined(_WIN32)
@@ -74,6 +76,42 @@ struct updater_t {
       return "build-info says ecps=" + (ecps.empty() ? std::string("(missing)") : ecps.substr(0, 24)) + ", not a commit. Version check only";
     }
     return "version numbers";
+  }
+
+  // "ecps 74e2526, fan 54624b9" of this build, empty when it doesn't know its commits
+  std::string build_short() {
+    std::string ecps = build_info("ecps");
+    std::string fan = build_info("fan");
+    if (!is_commit(ecps)) {
+      return {};
+    }
+    return "ecps " + ecps.substr(0, 7) + (is_commit(fan) ? ", fan " + fan.substr(0, 7) : std::string());
+  }
+
+  // text for a few seconds after the program restarted itself into an update, empty otherwise
+  std::string update_notice() {
+    if (!notice_loaded) {
+      notice_loaded = true;
+      std::error_code ec;
+      if (std::filesystem::exists(restarted_file, ec)) {
+        std::ifstream in(restarted_file);
+        std::string previous;
+        std::getline(in, previous);
+        in.close();
+        std::filesystem::remove(restarted_file, ec);
+        std::string now_running = build_short();
+        notice_text = "Updated";
+        if (!previous.empty()) {
+          notice_text += " from " + previous;
+        }
+        notice_text += " to " + (now_running.empty() ? std::string("v") + ecps_version : now_running);
+        notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+      }
+    }
+    if (std::chrono::steady_clock::now() < notice_until) {
+      return notice_text;
+    }
+    return {};
   }
 
   void check() {
@@ -204,6 +242,12 @@ struct updater_t {
     {
       std::lock_guard<std::mutex> lock(mutex);
       binary = built_path + "/bin/ecps";
+    }
+    {
+      // what we were, for the "Updated from ... to ..." line the new process shows
+      std::ofstream marker(restarted_file, std::ios::trunc);
+      std::string was = build_short();
+      marker << (was.empty() ? std::string("v") + ecps_version : was) << '\n';
     }
     // the new process must not inherit our capture pipes, nobody would read them
     log_capture().restore();
@@ -358,4 +402,7 @@ private:
   std::string built_path;
   std::chrono::steady_clock::time_point last_poll;
   std::chrono::steady_clock::time_point restart_at;
+  bool notice_loaded = false;
+  std::string notice_text;
+  std::chrono::steady_clock::time_point notice_until;
 };

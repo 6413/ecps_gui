@@ -2341,7 +2341,18 @@ struct ecps_gui_t {
     updater.tick();
     updater.tick_restart();
     using state_e = updater_t::state_e;
-    std::string version = std::string("v") + ecps_version;
+    // the build this is, always on screen, so it is plain which version is running after an update
+    std::string build = updater.build_short();
+    std::string version = std::string("v") + ecps_version + (build.empty() ? "" : " (" + build + ")");
+    if (ecps_update_marker[0]) {
+      version += std::string(" [") + ecps_update_marker + "]";
+    }
+    // for a while after restarting into an update
+    std::string notice = updater.update_notice();
+    if (!notice.empty()) {
+      gui::text(fan::color(0.4f, 1.0f, 0.5f, 1.0f), notice);
+      gui::same_line();
+    }
     switch (updater.state.load()) {
       case state_e::idle:
         gui::text(version);
