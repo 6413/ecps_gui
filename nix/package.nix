@@ -198,6 +198,7 @@ clangStdenv.mkDerivation {
     # the file picker (send file) is a GTK file chooser, which aborts without its gsettings schemas
     wrapProgram $out/bin/ecps \
       --set-default ECPS_PIANO_DIR $share/steinway-keys \
+      --prefix PATH : ${lib.makeBinPath [ curl ]} \
       --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib xorg.libX11 xorg.libXtst ]} \
       --prefix XDG_DATA_DIRS : ${gtk3}/share/gsettings-schemas/${gtk3.name}:${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}
     runHook postInstall

@@ -110,10 +110,39 @@ struct remote_logs_t {
     if (!watching.load() || m.Peer.i != watch_peer.i || m.Stream < 1 || m.Stream > 2) {
       return;
     }
-    std::size_t size = std::min<std::size_t>(m.Size, sizeof(m.Data));
+    append_text(m.Stream, (const char*)m.Data, std::min<std::size_t>(m.Size, sizeof(m.Data)));
+  }
+
+  // this program's own output instead of another client's, a windowed Windows build has no console to look at
+  std::atomic<bool> local{false};
+  std::uint64_t local_cursor = 0;
+
+  void start_local(auto&& queue) {
+    stop_watch(queue);
+    {
+      std::lock_guard<std::mutex> lock(view_mutex);
+      lines.clear();
+      idx.clear();
+      indexed = 0;
+      partial[1].clear();
+      partial[2].clear();
+      ++revision;
+    }
+    local_cursor = 0;
+    local = true;
+    state = state_e::live;
+  }
+
+  void stop_local() {
+    if (local.exchange(false)) {
+      state = state_e::idle;
+    }
+  }
+
+  void append_text(std::uint8_t stream, const char* data, std::size_t size) {
     std::lock_guard<std::mutex> lock(view_mutex);
-    std::string& pending = partial[m.Stream];
-    pending.append((const char*)m.Data, size);
+    std::string& pending = partial[stream];
+    pending.append(data, size);
     for (;;) {
       std::size_t end = pending.find('\n');
       if (end == std::string::npos) {
@@ -124,11 +153,11 @@ struct remote_logs_t {
         text.pop_back();
       }
       pending.erase(0, end + 1);
-      lines.push_back({m.Stream, std::move(text)});
+      lines.push_back({stream, std::move(text)});
     }
     // a line that never ends must not grow forever
     if (pending.size() > 64 * 1024) {
-      lines.push_back({m.Stream, std::move(pending)});
+      lines.push_back({stream, std::move(pending)});
       pending.clear();
     }
     ++revision;
@@ -136,6 +165,7 @@ struct remote_logs_t {
 
   void start_watch(auto&& queue, cid_t channel, sid_t peer) {
     stop_watch(queue);
+    stop_local();
     {
       std::lock_guard<std::mutex> lock(view_mutex);
       lines.clear();
@@ -227,6 +257,13 @@ struct remote_logs_t {
   // GUI thread, once a frame. queue(f) hands a coroutine to the backend thread
   void tick(auto&& queue) {
     auto now = clock::now();
+
+    if (local.load()) {
+      for (const auto& chunk : log_capture().read_since(local_cursor, 256 * 1024)) {
+        append_text(chunk.stream, chunk.data.data(), chunk.data.size());
+        local_cursor = chunk.seq;
+      }
+    }
 
     std::vector<C2S::Channel_Log_Data_t> out;
     std::vector<std::pair<cid_t, sid_t>> told_stopped;

@@ -384,6 +384,12 @@ struct ecps_backend_t {
   // what the share thread reports, to tell a stalled capture or encoder from packets that never arrive
   std::atomic<uint64_t> stream_udp_packets{0};
   std::atomic<uint64_t> stream_udp_bytes{0};
+  // the same on the viewing side: packets that arrived, frames put back together, frames decoded
+  std::atomic<uint64_t> view_udp_packets{0};
+  std::atomic<uint64_t> view_udp_bytes{0};
+  std::atomic<uint64_t> view_frames_assembled{0};
+  std::atomic<uint64_t> view_frames_decoded{0};
+  std::atomic<uint64_t> view_decode_failed{0};
 
   fan::event::runv_t<bool> write_stream(
     uint16_t Current,
@@ -532,6 +538,8 @@ struct ecps_backend_t {
           }
           relative_size -= sizeof(*command_data);
           set_channel_viewing(command_data->ChannelID, true);
+          view_udp_packets.fetch_add(1, std::memory_order_relaxed);
+          view_udp_bytes.fetch_add(relative_size, std::memory_order_relaxed);
 
           if (relative_size < sizeof(ScreenShare_StreamHeader_Body_t)) {
             co_return;

@@ -483,6 +483,8 @@ struct ecps_gui_t {
         gui::window_flags_no_title_bar)
         ) {
 
+        This->render_update_controls();
+
         std::string current_user = "User: " + ecps_backend.get_current_username();
         fan::vec2 text_size = gui::calc_text_size(current_user);
         gui::same_line(gui::get_window_size().x - text_size.x - 20);
@@ -2304,6 +2306,69 @@ struct ecps_gui_t {
     }
   }
 
+  // left end of the top row: the version, and the update button that goes with it
+  void render_update_controls() {
+    updater.tick();
+    using state_e = updater_t::state_e;
+    std::string version = std::string("v") + ecps_version;
+    switch (updater.state.load()) {
+      case state_e::idle:
+        gui::text(version);
+        gui::same_line();
+        if (gui::button("Check for updates")) {
+          updater.check();
+        }
+        break;
+      case state_e::checking:
+        gui::text(version + "  Checking for updates...");
+        break;
+      case state_e::up_to_date:
+        gui::text(version + "  Up to date");
+        gui::same_line();
+        if (gui::button("Check again")) {
+          updater.check();
+        }
+        break;
+      case state_e::failed:
+        gui::text(version + "  " + updater.error());
+        gui::same_line();
+        if (gui::button("Retry")) {
+          updater.check();
+        }
+        break;
+      case state_e::available:
+        gui::text(version + "  Version " + updater.latest() + " is available");
+        if (updater_t::can_install) {
+          gui::same_line();
+          if (gui::button("Update")) {
+            updater.start_update();
+          }
+        }
+        else {
+          gui::same_line();
+          gui::text_disabled("download it from github.com/6413/ecps_gui");
+        }
+        break;
+      case state_e::building:
+        gui::text(version + "  Building the update, this can take a while. Progress: ecps_update.log");
+        break;
+      case state_e::ready:
+        gui::text(version + "  Update " + updater.latest() + " is ready");
+        gui::same_line();
+        if (gui::button("Restart now")) {
+          updater.restart();
+        }
+        break;
+      case state_e::build_failed:
+        gui::text(version + "  " + updater.error());
+        gui::same_line();
+        if (gui::button("Check again")) {
+          updater.check();
+        }
+        break;
+    }
+  }
+
   void render_logs_tab() {
     gui::spacing();
     bool allow = remote_logs.allow.load();
@@ -2312,6 +2377,17 @@ struct ecps_gui_t {
     }
     gui::text_disabled("They see everything this program prints. It passes through the server.");
     gui::separator();
+
+    gui::text("This computer");
+    gui::same_line();
+    if (remote_logs.local.load()) {
+      if (gui::button("Stop##local_logs")) {
+        remote_logs.stop_local();
+      }
+    }
+    else if (gui::button("Read logs##local_logs")) {
+      remote_logs.start_local([this](const std::function<fan::event::task_t()>& task) { backend_queue(task); });
+    }
 
     bool in_channel = selected_channel_id.i != (uint16_t)-1;
     auto it = ecps_backend.channel_sessions.find(selected_channel_id.i);

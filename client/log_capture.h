@@ -26,6 +26,7 @@
   #include <io.h>
   #include <fcntl.h>
 #else
+  #include <fcntl.h>
   #include <unistd.h>
 #endif
 
@@ -46,6 +47,27 @@ struct log_capture_t {
     started = true;
     hook(1);
     hook(2);
+  }
+
+  // gives stdout and stderr back to where they went, before exec'ing another program that would
+  // otherwise inherit pipes nobody reads
+  void restore() {
+#if !defined(_WIN32)
+    for (int i = 0; i < 2; ++i) {
+      int target = originals[i];
+      bool opened = false;
+      if (target < 0) {
+        target = open("/dev/null", O_WRONLY);
+        opened = true;
+      }
+      if (target >= 0) {
+        dup2(target, i + 1);
+        if (opened) {
+          close(target);
+        }
+      }
+    }
+#endif
   }
 
   // chunks after cursor, up to about limit bytes, oldest first
@@ -122,6 +144,7 @@ private:
     close(pipe_fds[1]);
 #endif
     // nothing may wait in a buffer, the other side wants lines now
+    originals[fd - 1] = original;
     std::setvbuf(fd == 1 ? stdout : stderr, nullptr, _IONBF, 0);
     int read_fd = pipe_fds[0];
     std::uint8_t stream = (std::uint8_t)fd;
@@ -151,6 +174,7 @@ private:
 
   std::mutex mutex;
   std::deque<chunk_t> chunks;
+  int originals[2] = {-1, -1};
   std::size_t stored = 0;
   std::uint64_t counter = 0;
   bool started = false;

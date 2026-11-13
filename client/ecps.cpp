@@ -404,6 +404,9 @@ struct midi_host_t {
 #include "remote_logs.h"
 remote_logs_t remote_logs;
 
+#include "updater.h"
+updater_t updater;
+
 struct dynamic_config_t {
   static uint32_t get_target_framerate();
 
@@ -931,6 +934,7 @@ static void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) 
     if (frame.type == 1 && is_displayable(frame)) {
       rt->latest_frame.publish(frame);
       rt->screen_decoder.recycle(frame);
+      ecps_backend.view_frames_decoded.fetch_add(1, std::memory_order_relaxed);
       return;
     }
   }
@@ -939,6 +943,7 @@ static void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) 
     ecps_print_throttled("NETWORK: Decode exception: {}", e.what());
   #endif
   }
+  ecps_backend.view_decode_failed.fetch_add(1, std::memory_order_relaxed);
   ecps_backend.view.m_stats.Frame_Drop++;
 }
 
@@ -998,6 +1003,7 @@ void ecps_backend_t::view_t::WriteFramePacket() {
   #endif
   }
 
+  ecps_backend.view_frames_assembled.fetch_add(1, std::memory_order_relaxed);
   if (!decode_queue.push(std::move(frame_data))) {
     this->m_stats.Frame_Drop++;
     RequestKeyframe();
@@ -1400,9 +1406,24 @@ int main() {
     lower_thread_priority();
 
     std::vector<uint8_t> frame;
+    auto view_report_time = std::chrono::steady_clock::now();
+    uint64_t view_reported_packets = 0;
     while (!rt->should_stop.load()) {
       rt = render_thread_ptr.load(std::memory_order_acquire);
       if (!rt) break;
+
+      // while something is being received, one line every few seconds says how far the frames get
+      if (auto stamp = std::chrono::steady_clock::now(); stamp - view_report_time >= std::chrono::seconds(3)) {
+        view_report_time = stamp;
+        uint64_t packets = ecps_backend.view_udp_packets.load();
+        if (packets != view_reported_packets) {
+          view_reported_packets = packets;
+          fan::print("view: udp_packets", packets, "udp_bytes", ecps_backend.view_udp_bytes.load(),
+            "frames_assembled", ecps_backend.view_frames_assembled.load(),
+            "decoded", ecps_backend.view_frames_decoded.load(),
+            "decode_failed", ecps_backend.view_decode_failed.load());
+        }
+      }
 
       if (decode_queue.pop(frame)) {
         stage_scope_t decode_scope {stage_times.decode};
