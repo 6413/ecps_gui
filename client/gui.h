@@ -2326,7 +2326,7 @@ struct ecps_gui_t {
         gui::text(version + "  Checking for updates...");
         break;
       case state_e::up_to_date:
-        gui::text(version + "  Up to date");
+        gui::text(version + "  Up to date (" + updater.build_label() + ")");
         gui::same_line();
         if (gui::button("Check again")) {
           updater.check();

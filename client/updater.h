@@ -59,6 +59,19 @@ struct updater_t {
     return error_text;
   }
 
+  // what this build is, and so what an update check compares: commits from a Nix build, else the number
+  std::string build_label() {
+    std::string ecps = build_info("ecps");
+    std::string fan = build_info("fan");
+    if (can_install && is_commit(ecps)) {
+      return "ecps " + ecps.substr(0, 7) + (is_commit(fan) ? ", fan " + fan.substr(0, 7) : std::string());
+    }
+    if (can_install) {
+      return std::string("no commit info (") + (std::getenv("ECPS_BUILD_INFO") ? "dirty or unknown build" : "not built by the current Nix package") + "), comparing version numbers only";
+    }
+    return "version numbers";
+  }
+
   void check() {
     state_e current = state.load();
     if (current == state_e::checking || current == state_e::building) {
