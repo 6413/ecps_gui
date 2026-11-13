@@ -37,6 +37,9 @@
         gccForLibs = pkgs.gcc15.cc;
         ecpsSrc = self;
         fanSrc = inputs.fan;
+        # the commits this build is made from, the in-app "check for updates" compares them with GitHub
+        ecpsRev = self.rev or self.dirtyRev or "unknown";
+        fanRev = inputs.fan.rev or "unknown";
         lunasvgSrc = inputs.lunasvg;
         box2dSrc = inputs.box2d;
         vulkanHeadersSrc = inputs.VulkanHeaders;

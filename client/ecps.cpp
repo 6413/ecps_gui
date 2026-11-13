@@ -163,7 +163,11 @@ struct stage_times_t {
 }stage_times;
 
 struct render_thread_t;
-#define ecps_debug_prints 0
+// 0 prints nothing extra. 1 adds the share/view status lines (what the capture, encoder and network are
+// doing, every few seconds). Higher levels print per packet. Set it with -Decps_debug_prints=1
+#ifndef ecps_debug_prints
+  #define ecps_debug_prints 0
+#endif
 
 // fan::print_throttled_format is currently a no-op in fan, so throttle here:
 // at most one line per call site every 250 ms
@@ -1290,7 +1294,9 @@ int main() {
       if (!rt) break;
 
       if (ecps_backend.is_streaming_to_any_channel()) {
+      #if ecps_debug_prints >= 1
         report_stats();
+      #endif
         if (first_frame) {
           rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
           first_frame = false;
@@ -1412,6 +1418,7 @@ int main() {
       rt = render_thread_ptr.load(std::memory_order_acquire);
       if (!rt) break;
 
+    #if ecps_debug_prints >= 1
       // while something is being received, one line every few seconds says how far the frames get
       if (auto stamp = std::chrono::steady_clock::now(); stamp - view_report_time >= std::chrono::seconds(3)) {
         view_report_time = stamp;
@@ -1424,6 +1431,7 @@ int main() {
             "decode_failed", ecps_backend.view_decode_failed.load());
         }
       }
+    #endif
 
       if (decode_queue.pop(frame)) {
         stage_scope_t decode_scope {stage_times.decode};

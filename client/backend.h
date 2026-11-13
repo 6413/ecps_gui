@@ -441,6 +441,7 @@ struct ecps_backend_t {
     rest.ChannelID = streaming_channel_id;
     rest.ChannelSessionID = streaming_session_id;
 
+  #if ecps_debug_prints >= 1
     {
       // once per channel, to compare with what the server says about who hosts it
       static uint32_t reported_channel = (uint32_t)-1;
@@ -450,6 +451,7 @@ struct ecps_backend_t {
           "channel session", (uint64_t)streaming_session_id.i);
       }
     }
+  #endif
 
     co_await udp_write(0, ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData, rest, buffer, BufferSize);
     stream_udp_packets.fetch_add(1, std::memory_order_relaxed);

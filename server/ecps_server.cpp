@@ -37,6 +37,11 @@ import fan.network.crypto;
   #define NET_SO_RCVBUF SO_RCVBUF
 #endif
 
+// 1 prints the udp status lines below, same switch name as the client. Set it with -Decps_debug_prints=1
+#ifndef ecps_debug_prints
+  #define ecps_debug_prints 0
+#endif
+
 // where host video packets stop on their way through the server, printed every few seconds while any arrive
 struct udp_stats_t {
   uint64_t received = 0;
@@ -51,6 +56,7 @@ struct udp_stats_t {
   uint64_t printed_received = 0;
 
   void report() {
+  #if ecps_debug_prints >= 1
     auto now = std::chrono::steady_clock::now();
     if (now - printed < std::chrono::seconds(3) || received == printed_received) {
       return;
@@ -60,6 +66,7 @@ struct udp_stats_t {
     fan::print("udp: received", received, "bad_session", bad_session, "bad_crypto", bad_crypto,
       "stream_accepted", stream_accepted, "bad_channel", bad_channel, "not_host", not_host,
       "relayed_to_viewers", relayed, "viewer_without_udp_address", no_viewer_address);
+  #endif
   }
 }g_udp_stats;
 
@@ -478,6 +485,7 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
     }
     if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
       ++g_udp_stats.not_host;
+    #if ecps_debug_prints >= 1
       // once per sender and channel: who sent it, and who the server thinks hosts that channel
       static std::set<uint64_t> told;
       uint64_t key = ((uint64_t)SessionID.i << 32) | (uint64_t)RestPacket->ChannelID.i;
@@ -486,6 +494,7 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
         fan::print("udp: session", (uint64_t)SessionID.i, "sent video for channel", (uint64_t)RestPacket->ChannelID.i,
           "but the host of that channel is session", (uint64_t)ChannelData->HostSessionID.i);
       }
+    #endif
       return;
     }
     ++g_udp_stats.stream_accepted;

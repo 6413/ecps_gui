@@ -1,11 +1,13 @@
 #pragma once
 
 // "Check for updates" and, on Linux, "Update".
-//  - the check downloads client/version.h from the main branch with curl and compares the number. It only
-//    runs when the button is pressed, nothing is sent but the request for that one file
+//  - the check only runs when the button is pressed. A Nix build knows the ecps_gui and fan commits it was
+//    made from (ECPS_BUILD_INFO) and asks GitHub for the newest commit of each, so any push to either one
+//    is an update. Without that (Windows, a dev build) it downloads client/version.h from the main branch
+//    and compares the number. Nothing is sent but those requests
 //  - updating (Linux, the Nix package) can't replace the binary, it is in the read-only store. Instead
 //    `nix build` of the flake runs in the background, and when it finishes the client re-executes the new
-//    build, by itself a second or so after it finishes, no reopening. The result is linked as
+//    build, with the newest fan, by itself a second or so after it finishes, no reopening. The result is linked as
 //    ecps_update_result next to the settings, which keeps the build from being garbage collected.
 //    Progress is written to ecps_update.log
 //  - Windows only tells that a newer version exists
@@ -64,6 +66,32 @@ struct updater_t {
     }
     state = state_e::checking;
     std::thread([this] {
+      // a Nix build knows the commits it was made from, then any push to ecps_gui or fan counts as an
+      // update, no version bump needed. Anything else compares the number in version.h
+      std::string built_ecps = build_info("ecps");
+      std::string built_fan = build_info("fan");
+      if (can_install && is_commit(built_ecps)) {
+        std::string latest_ecps = latest_commit("6413/ecps_gui");
+        std::string latest_fan = latest_commit("6413/fan");
+        std::lock_guard<std::mutex> lock(mutex);
+        if (latest_ecps.empty()) {
+          error_text = "could not read the latest commit, is curl installed and the network up?";
+          state = state_e::failed;
+          return;
+        }
+        bool ecps_changed = latest_ecps != built_ecps;
+        // a fan the build doesn't know (or GitHub didn't answer for) is not reported as a change
+        bool fan_changed = is_commit(latest_fan) && is_commit(built_fan) && latest_fan != built_fan;
+        latest_version.clear();
+        if (ecps_changed) {
+          latest_version += "ecps " + latest_ecps.substr(0, 7);
+        }
+        if (fan_changed) {
+          latest_version += std::string(latest_version.empty() ? "" : ", ") + "fan " + latest_fan.substr(0, 7);
+        }
+        state = (ecps_changed || fan_changed) ? state_e::available : state_e::up_to_date;
+        return;
+      }
       std::string body = run_capture(std::string("curl -fsSL --max-time 10 ") + version_url);
       std::string found = parse_version(body);
       std::lock_guard<std::mutex> lock(mutex);
@@ -87,8 +115,11 @@ struct updater_t {
     std::filesystem::remove(failed_file, ec);
     state = state_e::building;
 #if !defined(_WIN32)
+    // --override-input makes the build use the newest fan, not the commit flake.nix pins, so a push to
+    // fan alone is enough. --refresh stops nix from answering with a copy it fetched earlier
     std::string command =
       "nohup sh -c 'out=$(nix --extra-experimental-features \"nix-command flakes\" build --refresh --out-link ecps_update_result "
+      "--override-input fan github:6413/fan "
       "--print-out-paths \"" + std::string(flake_ref) + "\" 2>>" + log_file + ") "
       "&& printf \"%s\" \"$out\" > " + ready_file + " || : > " + failed_file + "' >/dev/null 2>&1 &";
     if (std::system(command.c_str()) != 0) {
@@ -160,6 +191,49 @@ struct updater_t {
   }
 
 private:
+  // the Nix package writes "ecps=<commit>" and "fan=<commit>" lines and points ECPS_BUILD_INFO at the file
+  static std::string build_info(const std::string& key) {
+    const char* path = std::getenv("ECPS_BUILD_INFO");
+    if (!path) {
+      return {};
+    }
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+      if (line.compare(0, key.size() + 1, key + "=") == 0) {
+        std::string value = line.substr(key.size() + 1);
+        while (!value.empty() && (value.back() == '\r' || value.back() == ' ')) {
+          value.pop_back();
+        }
+        return value;
+      }
+    }
+    return {};
+  }
+
+  // a full git commit id: 40 hex digits. "unknown" and "-dirty" builds are not one
+  static bool is_commit(const std::string& value) {
+    if (value.size() != 40) {
+      return false;
+    }
+    for (char c : value) {
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // the commit id GitHub has for the default branch of owner/repo, empty when it can't be read
+  static std::string latest_commit(const std::string& repo) {
+    std::string body = run_capture("curl -fsSL --max-time 10 -H \"Accept: application/vnd.github.sha\" "
+      "https://api.github.com/repos/" + repo + "/commits/HEAD");
+    while (!body.empty() && (body.back() == '\n' || body.back() == '\r' || body.back() == ' ')) {
+      body.pop_back();
+    }
+    return is_commit(body) ? body : std::string();
+  }
+
   static std::string run_capture(const std::string& command) {
     std::string output;
 #if defined(_WIN32)

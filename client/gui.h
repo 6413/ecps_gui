@@ -2340,7 +2340,7 @@ struct ecps_gui_t {
         }
         break;
       case state_e::available:
-        gui::text(version + "  Version " + updater.latest() + " is available");
+        gui::text(version + "  Update available: " + updater.latest());
         if (updater_t::can_install) {
           gui::same_line();
           if (gui::button("Update")) {

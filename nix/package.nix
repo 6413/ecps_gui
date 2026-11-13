@@ -43,6 +43,9 @@
   lunasvgSrc,
   box2dSrc,
   vulkanHeadersSrc,
+  # git commits of ecpsSrc and fanSrc, written to build-info for the update check
+  ecpsRev ? "unknown",
+  fanRev ? "unknown",
 }:
 
 let
@@ -182,6 +185,8 @@ clangStdenv.mkDerivation {
     cp ecps_gui/client/webrtc.html $share/
     # the piano the host plays a viewer's MIDI keyboard with, found through ECPS_PIANO_DIR below
     cp -r "ecps_gui/assets/steinway keys" $share/steinway-keys
+    # which commits this build is from, the in-app update check compares them with the latest on GitHub
+    printf 'ecps=%s\nfan=%s\n' "${ecpsRev}" "${fanRev}" > $share/build-info
     install -Dm644 fan/icons/ecps_logo.png $out/share/icons/hicolor/256x256/apps/ecps.png
 
     # fan loads assets relative to the working directory and writes its settings
@@ -198,6 +203,7 @@ clangStdenv.mkDerivation {
     # the file picker (send file) is a GTK file chooser, which aborts without its gsettings schemas
     wrapProgram $out/bin/ecps \
       --set-default ECPS_PIANO_DIR $share/steinway-keys \
+      --set ECPS_BUILD_INFO $share/build-info \
       --prefix PATH : ${lib.makeBinPath [ curl ]} \
       --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib xorg.libX11 xorg.libXtst ]} \
       --prefix XDG_DATA_DIRS : ${gtk3}/share/gsettings-schemas/${gtk3.name}:${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}
