@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -37,6 +38,18 @@ namespace fan::audio {
       std::uint8_t type = status & 0xF0;
       std::uint8_t channel = status & 0x0F;
       std::lock_guard<std::mutex> lock(mutex);
+      // which keys are down, for drawing a keyboard; read from any thread without the lock
+      if (data1 < down.size() && channel != 9) {
+        if (type == 0x90 && data2 != 0) {
+          down[data1] = true;
+        }
+        else if (type == 0x80 || type == 0x90) {
+          down[data1] = false;
+        }
+      }
+      if (type == 0xB0 && (data1 == 120 || data1 == 123)) {
+        clear_down();
+      }
       if (channel == 9 && (type == 0x80 || type == 0x90)) {
         // channel 10 is drums in General MIDI, a pitched tone would just be wrong
         if (type == 0x90 && data2 != 0) {
@@ -84,8 +97,13 @@ namespace fan::audio {
     }
 
     // a lost connection or a dropped note-off must not leave a note ringing
+    bool is_down(std::uint8_t note) const {
+      return note < down.size() && down[note].load(std::memory_order_relaxed);
+    }
+
     void all_notes_off() {
       std::lock_guard<std::mutex> lock(mutex);
+      clear_down();
       all_notes_off_locked(false);
       sustain.fill(false);
     }
@@ -266,7 +284,14 @@ namespace fan::audio {
       }
     }
 
+    void clear_down() {
+      for (auto& key : down) {
+        key = false;
+      }
+    }
+
     std::mutex mutex;
+    std::array<std::atomic<bool>, 128> down{};
     std::array<voice_t, max_voices> voices;
     std::array<std::shared_ptr<const sample_t>, 128> samples;
     std::array<bool, 16> sustain{};

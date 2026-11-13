@@ -832,7 +832,7 @@ struct ecps_gui_t {
 
               gui::set_next_window_bg_alpha(0.99);
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
-              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * 7.5f : 0.f;
+              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * 6.f : 0.f;
               if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
@@ -882,10 +882,6 @@ struct ecps_gui_t {
                   gui::text_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
                 }
                 This->render_share_audio_checkbox();
-                gui::checkbox("Send MIDI to viewers", &This->send_midi_viewers);
-                if (This->send_midi_viewers && ecps_backend.is_streaming_to_any_channel()) {
-                  gui::text(This->midi_in.is_open() ? "MIDI input connected" : "No MIDI input device found");
-                }
               }
               if (is_host_of_selected) {
                 gui::end_child();
@@ -896,6 +892,11 @@ struct ecps_gui_t {
 
             if (gui::begin_tab_item("Files", nullptr, 0)) {
               This->render_file_transfers();
+              gui::end_tab_item();
+            }
+
+            if (gui::begin_tab_item("MIDI", nullptr, 0)) {
+              This->render_midi_tab();
               gui::end_tab_item();
             }
 
@@ -2163,13 +2164,6 @@ struct ecps_gui_t {
     if (gui::checkbox("Play audio", &stream_settings.play_audio)) {
       save_audio_settings();
     }
-    // only does something while the host has input control on for this stream
-    gui::checkbox("Send MIDI to host", &send_midi);
-    if (send_midi && can_control_host()) {
-      gui::text(midi_in.is_open() ? "MIDI input connected" : "No MIDI input device found");
-    }
-    // the host's own keyboard, played here with the same piano
-    gui::checkbox("Play host MIDI", &play_host_midi);
     if (stream_settings.play_audio) {
       gui::text("Volume");
       gui::push_item_width(-1);
@@ -2234,6 +2228,119 @@ struct ecps_gui_t {
     queue_host_input(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, rest);
   }
 
+  // the keys of our own keyboard, for the piano in the MIDI tab
+  void track_local_note(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+    std::uint8_t type = status & 0xF0;
+    if (data1 >= local_down.size() || (status & 0x0F) == 9) {
+      return;
+    }
+    if (type == 0x90 && data2 != 0) {
+      local_down[data1] = true;
+    }
+    else if (type == 0x80 || type == 0x90) {
+      local_down[data1] = false;
+    }
+  }
+
+  static constexpr std::uint32_t midi_col(std::uint32_t r, std::uint32_t g, std::uint32_t b, std::uint32_t a) {
+    return (a << 24) | (b << 16) | (g << 8) | r;
+  }
+
+  // 88 keys A0..C8: ours light up blue, the ones playing here from the other side orange
+  void render_midi_piano() {
+    static constexpr int first_note = 21;
+    static constexpr int last_note = 108;
+    static constexpr int white_keys = 52;
+    auto is_black = [](int note) {
+      int n = note % 12;
+      return n == 1 || n == 3 || n == 6 || n == 8 || n == 10;
+    };
+    fan::vec2 avail = gui::get_content_region_avail();
+    f32_t width = std::max(avail.x - 4.f, 120.f);
+    f32_t white_width = width / white_keys;
+    f32_t height = std::clamp(white_width * 6.f, 50.f, 130.f);
+    fan::vec2 origin = gui::get_cursor_screen_pos();
+    gui::dummy(fan::vec2(width, height + 4.f));
+
+    auto* list = gui::get_window_draw_list();
+    auto color_of = [&](int note, bool black) -> std::uint32_t {
+      bool mine = local_down[note].load(std::memory_order_relaxed);
+      bool theirs = midi_host.synth.is_down((std::uint8_t)note);
+      if (mine) {
+        return midi_col(70, 140, 255, 255);
+      }
+      if (theirs) {
+        return midi_col(255, 150, 40, 255);
+      }
+      return black ? midi_col(25, 25, 25, 255) : midi_col(235, 235, 235, 255);
+    };
+
+    int white_index = 0;
+    for (int note = first_note; note <= last_note; ++note) {
+      if (is_black(note)) {
+        continue;
+      }
+      fan::vec2 min(origin.x + white_index * white_width, origin.y);
+      fan::vec2 max(min.x + white_width - 1.f, origin.y + height);
+      list->AddRectFilled(min, max, color_of(note, false));
+      ++white_index;
+    }
+    white_index = 0;
+    for (int note = first_note; note <= last_note; ++note) {
+      if (!is_black(note)) {
+        ++white_index;
+        continue;
+      }
+      // a black key sits on the seam after the white key before it
+      f32_t center = origin.x + white_index * white_width;
+      fan::vec2 min(center - white_width * 0.3f, origin.y);
+      fan::vec2 max(center + white_width * 0.3f, origin.y + height * 0.62f);
+      list->AddRectFilled(min, max, color_of(note, true));
+    }
+  }
+
+  void render_midi_tab() {
+    gui::spacing();
+    bool viewing = ecps_backend.is_viewing_any_channel();
+    bool streaming = ecps_backend.is_streaming_to_any_channel();
+
+    // devices WinMM sees, refreshed now and then, the keyboard has to be here, not on the other side
+    auto now = std::chrono::steady_clock::now();
+    if (now >= midi_devices_listed + std::chrono::seconds(2)) {
+      midi_devices_listed = now;
+      midi_devices = fan::audio::midi_input_t::list_devices();
+    }
+    if (midi_devices.empty()) {
+      gui::text_disabled("No MIDI input device on this computer");
+    }
+    else {
+      for (const auto& name : midi_devices) {
+        gui::text(name);
+      }
+      gui::text_disabled(midi_in.is_open() ? "Input open" : "Input opens when you send");
+    }
+
+    gui::separator();
+    gui::checkbox("Send MIDI to host", &send_midi);
+    if (send_midi && viewing && !can_control_host()) {
+      gui::text_disabled("The host has to allow input control first");
+    }
+    gui::checkbox("Send MIDI to viewers", &send_midi_viewers);
+    if (send_midi_viewers && !streaming) {
+      gui::text_disabled("Start the stream to send");
+    }
+    gui::checkbox("Play host MIDI", &play_host_midi);
+    if (gui::slider("MIDI volume", &midi_volume, 0.f, 2.f, gui::slider_flags_always_clamp)) {
+      midi_host.player.set_volume(midi_volume);
+    }
+
+    gui::separator();
+    gui::checkbox("Show piano", &show_midi_piano);
+    if (show_midi_piano) {
+      render_midi_piano();
+    }
+  }
+
   // the host's keyboard goes to every viewer of the channels it streams to
   void send_viewers_midi(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
     ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi_t rest;
@@ -2268,6 +2375,7 @@ struct ecps_gui_t {
       if (now >= midi_retry) {
         midi_retry = now + std::chrono::seconds(2);
         midi_in.open([this](std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+          track_local_note(status, data1, data2);
           if (midi_to_host.load()) {
             send_host_midi(status, data1, data2);
           }
@@ -2279,6 +2387,9 @@ struct ecps_gui_t {
     }
     else if (!want && midi_in.is_open()) {
       midi_in.close();
+      for (auto& key : local_down) {
+        key = false;
+      }
     }
     for (std::uint8_t channel = 0; channel < 16; ++channel) {
       if (was_to_host && !to_host) {
@@ -2472,6 +2583,11 @@ struct ecps_gui_t {
   bool send_midi = false;
   bool send_midi_viewers = false;
   bool play_host_midi = true;
+  bool show_midi_piano = true;
+  f32_t midi_volume = 1.f;
+  std::array<std::atomic<bool>, 128> local_down{};
+  std::vector<std::string> midi_devices;
+  std::chrono::steady_clock::time_point midi_devices_listed;
   std::atomic<bool> midi_to_host{false};
   std::atomic<bool> midi_to_viewers{false};
   fan::audio::midi_input_t midi_in;
