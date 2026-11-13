@@ -309,6 +309,15 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     uint8_t Data1;
     uint8_t Data2;
   );
+
+  // the host's MIDI to every viewer of the channel
+  __dme(Channel_ScreenShare_Share_InformationToViewMidi,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_ChannelSessionID_t ChannelSessionID;
+    uint8_t Status;
+    uint8_t Data1;
+    uint8_t Data2;
+  );
 }Protocol_C2S;
 
 #ifndef __ecps_client
@@ -470,6 +479,13 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
   );
 
   __dme(Channel_ScreenShare_Share_ApplyToHostMidi,
+    Protocol_ChannelID_t ChannelID;
+    uint8_t Status;
+    uint8_t Data1;
+    uint8_t Data2;
+  );
+
+  __dme(Channel_ScreenShare_View_InformationToViewMidi,
     Protocol_ChannelID_t ChannelID;
     uint8_t Status;
     uint8_t Data1;

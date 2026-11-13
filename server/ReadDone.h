@@ -367,6 +367,47 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi:{
+
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsChannelInvalid(ChannelID) == true){
+    goto StateDone_gt;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  if(ChannelData->HostSessionID != SessionID){
+    goto StateDone_gt;
+  }
+  // only channel voice messages
+  if(Request->Status < 0x80 || Request->Status >= 0xF0 || (Request->Data1 & 0x80) || (Request->Data2 & 0x80)){
+    goto StateDone_gt;
+  }
+
+  auto nr = Channel->SessionList.GetNodeFirst();
+  ChannelSessionList_Node_t *n;
+  for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
+    n = Channel->SessionList.GetNodeByReference(nr);
+    if(n->data.SessionID == SessionID){
+      continue;
+    }
+
+    Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMidi_t Payload;
+    Payload.ChannelID = ChannelID;
+    Payload.Status = Request->Status;
+    Payload.Data1 = Request->Data1;
+    Payload.Data2 = Request->Data2;
+
+    Session::WriteCommand(
+      n->data.SessionID,
+      0,
+      Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMidi,
+      Payload);
+  }
+
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::RequestChannelList: {
   Channel_SendChannelList(peer, BasePacket->ID);
   

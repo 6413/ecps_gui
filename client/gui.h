@@ -323,10 +323,10 @@ struct ecps_gui_t {
 
         popup_size = gui::get_window_size();
 
-        gui::input_text("ip", &ip);
-        gui::input_text("port", &port);
+        bool enter_pressed = gui::input_text("ip", &ip, gui::input_text_flags_enter_returns_true);
+        enter_pressed |= gui::input_text("port", &port, gui::input_text_flags_enter_returns_true);
 
-        if (gui::button("Connect")) {
+        if (gui::button("Connect") || enter_pressed) {
           {
             if (ip.size()) {
               server_json["ip"] = ip;
@@ -831,7 +831,9 @@ struct ecps_gui_t {
               gui::spacing();
 
               gui::set_next_window_bg_alpha(0.99);
-              if (gui::begin_child("SessionList", fan::vec2(0, -120), true)) {
+              // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
+              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * 7.5f : 0.f;
+              if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
                   for (const auto& session : it->second) {
@@ -863,7 +865,7 @@ struct ecps_gui_t {
               gui::end_child();
 
               gui::spacing();
-              if (is_host_of_selected) {
+              if (is_host_of_selected && gui::begin_child("HostControls", fan::vec2(0, 0), 0)) {
                 stream_button_renderer_t::render_stream_toggle_button(This->selected_channel_id);
                 if (gui::checkbox("Preview own stream", &This->show_own_stream)) {
                   if (auto rt = get_render_thread(); rt) {
@@ -880,6 +882,13 @@ struct ecps_gui_t {
                   gui::text_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
                 }
                 This->render_share_audio_checkbox();
+                gui::checkbox("Send MIDI to viewers", &This->send_midi_viewers);
+                if (This->send_midi_viewers && ecps_backend.is_streaming_to_any_channel()) {
+                  gui::text(This->midi_in.is_open() ? "MIDI input connected" : "No MIDI input device found");
+                }
+              }
+              if (is_host_of_selected) {
+                gui::end_child();
               }
 
               gui::end_tab_item();
@@ -2159,6 +2168,8 @@ struct ecps_gui_t {
     if (send_midi && can_control_host()) {
       gui::text(midi_in.is_open() ? "MIDI input connected" : "No MIDI input device found");
     }
+    // the host's own keyboard, played here with the same piano
+    gui::checkbox("Play host MIDI", &play_host_midi);
     if (stream_settings.play_audio) {
       gui::text("Volume");
       gui::push_item_width(-1);
@@ -2223,23 +2234,60 @@ struct ecps_gui_t {
     queue_host_input(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, rest);
   }
 
-  // opens the keyboards while we may control the host, and when that ends nothing may keep ringing there
+  // the host's keyboard goes to every viewer of the channels it streams to
+  void send_viewers_midi(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+    ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi_t rest;
+    rest.Status = status;
+    rest.Data1 = data1;
+    rest.Data2 = data2;
+    backend_queue([rest]() -> fan::event::task_t {
+      try {
+        for (const auto& channel : ecps_backend.channel_info) {
+          if (channel.is_streaming) {
+            auto packet = rest;
+            packet.ChannelID = channel.channel_id;
+            packet.ChannelSessionID = channel.session_id;
+            co_await ecps_backend.tcp_write(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi, &packet, sizeof(packet));
+          }
+        }
+      }
+      catch (...) {}
+    });
+  }
+
+  // one keyboard feeds both directions: to the host while we may control it, to the viewers while we stream.
+  // when a direction ends nothing may keep ringing on the other side
   void update_midi_forward() {
-    bool want = send_midi && can_control_host();
+    bool to_host = send_midi && can_control_host();
+    bool to_viewers = send_midi_viewers && ecps_backend.is_streaming_to_any_channel();
+    bool was_to_host = midi_to_host.exchange(to_host);
+    bool was_to_viewers = midi_to_viewers.exchange(to_viewers);
+    bool want = to_host || to_viewers;
     if (want && !midi_in.is_open()) {
       auto now = std::chrono::steady_clock::now();
       if (now >= midi_retry) {
         midi_retry = now + std::chrono::seconds(2);
         midi_in.open([this](std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
-          send_host_midi(status, data1, data2);
+          if (midi_to_host.load()) {
+            send_host_midi(status, data1, data2);
+          }
+          if (midi_to_viewers.load()) {
+            send_viewers_midi(status, data1, data2);
+          }
         });
       }
     }
     else if (!want && midi_in.is_open()) {
       midi_in.close();
-      for (std::uint8_t channel = 0; channel < 16; ++channel) {
+    }
+    for (std::uint8_t channel = 0; channel < 16; ++channel) {
+      if (was_to_host && !to_host) {
         send_host_midi(0xB0 | channel, 64, 0);
         send_host_midi(0xB0 | channel, 123, 0);
+      }
+      if (was_to_viewers && !to_viewers) {
+        send_viewers_midi(0xB0 | channel, 64, 0);
+        send_viewers_midi(0xB0 | channel, 123, 0);
       }
     }
   }
@@ -2422,6 +2470,10 @@ struct ecps_gui_t {
   ecps_backend_t::Protocol_ChannelID_t selected_channel_id{ (uint16_t)-1 };
   ecps_backend_t::Protocol_ChannelID_t input_control_channel{ (uint16_t)-1 };
   bool send_midi = false;
+  bool send_midi_viewers = false;
+  bool play_host_midi = true;
+  std::atomic<bool> midi_to_host{false};
+  std::atomic<bool> midi_to_viewers{false};
   fan::audio::midi_input_t midi_in;
   std::chrono::steady_clock::time_point midi_retry;
 

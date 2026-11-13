@@ -765,6 +765,26 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
+  __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewMidi) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMidi_t>();
+    if (msg.status != 0) {
+      co_return;
+    }
+    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+    bool allowed = rt && rt->ecps_gui.play_host_midi &&
+      std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
+        return channel.is_viewing && channel.channel_id.i == msg->ChannelID.i;
+      });
+    if (!allowed) {
+      midi_host.silence();
+      co_return;
+    }
+    if (msg->Status >= 0x80 && msg->Status < 0xF0 && !(msg->Data1 & 0x80) && !(msg->Data2 & 0x80)) {
+      midi_host.play(msg->Status, msg->Data1, msg->Data2);
+    }
+    co_return;
+  };
+
   // file transfer
   __dme_get(Protocol_S2C, Channel_File_Offer) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Offer_t>();
