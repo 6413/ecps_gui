@@ -2308,8 +2308,29 @@ struct ecps_gui_t {
     }
   }
 
+  // one line whenever the sizes the UI is laid out with change: the window, what imgui thinks the display is,
+  // its framebuffer scale and the main viewport. They have to agree, a stretched picture means one of them doesn't
+  void report_display_sizes() {
+    auto& io = gui::get_io();
+    auto* viewport = gui::get_main_viewport();
+    fan::vec2i window_size = engine.window.get_size();
+    std::array<f32_t, 8> now = {
+      (f32_t)window_size.x, (f32_t)window_size.y, io.DisplaySize.x, io.DisplaySize.y,
+      io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y, viewport->Size.x, viewport->Size.y
+    };
+    if (now == last_display_sizes) {
+      return;
+    }
+    last_display_sizes = now;
+    fan::print("display: window", window_size.x, "x", window_size.y, "imgui display", io.DisplaySize.x, "x", io.DisplaySize.y,
+      "framebuffer scale", io.DisplayFramebufferScale.x, "x", io.DisplayFramebufferScale.y,
+      "main viewport", viewport->Size.x, "x", viewport->Size.y);
+  }
+  std::array<f32_t, 8> last_display_sizes{};
+
   // left end of the top row: the version, and the update button that goes with it
   void render_update_controls() {
+    report_display_sizes();
     updater.tick();
     updater.tick_restart();
     using state_e = updater_t::state_e;
