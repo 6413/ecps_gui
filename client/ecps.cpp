@@ -1262,11 +1262,29 @@ int main() {
     auto last_backlog_idr = last_idr_time;
     auto& flow = ecps_backend.share.m_NetworkFlow;
 
+    // one line every few seconds while sharing, says where frames stop: capture, encode or the network
+    struct share_stats_t {
+      uint64_t read_ok = 0, read_failed = 0, encode_failed = 0, frames = 0, bytes = 0;
+      std::chrono::steady_clock::time_point printed = std::chrono::steady_clock::now();
+    } stats;
+    auto report_stats = [&] {
+      auto stamp = std::chrono::steady_clock::now();
+      if (stamp - stats.printed < std::chrono::seconds(3)) {
+        return;
+      }
+      stats.printed = stamp;
+      fan::print("share: captured", stats.read_ok, "capture_failed", stats.read_failed,
+        "encode_failed", stats.encode_failed, "encoded", stats.frames, "(", stats.bytes, "bytes ) udp_packets",
+        ecps_backend.stream_udp_packets.load(), "udp_bytes", ecps_backend.stream_udp_bytes.load(),
+        "queued", flow.FrameList.Usage());
+    };
+
     while (!rt->should_stop.load()) {
       rt = render_thread_ptr.load(std::memory_order_acquire);
       if (!rt) break;
 
       if (ecps_backend.is_streaming_to_any_channel()) {
+        report_stats();
         if (first_frame) {
           rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
           first_frame = false;
@@ -1282,9 +1300,11 @@ int main() {
 
         // waits for the next frame of the desktop, but a failed read returns at once
         if (!rt->screen_encoder.screen_read()) {
+          ++stats.read_failed;
           rt->screen_encoder.sleep_thread();
           continue;
         }
+        ++stats.read_ok;
         stage_times.capture.add(rt->screen_encoder.capture_time_ns);
 
         bool encoded;
@@ -1293,6 +1313,7 @@ int main() {
           encoded = rt->screen_encoder.encode_write();
         }
         if (!encoded) {
+          ++stats.encode_failed;
           rt->screen_encoder.sleep_thread();
           continue;
         }
@@ -1316,6 +1337,8 @@ int main() {
         size_t encoded_size = rt->screen_encoder.encode_read(&encoded_data);
 
         if (encoded_size > 0 && encoded_data) {
+          ++stats.frames;
+          stats.bytes += encoded_size;
           if (rt->ecps_gui.show_own_stream &&
             !decode_queue.push(std::vector<uint8_t>(encoded_data, encoded_data + encoded_size))) {
             rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;

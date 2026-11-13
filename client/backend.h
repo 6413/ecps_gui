@@ -381,6 +381,10 @@ struct ecps_backend_t {
     void CalculateNetworkFlowBucket();
   }share;
 
+  // what the share thread reports, to tell a stalled capture or encoder from packets that never arrive
+  std::atomic<uint64_t> stream_udp_packets{0};
+  std::atomic<uint64_t> stream_udp_bytes{0};
+
   fan::event::runv_t<bool> write_stream(
     uint16_t Current,
     uint16_t Possible,
@@ -432,6 +436,8 @@ struct ecps_backend_t {
     rest.ChannelSessionID = streaming_session_id;
 
     co_await udp_write(0, ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData, rest, buffer, BufferSize);
+    stream_udp_packets.fetch_add(1, std::memory_order_relaxed);
+    stream_udp_bytes.fetch_add(BufferSize, std::memory_order_relaxed);
 #if ecps_debug_prints >= 4
     static std::atomic<uint64_t> total_udp_packets_sent{ 0 };
     printf("UDP_SEND: seq=%u, pkt=%u/%u, size=%zu, total_sent=%llu\n",
