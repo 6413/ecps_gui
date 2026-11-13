@@ -38,7 +38,9 @@
         ecpsSrc = self;
         fanSrc = inputs.fan;
         # the commits this build is made from, the in-app "check for updates" compares them with GitHub
-        ecpsRev = self.rev or self.dirtyRev or "unknown";
+        # a local build with uncommitted changes has no rev, only "<commit>-dirty": the commit is still
+        # what the update check should compare, the changes are only in that one build
+        ecpsRev = self.rev or (pkgs.lib.removeSuffix "-dirty" (self.dirtyRev or "unknown"));
         fanRev = inputs.fan.rev or "unknown";
         lunasvgSrc = inputs.lunasvg;
         box2dSrc = inputs.box2d;
