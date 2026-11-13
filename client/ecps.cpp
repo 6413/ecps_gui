@@ -1414,7 +1414,13 @@ int main() {
         if (was_streaming) {
           // stopped: let go of the capture, so the next Start asks which screen or window to share again
           was_streaming = false;
-          rt->screen_encoder.close_screen();
+          // a fan older than close_screen() still builds, it just keeps the old capture until restart.
+          // The generic lambda makes the requires check dependent, so a missing member is not an error
+          [](auto& encoder) {
+            if constexpr (requires { encoder.close_screen(); }) {
+              encoder.close_screen();
+            }
+          }(rt->screen_encoder);
         }
         first_frame = true;
         const int fps = rt ? rt->screen_encoder.config_.frame_rate : 30;
