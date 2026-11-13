@@ -865,9 +865,9 @@ struct ecps_backend_t {
       return false;
     }
 
-    const std::string current_username = get_current_username();
+    // by session, not by name: two clients can both be called User_1
     for (const auto& session : session_it->second) {
-      if (session.username == current_username && session.is_host) {
+      if (session.is_host && session.session_id.i == session_id.i) {
         return true;
       }
     }

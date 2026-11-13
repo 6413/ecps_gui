@@ -23,10 +23,21 @@ struct ecps_gui_t {
       fan::vec4 color = is_streaming ? fan::vec4(0.8f, 0.2f, 0.2f, 0.9f) : fan::vec4(0.2f, 0.8f, 0.2f, 0.9f);
 
       gui::push_style_color(gui::col_button, color);
+      // only the host of a channel can share into it, the server drops anything else
+      bool can_start = is_streaming || ecps_backend.is_current_user_host_of_channel(channel_id);
+      if (!can_start) {
+        gui::begin_disabled();
+      }
       bool clicked = gui::button(text, button_size);
+      if (!can_start) {
+        gui::end_disabled();
+        if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
+          gui::set_tooltip("You can only share in a channel you host. Select your own channel in Channels.");
+        }
+      }
       gui::pop_style_color();
 
-      if (clicked) {
+      if (clicked && can_start) {
         if (is_streaming) {
           ecps_backend.set_channel_streaming(channel_id, false);
         }
@@ -708,16 +719,7 @@ struct ecps_gui_t {
             if (joined_channel.channel_id.i == This->selected_channel_id.i) {
               already_in_selected = true;
 
-              auto session_it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
-              if (session_it != ecps_backend.channel_sessions.end()) {
-                std::string current_username = ecps_backend.get_current_username();
-                for (const auto& session : session_it->second) {
-                  if (session.username == current_username && session.is_host) {
-                    is_host_of_selected = true;
-                    break;
-                  }
-                }
-              }
+              is_host_of_selected = ecps_backend.is_current_user_host_of_channel(This->selected_channel_id);
               break;
             }
           }
