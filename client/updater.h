@@ -5,7 +5,9 @@
 //    runs when the button is pressed, nothing is sent but the request for that one file
 //  - updating (Linux, the Nix package) can't replace the binary, it is in the read-only store. Instead
 //    `nix build` of the flake runs in the background, and when it finishes the client re-executes the new
-//    build. Progress is written to ecps_update.log next to the settings
+//    build, by itself a second or so after it finishes, no reopening. The result is linked as
+//    ecps_update_result next to the settings, which keeps the build from being garbage collected.
+//    Progress is written to ecps_update.log
 //  - Windows only tells that a newer version exists
 
 #include <algorithm>
@@ -86,7 +88,7 @@ struct updater_t {
     state = state_e::building;
 #if !defined(_WIN32)
     std::string command =
-      "nohup sh -c 'out=$(nix --extra-experimental-features \"nix-command flakes\" build --refresh --no-link "
+      "nohup sh -c 'out=$(nix --extra-experimental-features \"nix-command flakes\" build --refresh --out-link ecps_update_result "
       "--print-out-paths \"" + std::string(flake_ref) + "\" 2>>" + log_file + ") "
       "&& printf \"%s\" \"$out\" > " + ready_file + " || : > " + failed_file + "' >/dev/null 2>&1 &";
     if (std::system(command.c_str()) != 0) {
@@ -127,8 +129,16 @@ struct updater_t {
       }
       else {
         built_path = path;
+        restart_at = now + std::chrono::milliseconds(1500);
         state = state_e::ready;
       }
+    }
+  }
+
+  // GUI thread, every frame: a finished build restarts the program into itself after a short pause
+  void tick_restart() {
+    if (state.load() == state_e::ready && std::chrono::steady_clock::now() >= restart_at) {
+      restart();
     }
   }
 
@@ -225,4 +235,5 @@ private:
   std::string error_text;
   std::string built_path;
   std::chrono::steady_clock::time_point last_poll;
+  std::chrono::steady_clock::time_point restart_at;
 };

@@ -478,6 +478,14 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
     }
     if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
       ++g_udp_stats.not_host;
+      // once per sender and channel: who sent it, and who the server thinks hosts that channel
+      static std::set<uint64_t> told;
+      uint64_t key = ((uint64_t)SessionID.i << 32) | (uint64_t)RestPacket->ChannelID.i;
+      if (told.insert(key).second) {
+        auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[RestPacket->ChannelID].Buffer;
+        fan::print("udp: session", (uint64_t)SessionID.i, "sent video for channel", (uint64_t)RestPacket->ChannelID.i,
+          "but the host of that channel is session", (uint64_t)ChannelData->HostSessionID.i);
+      }
       return;
     }
     ++g_udp_stats.stream_accepted;

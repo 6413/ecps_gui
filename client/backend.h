@@ -441,6 +441,16 @@ struct ecps_backend_t {
     rest.ChannelID = streaming_channel_id;
     rest.ChannelSessionID = streaming_session_id;
 
+    {
+      // once per channel, to compare with what the server says about who hosts it
+      static uint32_t reported_channel = (uint32_t)-1;
+      if (reported_channel != (uint32_t)streaming_channel_id.i) {
+        reported_channel = (uint32_t)streaming_channel_id.i;
+        fan::print("share: sending video as session", (uint64_t)session_id.i, "in channel", (uint64_t)streaming_channel_id.i,
+          "channel session", (uint64_t)streaming_session_id.i);
+      }
+    }
+
     co_await udp_write(0, ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData, rest, buffer, BufferSize);
     stream_udp_packets.fetch_add(1, std::memory_order_relaxed);
     stream_udp_bytes.fetch_add(BufferSize, std::memory_order_relaxed);

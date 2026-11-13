@@ -2311,6 +2311,7 @@ struct ecps_gui_t {
   // left end of the top row: the version, and the update button that goes with it
   void render_update_controls() {
     updater.tick();
+    updater.tick_restart();
     using state_e = updater_t::state_e;
     std::string version = std::string("v") + ecps_version;
     switch (updater.state.load()) {
@@ -2355,7 +2356,7 @@ struct ecps_gui_t {
         gui::text(version + "  Building the update, this can take a while. Progress: ecps_update.log");
         break;
       case state_e::ready:
-        gui::text(version + "  Update " + updater.latest() + " is ready");
+        gui::text(version + "  Update " + updater.latest() + " is ready, restarting...");
         gui::same_line();
         if (gui::button("Restart now")) {
           updater.restart();
