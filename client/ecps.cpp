@@ -401,6 +401,9 @@ struct midi_host_t {
   bool failed = false;
 }midi_host;
 
+#include "remote_logs.h"
+remote_logs_t remote_logs;
+
 struct dynamic_config_t {
   static uint32_t get_target_framerate();
 
@@ -785,6 +788,29 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
+  __dme_get(Protocol_S2C, Channel_Log_Request) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_Log_Request_t>();
+    if (msg.status == 0) {
+      co_await remote_logs.on_request(msg.data);
+    }
+  };
+
+  __dme_get(Protocol_S2C, Channel_Log_Status) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_Log_Status_t>();
+    if (msg.status == 0) {
+      remote_logs.on_status(msg.data);
+    }
+    co_return;
+  };
+
+  __dme_get(Protocol_S2C, Channel_Log_Data) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_Log_Data_t>();
+    if (msg.status == 0) {
+      remote_logs.on_data(msg.data);
+    }
+    co_return;
+  };
+
   // file transfer
   __dme_get(Protocol_S2C, Channel_File_Offer) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Offer_t>();
@@ -1034,6 +1060,8 @@ uint64_t dynamic_config_t::get_adaptive_bitrate() {
 }
 
 int main() {
+  // from here on everything printed can be read by another client that is allowed to
+  log_capture().start();
   ecps_backend.reconnected_cb = [](ecps_backend_t::Protocol_ChannelID_t channel_id) {
     if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
       rt->ecps_gui.selected_channel_id = channel_id;

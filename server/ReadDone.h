@@ -408,6 +408,36 @@ case Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_Log_Request:{
+  auto Request = (Protocol_C2S_t::Channel_Log_Request_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_Log_Request_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_Log_Request,
+    Request);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_Log_Status:{
+  auto Request = (Protocol_C2S_t::Channel_Log_Status_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_Log_Status_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_Log_Status,
+    Request);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_Log_Data:{
+  auto Request = (Protocol_C2S_t::Channel_Log_Data_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_Log_Data_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_Log_Data,
+    Request);
+
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::RequestChannelList: {
   Channel_SendChannelList(peer, BasePacket->ID);
   

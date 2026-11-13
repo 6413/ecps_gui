@@ -318,6 +318,27 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     uint8_t Data1;
     uint8_t Data2;
   );
+
+  // remote logs: Peer is the other client, the server only relays between two sessions of a channel.
+  // C2S and S2C layouts stay identical like the file messages
+  __dme(Channel_Log_Request,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint8_t Enable;
+  );
+  __dme(Channel_Log_Status,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint8_t State; // 0 denied, 1 streaming, 2 stopped
+  );
+  __dme(Channel_Log_Data,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint64_t Seq;
+    uint8_t Stream; // 1 stdout, 2 stderr
+    uint16_t Size;
+    uint8_t Data[1024];
+  );
 }Protocol_C2S;
 
 #ifndef __ecps_client
@@ -490,6 +511,27 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     uint8_t Status;
     uint8_t Data1;
     uint8_t Data2;
+  );
+
+  // remote logs: Peer is the other client, the server only relays between two sessions of a channel.
+  // C2S and S2C layouts stay identical like the file messages
+  __dme(Channel_Log_Request,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint8_t Enable;
+  );
+  __dme(Channel_Log_Status,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint8_t State; // 0 denied, 1 streaming, 2 stopped
+  );
+  __dme(Channel_Log_Data,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint64_t Seq;
+    uint8_t Stream; // 1 stdout, 2 stderr
+    uint16_t Size;
+    uint8_t Data[1024];
   );
 }Protocol_S2C;
 

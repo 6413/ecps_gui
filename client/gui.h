@@ -900,6 +900,11 @@ struct ecps_gui_t {
               gui::end_tab_item();
             }
 
+            if (gui::begin_tab_item("Logs", nullptr, 0)) {
+              This->render_logs_tab();
+              gui::end_tab_item();
+            }
+
             if (is_host_of_selected) {
               if (gui::begin_tab_item("Stream Settings", nullptr, detail_tab == 1 ? gui::tab_item_flags_set_selected : 0)) {
                 if (detail_tab == 1) detail_tab = -1;
@@ -2299,6 +2304,98 @@ struct ecps_gui_t {
     }
   }
 
+  void render_logs_tab() {
+    gui::spacing();
+    bool allow = remote_logs.allow.load();
+    if (gui::checkbox("Let others in this channel read my logs", &allow)) {
+      remote_logs.allow = allow;
+    }
+    gui::text_disabled("They see everything this program prints. It passes through the server.");
+    gui::separator();
+
+    bool in_channel = selected_channel_id.i != (uint16_t)-1;
+    auto it = ecps_backend.channel_sessions.find(selected_channel_id.i);
+    bool any_peer = false;
+    if (in_channel && it != ecps_backend.channel_sessions.end()) {
+      for (const auto& session : it->second) {
+        if (session.session_id.i == ecps_backend.session_id.i) {
+          continue;
+        }
+        any_peer = true;
+        bool is_watched = remote_logs.watching.load() &&
+          remote_logs.watch_peer.i == session.session_id.i && remote_logs.watch_channel.i == selected_channel_id.i;
+        gui::push_id((int)session.session_id.i);
+        gui::text(session.username + (session.is_host ? " (Host)" : "") + "  ID: " + std::to_string(session.session_id.i));
+        gui::same_line();
+        auto queue = [this](const std::function<fan::event::task_t()>& task) { backend_queue(task); };
+        if (is_watched) {
+          if (gui::button("Stop")) {
+            remote_logs.stop_watch(queue);
+          }
+        }
+        else if (gui::button("Read logs")) {
+          remote_logs.start_watch(queue, selected_channel_id, session.session_id);
+        }
+        gui::pop_id();
+      }
+    }
+    if (!any_peer) {
+      gui::text_disabled("Nobody else in this channel");
+    }
+
+    const char* status = "";
+    switch (remote_logs.state.load()) {
+      case remote_logs_t::state_e::asking: status = "Asking for access..."; break;
+      case remote_logs_t::state_e::live: status = "Live"; break;
+      case remote_logs_t::state_e::denied: status = "Denied: that user has not allowed log sharing"; break;
+      case remote_logs_t::state_e::stopped: status = "Stopped by the other side"; break;
+      default: break;
+    }
+    if (*status) {
+      gui::text(status);
+    }
+
+    gui::separator();
+    gui::checkbox("stdout", &logs_show_out);
+    gui::same_line();
+    gui::checkbox("stderr", &logs_show_err);
+    gui::same_line();
+    gui::checkbox("Follow", &logs_follow);
+    if (gui::button("Copy all")) {
+      engine.window.set_clipboard(remote_logs.all_text(logs_show_out, logs_show_err));
+    }
+    gui::same_line();
+    if (gui::button("Clear")) {
+      remote_logs.clear_lines();
+    }
+    gui::text_disabled("Click a line to copy it");
+
+    std::uint64_t revision = 0;
+    auto lines = remote_logs.snapshot(1000, logs_show_out, logs_show_err, &revision);
+    if (gui::begin_child("##remote_log", fan::vec2(0, 0), true)) {
+      for (std::size_t i = 0; i < lines.size(); ++i) {
+        const auto& line = lines[i];
+        bool is_err = line.stream == 2;
+        if (is_err) {
+          gui::push_style_color(gui::col_text, fan::vec4(1.f, 0.45f, 0.4f, 1.f));
+        }
+        gui::push_id((int)i);
+        if (gui::selectable(line.text.empty() ? " " : line.text)) {
+          engine.window.set_clipboard(line.text);
+        }
+        gui::pop_id();
+        if (is_err) {
+          gui::pop_style_color();
+        }
+      }
+      if (logs_follow && revision != logs_seen_revision) {
+        gui::set_scroll_here_y();
+      }
+      logs_seen_revision = revision;
+    }
+    gui::end_child();
+  }
+
   void render_midi_tab() {
     gui::spacing();
     bool viewing = ecps_backend.is_viewing_any_channel();
@@ -2522,6 +2619,9 @@ struct ecps_gui_t {
     }
     forward_input();
     update_midi_forward();
+    remote_logs.tick([this](const std::function<fan::event::task_t()>& task) {
+      backend_queue(task);
+    });
   }
 
   void render() {
@@ -2584,6 +2684,10 @@ struct ecps_gui_t {
   bool send_midi_viewers = false;
   bool play_host_midi = true;
   bool show_midi_piano = true;
+  bool logs_show_out = true;
+  bool logs_show_err = true;
+  bool logs_follow = true;
+  std::uint64_t logs_seen_revision = 0;
   f32_t midi_volume = 1.f;
   std::array<std::atomic<bool>, 128> local_down{};
   std::vector<std::string> midi_devices;
