@@ -2370,27 +2370,44 @@ struct ecps_gui_t {
     }
     gui::text_disabled("Click a line to copy it");
 
-    std::uint64_t revision = 0;
-    auto lines = remote_logs.snapshot(1000, logs_show_out, logs_show_err, &revision);
+    // the whole history stays in memory, only the rows on screen are drawn
+    std::uint64_t revision = remote_logs.current_revision();
     if (gui::begin_child("##remote_log", fan::vec2(0, 0), true)) {
-      for (std::size_t i = 0; i < lines.size(); ++i) {
-        const auto& line = lines[i];
-        bool is_err = line.stream == 2;
-        if (is_err) {
-          gui::push_style_color(gui::col_text, fan::vec4(1.f, 0.45f, 0.4f, 1.f));
-        }
-        gui::push_id((int)i);
-        if (gui::selectable(line.text.empty() ? " " : line.text)) {
-          engine.window.set_clipboard(line.text);
-        }
-        gui::pop_id();
-        if (is_err) {
-          gui::pop_style_color();
-        }
+      if (gui::is_window_hovered() && gui::get_io().MouseWheel > 0.f) {
+        logs_follow = false; // scrolling up means reading, don't pull it back down
       }
-      if (logs_follow && revision != logs_seen_revision) {
-        gui::set_scroll_here_y();
-      }
+      f32_t pitch = gui::get_text_line_height_with_spacing();
+      f32_t gap = pitch - gui::get_text_line_height();
+      f32_t view_height = gui::get_window_size().y;
+      f32_t scroll = gui::get_scroll_y();
+      remote_logs.visit(logs_show_out, logs_show_err, [&](std::size_t count, auto line_at) {
+        std::size_t first = std::min<std::size_t>(count, (std::size_t)std::max(0.f, scroll / pitch));
+        std::size_t last = std::min<std::size_t>(count, first + (std::size_t)(view_height / pitch) + 3);
+        if (first > 0) {
+          gui::dummy(fan::vec2(0, first * pitch - gap));
+        }
+        for (std::size_t i = first; i < last; ++i) {
+          const auto& line = line_at(i);
+          bool is_err = line.stream == 2;
+          if (is_err) {
+            gui::push_style_color(gui::col_text, fan::vec4(1.f, 0.45f, 0.4f, 1.f));
+          }
+          gui::push_id((int)i);
+          if (gui::selectable(line.text.empty() ? " " : line.text)) {
+            engine.window.set_clipboard(line.text);
+          }
+          gui::pop_id();
+          if (is_err) {
+            gui::pop_style_color();
+          }
+        }
+        if (last < count) {
+          gui::dummy(fan::vec2(0, (count - last) * pitch - gap));
+        }
+        if (logs_follow && revision != logs_seen_revision) {
+          gui::set_scroll_y(count * pitch);
+        }
+      });
       logs_seen_revision = revision;
     }
     gui::end_child();

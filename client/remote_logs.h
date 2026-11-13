@@ -39,7 +39,6 @@ struct remote_logs_t {
     std::string text;
   };
 
-  static constexpr std::size_t max_line_bytes = 1 << 20;
   static constexpr std::chrono::seconds heartbeat{5};
   static constexpr std::chrono::seconds reader_timeout{20};
 
@@ -67,8 +66,8 @@ struct remote_logs_t {
         }
       }
       if (!known) {
-        // a new reader first gets the last bit of history
-        watchers.push_back({m.Peer, m.ChannelID, log_capture().backlog_cursor(64 * 1024), clock::now()});
+        // a new reader first gets everything printed so far
+        watchers.push_back({m.Peer, m.ChannelID, log_capture().backlog_cursor(log_capture_t::max_bytes), clock::now()});
         reply = 1;
       }
     }
@@ -81,8 +80,12 @@ struct remote_logs_t {
 
   std::mutex view_mutex;
   std::deque<line_t> lines;
-  std::size_t line_bytes = 0;
   std::string partial[3];
+  // lines[idx[i]] is the i-th line the stdout/stderr filter lets through, lines never move or drop
+  std::vector<std::uint32_t> idx;
+  std::size_t indexed = 0;
+  bool idx_out = true;
+  bool idx_err = true;
   std::atomic<bool> watching{false};
   std::atomic<state_e> state{state_e::idle};
   sid_t watch_peer;
@@ -121,18 +124,12 @@ struct remote_logs_t {
         text.pop_back();
       }
       pending.erase(0, end + 1);
-      line_bytes += text.size();
       lines.push_back({m.Stream, std::move(text)});
     }
     // a line that never ends must not grow forever
     if (pending.size() > 64 * 1024) {
-      line_bytes += pending.size();
       lines.push_back({m.Stream, std::move(pending)});
       pending.clear();
-    }
-    while (line_bytes > max_line_bytes && lines.size() > 1) {
-      line_bytes -= lines.front().text.size();
-      lines.pop_front();
     }
     ++revision;
   }
@@ -142,7 +139,8 @@ struct remote_logs_t {
     {
       std::lock_guard<std::mutex> lock(view_mutex);
       lines.clear();
-      line_bytes = 0;
+      idx.clear();
+      indexed = 0;
       partial[1].clear();
       partial[2].clear();
       ++revision;
@@ -166,10 +164,36 @@ struct remote_logs_t {
   void clear_lines() {
     std::lock_guard<std::mutex> lock(view_mutex);
     lines.clear();
-    line_bytes = 0;
+    idx.clear();
+    indexed = 0;
     ++revision;
   }
 
+  // calls f(count, at) with at(i) giving the i-th visible line. Only what changed since the last call is
+  // indexed, so a million lines cost nothing per frame. The lock is held while f runs
+  template <typename F>
+  void visit(bool out, bool err, F&& f) {
+    std::lock_guard<std::mutex> lock(view_mutex);
+    if (out != idx_out || err != idx_err) {
+      idx_out = out;
+      idx_err = err;
+      idx.clear();
+      indexed = 0;
+    }
+    for (; indexed < lines.size(); ++indexed) {
+      if ((lines[indexed].stream == 1 && out) || (lines[indexed].stream == 2 && err)) {
+        idx.push_back((std::uint32_t)indexed);
+      }
+    }
+    f(idx.size(), [this](std::size_t i) -> const line_t& { return lines[idx[i]]; });
+  }
+
+  std::uint64_t current_revision() {
+    std::lock_guard<std::mutex> lock(view_mutex);
+    return revision;
+  }
+
+  // kept for callers that want a copy of the tail
   // the last `count` lines of the chosen streams, oldest first
   std::vector<line_t> snapshot(std::size_t count, bool out, bool err, std::uint64_t* seen_revision = nullptr) {
     std::vector<line_t> result;

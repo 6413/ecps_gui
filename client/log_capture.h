@@ -6,6 +6,7 @@
 // terminal still shows everything. A windowed Windows build has no console, then there is nowhere to
 // write back to and the pipe is the only copy.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -35,7 +36,8 @@ struct log_capture_t {
     std::string data;
   };
 
-  static constexpr std::size_t max_bytes = 1 << 20;
+  // effectively the whole run, a reader that joins late gets all of it
+  static constexpr std::size_t max_bytes = std::size_t(256) << 20;
 
   void start() {
     if (started) {
@@ -51,10 +53,12 @@ struct log_capture_t {
     std::vector<chunk_t> out;
     std::lock_guard<std::mutex> lock(mutex);
     std::size_t total = 0;
-    for (const auto& chunk : chunks) {
-      if (chunk.seq <= cursor) {
-        continue;
-      }
+    // seq only grows, so skip what the reader already has without walking it
+    auto first = std::upper_bound(chunks.begin(), chunks.end(), cursor, [](std::uint64_t value, const chunk_t& chunk) {
+      return value < chunk.seq;
+    });
+    for (auto it = first; it != chunks.end(); ++it) {
+      const auto& chunk = *it;
       if (total != 0 && total + chunk.data.size() > limit) {
         break;
       }
