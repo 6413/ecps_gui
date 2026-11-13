@@ -836,7 +836,7 @@ struct ecps_gui_t {
 
               gui::set_next_window_bg_alpha(0.99);
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
-              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * 6.f : 0.f;
+              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 11.f : 6.f) : 0.f;
               if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
@@ -883,7 +883,7 @@ struct ecps_gui_t {
                 }
                 if (!This->show_own_stream && ecps_backend.is_streaming_to_any_channel()) {
                   // the server doesn't send a share back to its host, without this sharing looks broken
-                  gui::text_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
+                  text_wrapped_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
                 }
                 This->render_share_audio_checkbox();
               }
@@ -1984,7 +1984,7 @@ struct ecps_gui_t {
       gui::text(offer->name);
       gui::text(ecps_backend_t::file_format_bytes(offer->size));
       gui::spacing();
-      gui::text_disabled("End-to-end encrypted. It is saved to the ecps_downloads folder.");
+      text_wrapped_disabled("End-to-end encrypted. It is saved to the ecps_downloads folder.");
       gui::spacing();
       if (gui::button("Accept")) {
         queue_file_action(offer->id, offer->peer, false, 0);
@@ -2002,7 +2002,7 @@ struct ecps_gui_t {
     auto views = ecps_backend.file_transfer_views();
 
     gui::spacing();
-    gui::text_disabled("Use 'Send file' next to a user in the Users tab.");
+    text_wrapped_disabled("Use 'Send file' next to a user in the Users tab.");
     gui::spacing();
 
     if (gui::begin_child("##file_transfers", fan::vec2(0, -80), true)) {
@@ -2022,7 +2022,7 @@ struct ecps_gui_t {
           gui::text(v.status);
         }
         if (v.state == state_e::done && !v.outgoing) {
-          gui::text_disabled("Saved to " + v.path);
+          text_wrapped_disabled("Saved to " + v.path);
         }
         if (!v.verification.empty()) {
           gui::text("Verification code: " + v.verification);
@@ -2051,8 +2051,8 @@ struct ecps_gui_t {
     if (gui::button("Clear finished")) {
       ecps_backend.clear_finished_file_transfers();
     }
-    gui::text_disabled("If the verification code is the same for both of you, nobody in between,");
-    gui::text_disabled("the server included, could have read or changed the file.");
+    text_wrapped_disabled("If the verification code is the same for both of you, nobody in between,");
+    text_wrapped_disabled("the server included, could have read or changed the file.");
   }
 
   void render_share_audio_checkbox() {
@@ -2111,10 +2111,10 @@ struct ecps_gui_t {
         : "Not supported on this platform yet");
     }
     if (exclude && !find_sonar_gaming().empty()) {
-      gui::text_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
+      text_wrapped_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
     }
     else if (exclude && audio_share.capture.is_running()) {
-      gui::text_disabled(audio_share.capture.get_excluded_pid()
+      text_wrapped_disabled(audio_share.capture.get_excluded_pid()
         ? "Recording all apps except Discord"
         : audio_share.exclude_failed ? "Could not exclude Discord, recording the device" : "Discord is not running");
     }
@@ -2308,6 +2308,13 @@ struct ecps_gui_t {
     }
   }
 
+  // grey text that breaks at the edge of its panel, a long hint must not run out of it
+  static void text_wrapped_disabled(const std::string& text) {
+    gui::push_text_wrap_pos(0.f);
+    gui::text_disabled(text);
+    gui::pop_text_wrap_pos();
+  }
+
   // one line whenever the sizes the UI is laid out with change: the window, what imgui thinks the display is,
   // its framebuffer scale and the main viewport. They have to agree, a stretched picture means one of them doesn't
   void report_display_sizes() {
@@ -2370,7 +2377,7 @@ struct ecps_gui_t {
         }
         else {
           gui::same_line();
-          gui::text_disabled("download it from github.com/6413/ecps_gui");
+          text_wrapped_disabled("download it from github.com/6413/ecps_gui");
         }
         break;
       case state_e::building:
@@ -2399,7 +2406,7 @@ struct ecps_gui_t {
     if (gui::checkbox("Let others in this channel read my logs", &allow)) {
       remote_logs.allow = allow;
     }
-    gui::text_disabled("They see everything this program prints. It passes through the server.");
+    text_wrapped_disabled("They see everything this program prints. It passes through the server.");
     gui::separator();
 
     gui::text("This computer");
@@ -2440,7 +2447,7 @@ struct ecps_gui_t {
       }
     }
     if (!any_peer) {
-      gui::text_disabled("Nobody else in this channel");
+      text_wrapped_disabled("Nobody else in this channel");
     }
 
     const char* status = "";
@@ -2452,7 +2459,7 @@ struct ecps_gui_t {
       default: break;
     }
     if (*status) {
-      gui::text(status);
+      gui::text_wrapped(status);
     }
 
     gui::separator();
@@ -2468,11 +2475,11 @@ struct ecps_gui_t {
     if (gui::button("Clear")) {
       remote_logs.clear_lines();
     }
-    gui::text_disabled("Click a line to copy it");
+    text_wrapped_disabled("Click a line to copy it");
 
     // the whole history stays in memory, only the rows on screen are drawn
     std::uint64_t revision = remote_logs.current_revision();
-    if (gui::begin_child("##remote_log", fan::vec2(0, 0), true)) {
+    if (gui::begin_child("##remote_log", fan::vec2(0, 0), true, gui::window_flags_horizontal_scrollbar)) {
       if (gui::is_window_hovered() && gui::get_io().MouseWheel > 0.f) {
         logs_follow = false; // scrolling up means reading, don't pull it back down
       }
@@ -2525,23 +2532,23 @@ struct ecps_gui_t {
       midi_devices = fan::audio::midi_input_t::list_devices();
     }
     if (midi_devices.empty()) {
-      gui::text_disabled("No MIDI input device on this computer");
+      text_wrapped_disabled("No MIDI input device on this computer");
     }
     else {
       for (const auto& name : midi_devices) {
-        gui::text(name);
+        gui::text_wrapped(name);
       }
-      gui::text_disabled(midi_in.is_open() ? "Input open" : "Input opens when you send");
+      text_wrapped_disabled(midi_in.is_open() ? "Input open" : "Input opens when you send");
     }
 
     gui::separator();
     gui::checkbox("Send MIDI to host", &send_midi);
     if (send_midi && viewing && !can_control_host()) {
-      gui::text_disabled("The host has to allow input control first");
+      text_wrapped_disabled("The host has to allow input control first");
     }
     gui::checkbox("Send MIDI to viewers", &send_midi_viewers);
     if (send_midi_viewers && !streaming) {
-      gui::text_disabled("Start the stream to send");
+      text_wrapped_disabled("Start the stream to send");
     }
     gui::checkbox("Play host MIDI", &play_host_midi);
     if (gui::slider("MIDI volume", &midi_volume, 0.f, 2.f, gui::slider_flags_always_clamp)) {

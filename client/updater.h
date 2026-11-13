@@ -67,7 +67,7 @@ struct updater_t {
       return "ecps " + ecps.substr(0, 7) + (is_commit(fan) ? ", fan " + fan.substr(0, 7) : std::string());
     }
     if (can_install) {
-      return std::string("no commit info (") + (std::getenv("ECPS_BUILD_INFO") ? "dirty or unknown build" : "not built by the current Nix package") + "), comparing version numbers only";
+      return std::getenv("ECPS_BUILD_INFO") ? "no commit info: dirty build, version check only" : "no commit info: old build, version check only";
     }
     return "version numbers";
   }
