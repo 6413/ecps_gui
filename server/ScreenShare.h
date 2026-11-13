@@ -140,11 +140,13 @@ void ScreenShare_StreamPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_siz
     }
     auto Session = &g_pile->SessionList[n->data.SessionID];
     if(Session->UDP.Address.ip == 0){
+      ++g_udp_stats.no_viewer_address;
       continue;
     }
     ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t cd;
     cd.ChannelID = ChannelID;
     UDP_send(n->data.SessionID, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData, cd, Data, DataSize);
+    ++g_udp_stats.relayed;
   }
 }
 

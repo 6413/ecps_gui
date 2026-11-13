@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdlib>
 #include <functional>
 #include <set>
@@ -35,6 +36,32 @@ import fan.network.crypto;
   #define NET_SO_SNDBUF SO_SNDBUF
   #define NET_SO_RCVBUF SO_RCVBUF
 #endif
+
+// where host video packets stop on their way through the server, printed every few seconds while any arrive
+struct udp_stats_t {
+  uint64_t received = 0;
+  uint64_t bad_session = 0;
+  uint64_t bad_crypto = 0;
+  uint64_t bad_channel = 0;
+  uint64_t not_host = 0;
+  uint64_t stream_accepted = 0;
+  uint64_t relayed = 0;
+  uint64_t no_viewer_address = 0;
+  std::chrono::steady_clock::time_point printed = std::chrono::steady_clock::now();
+  uint64_t printed_received = 0;
+
+  void report() {
+    auto now = std::chrono::steady_clock::now();
+    if (now - printed < std::chrono::seconds(3) || received == printed_received) {
+      return;
+    }
+    printed = now;
+    printed_received = received;
+    fan::print("udp: received", received, "bad_session", bad_session, "bad_crypto", bad_crypto,
+      "stream_accepted", stream_accepted, "bad_channel", bad_channel, "not_host", not_host,
+      "relayed_to_viewers", relayed, "viewer_without_udp_address", no_viewer_address);
+  }
+}g_udp_stats;
 
 template <typename T>
 void
@@ -405,6 +432,8 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
   if (size < 0) {
     return;
   }
+  ++g_udp_stats.received;
+  g_udp_stats.report();
   if (size == sizeof(buffer)) {
     fan::print_throttled("udp packet too big, dropping\r\n");
     return;
@@ -418,11 +447,13 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
   auto BasePacket = (ProtocolUDP::BasePacket_t*)buffer;
   auto SessionID = BasePacket->SessionID;
   if (Session::IsInvalid(SessionID) == true) {
+    ++g_udp_stats.bad_session;
     return;
   }
   auto Session = &g_pile->SessionList[SessionID];
   size = Session->UDP.Crypto.open(buffer, sizeof(ProtocolUDP::BasePacket_t), size, BasePacket->Nonce);
   if (!size) {
+    ++g_udp_stats.bad_crypto;
     return;
   }
 
@@ -442,11 +473,14 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
       break;
     }
     if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      ++g_udp_stats.bad_channel;
       return;
     }
     if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
+      ++g_udp_stats.not_host;
       return;
     }
+    ++g_udp_stats.stream_accepted;
 
     auto StreamData = (uint8_t*)&RestPacket[1];
     IO_size_t StreamSize = size - (StreamData - buffer);
