@@ -1289,11 +1289,13 @@ int main() {
         "queued", flow.FrameList.Usage());
     };
 
+    bool was_streaming = false;
     while (!rt->should_stop.load()) {
       rt = render_thread_ptr.load(std::memory_order_acquire);
       if (!rt) break;
 
       if (ecps_backend.is_streaming_to_any_channel()) {
+        was_streaming = true;
       #if ecps_debug_prints >= 1
         report_stats();
       #endif
@@ -1318,6 +1320,21 @@ int main() {
         }
         ++stats.read_ok;
         stage_times.capture.add(rt->screen_encoder.capture_time_ns);
+
+        {
+          // the encoder is set to a landscape size, a portrait screen squeezed into it comes out stretched.
+          // Keep the encoder's orientation the same as the capture's, the pixel count stays what was chosen
+          auto& geometry = rt->screen_encoder.mdscr.Geometry;
+          auto& encoder_config = rt->screen_encoder.config_;
+          if (geometry.Resolution.x > 0 && geometry.Resolution.y > 0 && encoder_config.width > 0 && encoder_config.height > 0) {
+            bool capture_portrait = geometry.Resolution.y > geometry.Resolution.x;
+            bool encoder_portrait = encoder_config.height > encoder_config.width;
+            if (capture_portrait != encoder_portrait) {
+              rt->screen_encoder.set_user_resolution(encoder_config.height, encoder_config.width);
+              rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
+            }
+          }
+        }
 
         bool encoded;
         {
@@ -1394,6 +1411,11 @@ int main() {
         rt->screen_encoder.sleep_thread();
       }
       else {
+        if (was_streaming) {
+          // stopped: let go of the capture, so the next Start asks which screen or window to share again
+          was_streaming = false;
+          rt->screen_encoder.close_screen();
+        }
         first_frame = true;
         const int fps = rt ? rt->screen_encoder.config_.frame_rate : 30;
         const auto sleep_time = std::chrono::microseconds(1000000 / fps);
