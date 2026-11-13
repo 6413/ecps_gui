@@ -67,7 +67,11 @@ struct updater_t {
       return "ecps " + ecps.substr(0, 7) + (is_commit(fan) ? ", fan " + fan.substr(0, 7) : std::string());
     }
     if (can_install) {
-      return std::getenv("ECPS_BUILD_INFO") ? "no commit info: dirty build, version check only" : "no commit info: old build, version check only";
+      // says what was actually found, so the reason is on screen
+      if (build_info_path().empty()) {
+        return "no build-info file, so this build isn't from the current Nix package. Version check only";
+      }
+      return "build-info says ecps=" + (ecps.empty() ? std::string("(missing)") : ecps.substr(0, 24)) + ", not a commit. Version check only";
     }
     return "version numbers";
   }
@@ -205,9 +209,33 @@ struct updater_t {
 
 private:
   // the Nix package writes "ecps=<commit>" and "fan=<commit>" lines and points ECPS_BUILD_INFO at the file
+  // The wrapper sets ECPS_BUILD_INFO, but the file is found without it too: next to the executable in the
+  // Nix store (libexec/ecps -> share/ecps/build-info), or linked into the working directory by the wrapper
+  static std::string build_info_path() {
+    std::vector<std::filesystem::path> candidates;
+    if (const char* env = std::getenv("ECPS_BUILD_INFO")) {
+      candidates.push_back(env);
+    }
+  #if !defined(_WIN32)
+    std::error_code ec;
+    auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+      candidates.push_back(exe.parent_path() / ".." / "share" / "ecps" / "build-info");
+    }
+  #endif
+    candidates.push_back("build-info");
+    for (const auto& path : candidates) {
+      std::error_code exists_ec;
+      if (std::filesystem::is_regular_file(path, exists_ec)) {
+        return path.string();
+      }
+    }
+    return {};
+  }
+
   static std::string build_info(const std::string& key) {
-    const char* path = std::getenv("ECPS_BUILD_INFO");
-    if (!path) {
+    std::string path = build_info_path();
+    if (path.empty()) {
       return {};
     }
     std::ifstream in(path);
