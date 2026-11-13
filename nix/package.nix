@@ -23,6 +23,7 @@
   vulkan-headers,
   vulkan-loader,
   gtk3,
+  gsettings-desktop-schemas,
   openssl,
   curl,
   xorg,
@@ -192,7 +193,10 @@ clangStdenv.mkDerivation {
     exec $out/libexec/ecps "\$@"
     EOF
     chmod +x $out/bin/ecps
-    wrapProgram $out/bin/ecps --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib xorg.libX11 xorg.libXtst ]}
+    # the file picker (send file) is a GTK file chooser, which aborts without its gsettings schemas
+    wrapProgram $out/bin/ecps \
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib xorg.libX11 xorg.libXtst ]} \
+      --prefix XDG_DATA_DIRS : ${gtk3}/share/gsettings-schemas/${gtk3.name}:${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}
     runHook postInstall
   '';
 
