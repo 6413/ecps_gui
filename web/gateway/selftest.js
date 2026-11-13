@@ -1,7 +1,8 @@
 // Checks the protocol code without a server: run with `npm run selftest`.
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
-import { deriveKeys, open, parseAudioPacket, parseStreamHeader, seal, writeAudioPacket, writeStreamHeader } from './ecps.js'
+import { deriveKeys, newX25519, open, parseAudioPacket, parseStreamHeader, seal, writeAudioPacket, writeStreamHeader } from './ecps.js'
+import { chunkBody, deriveFileKey, nameField, offerBody, openChunk, responseBody, sanitizeName, sealChunk } from './transfer.js'
 
 // RFC 8439 section 2.8.2 AEAD test vector, nonce rebuilt from the ecps layout
 {
@@ -70,6 +71,61 @@ import { deriveKeys, open, parseAudioPacket, parseStreamHeader, seal, writeAudio
   assert.deepEqual([...parsed.opus], [0xfc, 1, 2])
   assert.equal(writeAudioPacket(0x10000, Buffer.from([1])).readUInt16LE(0), 0)
   assert.equal(parseAudioPacket(Buffer.from([1, 2])), null)
+}
+
+// file transfer: both ends derive the same key and code, chunks open only unchanged
+{
+  const a = newX25519()
+  const b = newX25519()
+  const field = nameField('report.pdf')
+  const sender = deriveFileKey(a.privateKey, a.publicRaw, b.publicRaw, true, 0x01020304, 5000000000n, field)
+  const receiver = deriveFileKey(b.privateKey, b.publicRaw, a.publicRaw, false, 0x01020304, 5000000000n, field)
+  assert.deepEqual(sender.key, receiver.key)
+  assert.equal(sender.code, receiver.code)
+  assert.match(sender.code, /^\d{3} \d{3}$/)
+  // another size or name is another key, the server can't change either without being noticed
+  assert.notDeepEqual(deriveFileKey(b.privateKey, b.publicRaw, a.publicRaw, false, 0x01020304, 5000000001n, field).key, sender.key)
+  assert.notDeepEqual(deriveFileKey(b.privateKey, b.publicRaw, a.publicRaw, false, 0x01020304, 5000000000n, nameField('other.pdf')).key, sender.key)
+
+  const plain = Buffer.from('some file bytes')
+  // chunk indexes past 2^32 must work, files can be that big
+  const index = 0x123456789n
+  const { cipher, tag } = sealChunk(sender.key, 7, index, plain)
+  assert.equal(cipher.length, plain.length)
+  assert.deepEqual(openChunk(receiver.key, 7, index, cipher, tag), plain)
+  assert.equal(openChunk(receiver.key, 7, index + 1n, cipher, tag), null)
+  assert.equal(openChunk(receiver.key, 8, index, cipher, tag), null)
+  const flipped = Buffer.from(cipher)
+  flipped[0] ^= 1
+  assert.equal(openChunk(receiver.key, 7, index, flipped, tag), null)
+
+  // layouts against prot.h: ChannelID u16, Peer u32, TransferID u32, then the fields
+  const offer = offerBody(3, 0xaabbccdd, 0x11223344, 5000000000n, a.publicRaw, field)
+  assert.equal(offer.length, 178)
+  assert.equal(offer.readUInt16LE(0), 3)
+  assert.equal(offer.readUInt32LE(2), 0xaabbccdd)
+  assert.equal(offer.readUInt32LE(6), 0x11223344)
+  assert.equal(offer.readBigUInt64LE(10), 5000000000n)
+  assert.deepEqual(offer.subarray(18, 50), a.publicRaw)
+  assert.equal(offer.toString('utf8', 50, 60), 'report.pdf')
+  const response = responseBody(3, 1, 2, b.publicRaw)
+  assert.equal(response.length, 43)
+  assert.equal(response[10], 1)
+  assert.deepEqual(response.subarray(11, 43), b.publicRaw)
+  assert.equal(responseBody(3, 1, 2, null)[10], 0)
+  const chunk = chunkBody(3, 1, 2, index, cipher, tag)
+  assert.equal(chunk.length, 4132)
+  assert.equal(chunk.readBigUInt64LE(10), index)
+  assert.equal(chunk.readUInt16LE(18), plain.length)
+  assert.deepEqual(chunk.subarray(20, 20 + plain.length), cipher)
+  assert.deepEqual(chunk.subarray(4116, 4132), tag)
+
+  // names can't climb out of the folder or hit windows device names
+  assert.equal(sanitizeName('../../etc/passwd'), 'passwd')
+  assert.equal(sanitizeName('C:\\Users\\x\\a.txt'), 'a.txt')
+  assert.equal(sanitizeName('con.txt'), '_con.txt')
+  assert.equal(sanitizeName('...'), 'file')
+  assert.equal(nameField('é'.repeat(100)).indexOf(0) % 2, 0)
 }
 
 console.log('selftest ok')

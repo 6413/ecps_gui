@@ -42,6 +42,19 @@ winget install Cloudflare.cloudflared
 cloudflared tunnel --url http://localhost:8080
 ```
 
+## Sending files
+
+Join or start a channel, then press **Send file** next to a user or drop files on the page. The other
+user (web or desktop) gets an offer and decides. Files are encrypted end to end between the two
+sessions, the same way as in the desktop app, and both sides see a code that must match.
+
+- The gateway does the file encryption (browsers have no ChaCha20-Poly1305), like it decrypts video,
+  so the same advice applies: run it on a machine you trust and use https for anything but localhost.
+- There is no size limit. Files are read in small slices when sending, and received straight into a
+  file you pick in Chrome and Edge. Other browsers keep a received file in memory, up to 2 GB.
+- Joining or leaving a channel starts a new session, which ends the running transfers.
+- `npm run filetest` sends files between two gateway sessions through a running ecps server.
+
 ## Limits
 
 - Hosts must stream H.264. HEVC and AV1 streams won't play.

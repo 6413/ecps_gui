@@ -335,6 +335,38 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostKeyboard:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi:{
+
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsChannelInvalid(ChannelID) == true){
+    goto StateDone_gt;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  if(!ScreenShare_CanControlHost(ChannelID, SessionID)){
+    goto StateDone_gt;
+  }
+  // only channel voice messages, no sysex or system realtime from a viewer
+  if(Request->Status < 0x80 || Request->Status >= 0xF0 || (Request->Data1 & 0x80) || (Request->Data2 & 0x80)){
+    goto StateDone_gt;
+  }
+
+  Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMidi_t Payload;
+  Payload.ChannelID = ChannelID;
+  Payload.Status = Request->Status;
+  Payload.Data1 = Request->Data1;
+  Payload.Data2 = Request->Data2;
+
+  Session::WriteCommand(
+    ChannelData->HostSessionID,
+    0,
+    Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMidi,
+    Payload);
+
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::RequestChannelList: {
   Channel_SendChannelList(peer, BasePacket->ID);
   

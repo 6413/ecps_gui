@@ -3,6 +3,7 @@
   import { Viewer, Sharer, canView, canShare } from './media.js'
   import { MseViewer, canUseMse } from './mse.js'
   import { AudioPlayer, AudioSharer, FRAME_AUDIO, canPlayAudio, canShareAudio } from './audio.js'
+  import { Transfers, FRAME_FILE, canStreamToDisk, formatBytes, isFinished, memoryLimit } from './transfers.js'
 
   const shareSupported = canShare()
   // ?mse forces the fallback player on browsers that have WebCodecs
@@ -45,6 +46,11 @@
   let panY = $state(0)
   let shareAudio = $state(loadSetting('ecps.shareAudio', true))
   let audioMuted = $state(loadSetting('ecps.audioMuted', false))
+  let transfers = $state([])
+  let dragging = $state(false)
+  let dropPending = $state(null)
+  let fileInput = $state()
+  let sendTarget = null
 
   let ws = null
   let viewer = null
@@ -72,9 +78,22 @@
     }
   }
 
+  const files = new Transfers({
+    sendControl: send,
+    // the gateway hands out credits, so at most a few hundred KB are ever queued here
+    sendBinary: data => {
+      if (ws?.readyState == WebSocket.OPEN) {
+        ws.send(data)
+      }
+    },
+    onChange: list => { transfers = list },
+    onError: text => { error = text }
+  })
+
   function connect() {
     clearTimeout(reconnectTimer)
     ws?.close()
+    files.reset()
     status = 'connecting'
     const scheme = location.protocol == 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(`${scheme}//${location.host}/ws`)
@@ -88,6 +107,9 @@
       else if (new Uint8Array(e.data, 0, 1)[0] & FRAME_AUDIO) {
         audio?.push(e.data)
       }
+      else if (new Uint8Array(e.data, 0, 1)[0] & FRAME_FILE) {
+        files.onBinary(e.data)
+      }
       else {
         viewer?.push(e.data)
       }
@@ -96,6 +118,7 @@
       if (ws != socket || destroyed) {
         return
       }
+      files.reset()
       stopMedia()
       current = null
       if (needsPassword) {
@@ -108,6 +131,9 @@
   }
 
   function onControl(message) {
+    if (files.handle(message)) {
+      return
+    }
     switch (message.t) {
       case 'ready': {
         status = 'online'
@@ -369,6 +395,99 @@
     return () => view.removeEventListener('wheel', onWheel)
   })
 
+  // ---- file transfer ----
+
+  const others = $derived(users.filter(user => user.sessionId != sessionId))
+
+  function userName(peer) {
+    for (const list of Object.values(usersByChannel)) {
+      const user = list.find(u => u.sessionId == peer)
+      if (user) {
+        return user.name
+      }
+    }
+    return `User ${peer}`
+  }
+
+  function percent(item) {
+    return item.size ? `${Math.min(100, Math.floor(item.transferred * 100 / item.size))}%` : ''
+  }
+
+  function pickFile(peer) {
+    sendTarget = peer
+    fileInput.value = ''
+    fileInput.click()
+  }
+
+  function onFilesPicked() {
+    for (const file of fileInput.files) {
+      files.sendFile(file, sendTarget)
+    }
+  }
+
+  function sendTo(list, peer) {
+    for (const file of list) {
+      files.sendFile(file, peer)
+    }
+  }
+
+  function hasFiles(e) {
+    return e.dataTransfer?.types?.includes('Files')
+  }
+
+  function onDragOver(e) {
+    if (hasFiles(e)) {
+      e.preventDefault()
+      dragging = true
+    }
+  }
+
+  function onDragLeave(e) {
+    if (!e.relatedTarget) {
+      dragging = false
+    }
+  }
+
+  function onDrop(e) {
+    if (!hasFiles(e)) {
+      return
+    }
+    e.preventDefault()
+    dragging = false
+    // folders can't be sent, only the files that were dropped
+    const dropped = []
+    for (const item of e.dataTransfer.items) {
+      const entry = item.webkitGetAsEntry?.()
+      if (item.kind == 'file' && (!entry || entry.isFile)) {
+        const file = item.getAsFile()
+        if (file) {
+          dropped.push(file)
+        }
+      }
+    }
+    if (!dropped.length) {
+      return
+    }
+    error = ''
+    if (!current) {
+      error = 'Join or start a channel first, then drop the files to send them'
+    }
+    else if (others.length == 0) {
+      error = 'There is nobody else in this channel to send to'
+    }
+    else if (others.length == 1) {
+      sendTo(dropped, others[0].sessionId)
+    }
+    else {
+      dropPending = dropped
+    }
+  }
+
+  function dropSend(peer) {
+    sendTo(dropPending, peer)
+    dropPending = null
+  }
+
   function submitPassword(e) {
     e.preventDefault()
     needsPassword = false
@@ -385,7 +504,9 @@
   })
 </script>
 
-<div class="app">
+<input type="file" multiple class="hidden" bind:this={fileInput} onchange={onFilesPicked}>
+
+<div class="app" class:dragging ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop} role="presentation">
   <aside class="side">
     <header>
       <h1>ECPS</h1>
@@ -422,11 +543,73 @@
           <ul>
             {#each users as user (user.sessionId)}
               <li class="user">
-                {user.name}{user.sessionId == sessionId ? ' (you)' : ''}
-                {#if user.isHost}<span class="muted">host</span>{/if}
+                <span>
+                  {user.name}{user.sessionId == sessionId ? ' (you)' : ''}
+                  {#if user.isHost}<span class="muted">host</span>{/if}
+                </span>
+                {#if user.sessionId != sessionId}
+                  <button class="small" onclick={() => pickFile(user.sessionId)}>Send file</button>
+                {/if}
               </li>
             {/each}
           </ul>
+        </section>
+      {/if}
+
+      {#if dropPending}
+        <section>
+          <h2>Send {dropPending.length == 1 ? dropPending[0].name : `${dropPending.length} files`} to</h2>
+          <ul>
+            {#each others as user (user.sessionId)}
+              <li><button class="row" onclick={() => dropSend(user.sessionId)}>{user.name}</button></li>
+            {/each}
+          </ul>
+          <button onclick={() => { dropPending = null }}>Cancel</button>
+        </section>
+      {/if}
+
+      {#if transfers.length}
+        <section>
+          <h2>Files</h2>
+          <ul>
+            {#each transfers as item (item.handle)}
+              <li class="file">
+                <div class="file-head">
+                  <span class="name">{item.name}</span>
+                  <span class="muted">{formatBytes(item.size)}</span>
+                </div>
+                <div class="muted">{item.outgoing ? 'to' : 'from'} {userName(item.peer)}</div>
+                {#if item.state == 'transferring'}
+                  <progress max={item.size} value={item.transferred}></progress>
+                  <div class="muted">{percent(item)} {formatBytes(item.transferred)}</div>
+                {:else}
+                  <div class="muted">{item.status}</div>
+                {/if}
+                {#if item.code}
+                  <div class="muted">Code {item.code}</div>
+                {/if}
+                {#if !item.outgoing && item.state == 'offered'}
+                  <div class="file-actions">
+                    <button class="primary small" onclick={() => files.accept(item.handle)}>Accept</button>
+                    <button class="small" onclick={() => files.decline(item.handle)}>Decline</button>
+                  </div>
+                {:else if !isFinished(item)}
+                  <div class="file-actions">
+                    <button class="small" onclick={() => files.cancel(item.handle)}>Cancel</button>
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+          <p class="muted hint">
+            End-to-end encrypted. If the code matches on both sides, nobody in between could read or change the file.
+            {#if !canStreamToDisk}
+              This browser keeps received files in memory (up to {formatBytes(memoryLimit)}). Use Chrome or Edge for bigger ones.
+            {/if}
+          </p>
+          {#if transfers.some(isFinished)}
+            <button class="small" onclick={() => files.clearFinished()}>Clear finished</button>
+          {/if}
         </section>
       {/if}
 
@@ -608,8 +791,45 @@
   }
   .user {
     display: flex;
+    align-items: center;
     justify-content: space-between;
+    gap: 8px;
     padding: 4px 0;
+  }
+  .small {
+    min-height: 32px;
+    padding: 4px 10px;
+  }
+  .file {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .file-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .name {
+    overflow-wrap: anywhere;
+  }
+  .file-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .hint {
+    margin: 8px 0;
+    font-size: 12px;
+  }
+  progress {
+    width: 100%;
+  }
+  .app.dragging .stage {
+    outline: 3px dashed var(--accent);
+    outline-offset: -6px;
   }
   .actions {
     display: flex;

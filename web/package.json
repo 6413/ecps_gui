@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "gateway": "node gateway/server.js",
-    "selftest": "node gateway/selftest.js"
+    "selftest": "node gateway/selftest.js",
+    "filetest": "node gateway/filetest.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

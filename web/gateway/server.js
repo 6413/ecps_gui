@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { EcpsClient, FRAME_AUDIO, FRAME_KEY } from './ecps.js'
+import { FRAME_FILE, FileTransfers } from './transfer.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const distDir = path.join(here, '..', 'dist')
@@ -56,6 +57,7 @@ function passwordMatches(text) {
 
 function bridge(ws) {
   let ecps = null
+  let transfers = null
   let authed = false
   let streamBlocked = false
 
@@ -67,6 +69,15 @@ function bridge(ws) {
 
   const start = () => {
     ecps = new EcpsClient(ecpsHost, ecpsPort, knownHostsPath)
+    transfers = new FileTransfers(ecps, send, (handle, data) => {
+      if (ws.readyState == ws.OPEN) {
+        const head = Buffer.alloc(5)
+        head[0] = FRAME_FILE
+        head.writeUInt32LE(handle, 1)
+        ws.send(Buffer.concat([head, data]), { binary: true })
+      }
+    })
+    ecps.on('file', (command, body) => transfers.onFile(command, body))
     ecps.on('ready', () => send({ t: 'ready', sessionId: ecps.sessionId }))
     ecps.on('channels', channels => send({ t: 'channels', channels }))
     ecps.on('users', list => send({ t: 'users', ...list }))
@@ -135,13 +146,42 @@ function bridge(ws) {
         ecps.requestKeyframe()
         break
       }
+      case 'fileSend': {
+        transfers?.offer(message.handle, message.peer, message.name, message.size)
+        break
+      }
+      case 'fileAccept': {
+        transfers?.accept(message.handle)
+        break
+      }
+      case 'fileDecline': {
+        transfers?.decline(message.handle)
+        break
+      }
+      case 'fileCancel': {
+        transfers?.cancel(message.handle)
+        break
+      }
+      case 'fileConsumed': {
+        transfers?.consumed(message.handle, message.count)
+        break
+      }
     }
+  }
+
+  // tell the other side of any running transfer before the session goes away
+  const closeSession = () => {
+    transfers?.abortAll()
+    setTimeout(() => ecps?.close(), 100)
   }
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
       if (authed && data.length > 1 && data[0] & FRAME_AUDIO) {
         ecps.sendAudio(data.subarray(1))
+      }
+      else if (authed && data.length > 5 && data[0] & FRAME_FILE) {
+        transfers.onData(data.readUInt32LE(1), data.subarray(5))
       }
       else if (authed && data.length > 1 && data.length <= MAX_FRAME) {
         if (!ecps.sendFrame(data.subarray(1), (data[0] & FRAME_KEY) != 0)) {
@@ -155,8 +195,8 @@ function bridge(ws) {
     }
     catch {}
   })
-  ws.on('close', () => ecps?.close())
-  ws.on('error', () => ecps?.close())
+  ws.on('close', closeSession)
+  ws.on('error', closeSession)
 }
 
 const server = http.createServer(serveStatic)

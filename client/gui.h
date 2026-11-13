@@ -179,6 +179,12 @@ struct ecps_gui_t {
 
     engine.set_clear_color(gui::get_color(gui::col_window_bg));
 
+    // dropping files on the window sends them, the next frame asks to whom if it isn't obvious
+    file_drop_handle = engine.window.on_drop([this](const fan::window_t::drop_data_t& d) {
+      dropped_files = d.paths;
+      drop_popup_requested = !dropped_files.empty();
+    });
+
     icon_settings = engine.image_load("icons/settings.png", {
      .min_filter = fan::graphics::image_filter_e::linear,
      .mag_filter = fan::graphics::image_filter_e::linear,
@@ -1808,6 +1814,115 @@ struct ecps_gui_t {
     });
   }
 
+  // ---- drag and drop ----
+
+  fan::window_t::drop_handle_t file_drop_handle;
+  std::vector<std::string> dropped_files;
+  bool drop_popup_requested = false;
+
+  // dropped files go to the selected channel if we are in it, else to the only one we are in
+  bool drop_channel(ecps_backend_t::Protocol_ChannelID_t& out) {
+    for (const auto& c : ecps_backend.channel_info) {
+      if (c.channel_id.i == selected_channel_id.i) {
+        out = c.channel_id;
+        return true;
+      }
+    }
+    if (ecps_backend.channel_info.size() == 1) {
+      out = ecps_backend.channel_info[0].channel_id;
+      return true;
+    }
+    return false;
+  }
+
+  std::vector<ecps_backend_t::session_info_t> drop_peers(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    std::vector<ecps_backend_t::session_info_t> peers;
+    auto it = ecps_backend.channel_sessions.find(channel_id.i);
+    if (it != ecps_backend.channel_sessions.end()) {
+      for (const auto& session : it->second) {
+        if (session.session_id.i != ecps_backend.session_id.i) {
+          peers.push_back(session);
+        }
+      }
+    }
+    return peers;
+  }
+
+  void send_dropped_files(ecps_backend_t::Protocol_ChannelID_t channel_id, ecps_backend_t::Protocol_SessionID_t peer) {
+    for (const auto& path : dropped_files) {
+      backend_queue([channel_id, peer, path]() -> fan::event::task_t {
+        return ecps_backend.send_file(channel_id, peer, path);
+      });
+    }
+    dropped_files.clear();
+  }
+
+  void render_file_drop() {
+    static bool popup_shown = false;
+
+    if (drop_popup_requested) {
+      drop_popup_requested = false;
+      ecps_backend_t::Protocol_ChannelID_t channel_id;
+      bool has_channel = drop_channel(channel_id);
+      auto peers = has_channel ? drop_peers(channel_id) : std::vector<ecps_backend_t::session_info_t>{};
+      if (peers.size() == 1) {
+        send_dropped_files(channel_id, peers[0].session_id);
+      }
+      else {
+        if (has_channel) {
+          // the user list may not be loaded yet, the popup picks it up when it arrives
+          backend_queue([channel_id]() -> fan::event::task_t {
+            return ecps_backend.request_channel_session_list(channel_id);
+          });
+        }
+        gui::set_next_window_pos(engine.window.get_size() / 2 - popup_size / 2);
+        gui::open_popup("Send dropped files");
+        popup_shown = true;
+      }
+    }
+    if (!popup_shown) {
+      return;
+    }
+    if (!gui::begin_popup_modal("Send dropped files")) {
+      popup_shown = false;
+      dropped_files.clear();
+      return;
+    }
+    popup_size = gui::get_window_size();
+
+    std::string what = ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(dropped_files.empty() ? std::string() : dropped_files[0]).filename());
+    if (dropped_files.size() > 1) {
+      what += " and " + std::to_string(dropped_files.size() - 1) + " more";
+    }
+    gui::text(what);
+    gui::spacing();
+
+    ecps_backend_t::Protocol_ChannelID_t channel_id;
+    auto peers = drop_channel(channel_id) ? drop_peers(channel_id) : std::vector<ecps_backend_t::session_info_t>{};
+    if (peers.empty()) {
+      gui::text("There is nobody to send to. Join a channel with another user first.");
+    }
+    else {
+      gui::text("Send to:");
+      for (const auto& peer : peers) {
+        gui::push_id((int)peer.session_id.i);
+        if (gui::button(peer.username)) {
+          send_dropped_files(channel_id, peer.session_id);
+          gui::close_current_popup();
+          popup_shown = false;
+        }
+        gui::pop_id();
+      }
+    }
+    gui::spacing();
+    if (popup_shown && gui::button("Cancel")) {
+      dropped_files.clear();
+      gui::close_current_popup();
+      popup_shown = false;
+    }
+    gui::end_popup();
+  }
+
   static std::string file_progress_text(const ecps_backend_t::file_transfer_view_t& v) {
     char percent[16];
     std::snprintf(percent, sizeof(percent), "%.1f%%", v.size ? (double)v.transferred * 100.0 / (double)v.size : 0.0);
@@ -2039,6 +2154,11 @@ struct ecps_gui_t {
     if (gui::checkbox("Play audio", &stream_settings.play_audio)) {
       save_audio_settings();
     }
+    // only does something while the host has input control on for this stream
+    gui::checkbox("Send MIDI to host", &send_midi);
+    if (send_midi && can_control_host()) {
+      gui::text(midi_in.is_open() ? "MIDI input connected" : "No MIDI input device found");
+    }
     if (stream_settings.play_audio) {
       gui::text("Volume");
       gui::push_item_width(-1);
@@ -2093,6 +2213,35 @@ struct ecps_gui_t {
     rest.state = state;
     rest.pos = position;
     queue_host_input(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMouseButton, rest);
+  }
+
+  void send_host_midi(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+    ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi_t rest;
+    rest.Status = status;
+    rest.Data1 = data1;
+    rest.Data2 = data2;
+    queue_host_input(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, rest);
+  }
+
+  // opens the keyboards while we may control the host, and when that ends nothing may keep ringing there
+  void update_midi_forward() {
+    bool want = send_midi && can_control_host();
+    if (want && !midi_in.is_open()) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= midi_retry) {
+        midi_retry = now + std::chrono::seconds(2);
+        midi_in.open([this](std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+          send_host_midi(status, data1, data2);
+        });
+      }
+    }
+    else if (!want && midi_in.is_open()) {
+      midi_in.close();
+      for (std::uint8_t channel = 0; channel < 16; ++channel) {
+        send_host_midi(0xB0 | channel, 64, 0);
+        send_host_midi(0xB0 | channel, 123, 0);
+      }
+    }
   }
 
   void send_host_key(int key, bool state) {
@@ -2213,6 +2362,7 @@ struct ecps_gui_t {
       send_input_control_flag();
     }
     forward_input();
+    update_midi_forward();
   }
 
   void render() {
@@ -2225,6 +2375,7 @@ struct ecps_gui_t {
 
     drop_down_server.render();
     render_file_offers();
+    render_file_drop();
 
     gui::set_next_window_pos(0);
     gui::set_next_window_size(gui::get_io().DisplaySize);
@@ -2270,6 +2421,9 @@ struct ecps_gui_t {
   bool show_own_stream = false;
   ecps_backend_t::Protocol_ChannelID_t selected_channel_id{ (uint16_t)-1 };
   ecps_backend_t::Protocol_ChannelID_t input_control_channel{ (uint16_t)-1 };
+  bool send_midi = false;
+  fan::audio::midi_input_t midi_in;
+  std::chrono::steady_clock::time_point midi_retry;
 
 #undef This
 #undef engine

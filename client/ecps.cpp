@@ -12,6 +12,7 @@
 #include <array>
 #include <functional>
 #include <mutex>
+#include <thread>
 #include <vector>
 #include <condition_variable>
 #include <atomic>
@@ -52,6 +53,9 @@ import fan.graphics.video.screen;
 using namespace fan::graphics;
 
 #include <fan/graphics/types.h>
+#include "midi/midi_synth.h"
+#include "midi/midi_input.h"
+#include "midi/midi_sac_bank.h"
 
 #if defined(_WIN32)
 #include <timeapi.h>
@@ -312,6 +316,90 @@ struct audio_share_t {
   bool exclude_failed = false;
   std::chrono::steady_clock::time_point last_discord_check;
 }audio_share;
+
+// MIDI a viewer plays is synthesized here, so the host needs no MIDI device or loopback driver.
+// The pump thread only runs while there is sound, a note-off that never arrives dies out by itself.
+struct midi_host_t {
+  ~midi_host_t() {
+    stop();
+  }
+
+  void play(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+    if (!start()) {
+      return;
+    }
+    synth.midi(status, data1, data2);
+  }
+
+  void silence() {
+    if (running.load()) {
+      synth.all_notes_off();
+    }
+  }
+
+  bool start() {
+    if (running.load()) {
+      return true;
+    }
+    if (failed) {
+      return false;
+    }
+    player.target_frames = block_frames * 2;
+    player.max_frames = block_frames * 12;
+    if (!player.start()) {
+      failed = true;
+      fan::print("midi: no audio output to play the viewer's notes on");
+      return false;
+    }
+    running = true;
+    // the steinway recordings take a few seconds to decode, until then notes use the plain tone
+    loader = std::thread([this] {
+      auto directory = fan::audio::midi_sac_bank_t::find_directory();
+      if (directory.empty()) {
+        fan::print("midi: audio/steinway keys not found (set ECPS_PIANO_DIR), using the built-in tone");
+        return;
+      }
+      std::size_t loaded = fan::audio::midi_sac_bank_t::load_all(directory, synth);
+      fan::print("midi: loaded", loaded, "steinway keys");
+    });
+    pump = std::thread([this] {
+      std::array<f32_t, block_frames * fan::audio::stream_channels> block;
+      while (running.load()) {
+        bool sounding = synth.active_voices() != 0;
+        if (sounding || player.get_buffered_frames() != 0) {
+          while (running.load() && player.get_buffered_frames() < block_frames * 3) {
+            block.fill(0.f);
+            synth.render(block.data(), block_frames);
+            player.push(block.data(), block_frames);
+          }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+      }
+    });
+    return true;
+  }
+
+  void stop() {
+    if (!running.exchange(false)) {
+      return;
+    }
+    if (pump.joinable()) {
+      pump.join();
+    }
+    if (loader.joinable()) {
+      loader.join();
+    }
+    player.stop();
+  }
+
+  static constexpr std::uint32_t block_frames = 240; // 5 ms
+  fan::audio::midi_synth_t synth;
+  fan::audio::live_player_t player;
+  std::thread pump;
+  std::thread loader;
+  std::atomic<bool> running = false;
+  bool failed = false;
+}midi_host;
 
 struct dynamic_config_t {
   static uint32_t get_target_framerate();
@@ -652,6 +740,27 @@ ecps_backend_t::ecps_backend_t() {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t>();
     if (msg.status == 0 && host_allows_input(backend, msg->ChannelID) && !host_input.key(msg->Scancode, msg->State)) {
       ecps_print_throttled("input control: can't press scancode {:#x}", msg->Scancode);
+    }
+    co_return;
+  };
+
+  __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMidi) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMidi_t>();
+    if (msg.status != 0) {
+      co_return;
+    }
+    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+    bool allowed = rt && rt->ecps_gui.stream_settings.input_control != 0 &&
+      std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
+        return channel.is_streaming && channel.channel_id.i == msg->ChannelID.i;
+      });
+    if (!allowed) {
+      midi_host.silence();
+      co_return;
+    }
+    // the server checks too, but this is the host's own machine
+    if (msg->Status >= 0x80 && msg->Status < 0xF0 && !(msg->Data1 & 0x80) && !(msg->Data2 & 0x80)) {
+      midi_host.play(msg->Status, msg->Data1, msg->Data2);
     }
     co_return;
   };

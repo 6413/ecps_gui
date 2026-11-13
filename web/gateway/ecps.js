@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import { EventEmitter } from 'node:events'
 
-const C2S = {
+export const C2S = {
   KeepAlive: 0,
   KeyExchange: 1,
   Request_Login: 2,
@@ -15,9 +15,14 @@ const C2S = {
   JoinChannel: 4,
   RequestChannelList: 6,
   RequestChannelSessionList: 7,
-  ViewToShare: 14
+  ViewToShare: 14,
+  FileOffer: 16,
+  FileResponse: 17,
+  FileChunk: 18,
+  FileAck: 19,
+  FileCancel: 20
 }
-const S2C = {
+export const S2C = {
   KeepAlive: 0,
   KeyExchange: 1,
   Response_Login: 2,
@@ -28,10 +33,16 @@ const S2C = {
   KickedFromChannel: 7,
   ChannelList: 8,
   ChannelSessionList: 9,
-  ViewToShare: 16
+  ViewToShare: 16,
+  FileOffer: 18,
+  FileResponse: 19,
+  FileChunk: 20,
+  FileAck: 21,
+  FileCancel: 22
 }
 // body size of every S2C command, in protocol order
-const S2C_SIZE = [0, 80, 8, 7, 1, 7, 1, 3, 2, 4, 3, 10, 10, 10, 12, 5, 4, 4]
+// (the file messages are Offer 178, Response 43, Chunk 4132, Ack 18, Cancel 10)
+const S2C_SIZE = [0, 80, 8, 7, 1, 7, 1, 3, 2, 4, 3, 10, 10, 10, 12, 5, 4, 4, 178, 43, 4132, 18, 10]
 
 const UDP_C2S = { KeepAlive: 0, HostStreamData: 1, HostAudioData: 3 }
 const UDP_S2C = { KeepAlive: 0, ViewStreamData: 1, ViewAudioData: 3 }
@@ -86,8 +97,13 @@ export function open(key, counter, aad, sealed) {
   }
 }
 
-function x25519PublicKey(raw) {
+export function x25519PublicKey(raw) {
   return crypto.createPublicKey({ key: { kty: 'OKP', crv: 'X25519', x: raw.toString('base64url') }, format: 'jwk' })
+}
+
+export function newX25519() {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('x25519')
+  return { privateKey, publicRaw: Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url') }
 }
 
 export function deriveKeys(privateKey, clientPublic, serverEphemeral, serverStatic) {
@@ -438,6 +454,15 @@ export class EcpsClient extends EventEmitter {
         if (body.readUInt16LE(2) & RESET_IDR) {
           this.emit('keyframeWanted')
         }
+        break
+      }
+      case S2C.FileOffer:
+      case S2C.FileResponse:
+      case S2C.FileChunk:
+      case S2C.FileAck:
+      case S2C.FileCancel: {
+        // the body is a view into the receive buffer, copy it for whoever handles it later
+        this.emit('file', command, Buffer.from(body))
         break
       }
     }
