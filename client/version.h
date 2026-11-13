@@ -5,3 +5,4 @@
 inline constexpr const char* ecps_version = "0.96";
 
 // update test: this comment only exists to make a new commit, so "Check for updates" has something to find
+// update test 2: another comment-only change, to get a newer commit than the one the installed build was made from
