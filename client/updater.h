@@ -87,13 +87,20 @@ struct updater_t {
       // update, no version bump needed. Anything else compares the number in version.h
       std::string built_ecps = build_info("ecps");
       std::string built_fan = build_info("fan");
-      if (can_install && is_commit(built_ecps)) {
+      // a Nix package build has the file. One that doesn't know its commit (built from a local tree) can't say
+      // whether it is behind, so it is offered the newest build: that one, made from GitHub, records its commit
+      if (can_install && !build_info_path().empty()) {
         std::string latest_ecps = latest_commit("6413/ecps_gui");
         std::string latest_fan = latest_commit("6413/fan");
         std::lock_guard<std::mutex> lock(mutex);
         if (latest_ecps.empty()) {
           error_text = "could not read the latest commit, is curl installed and the network up?";
           state = state_e::failed;
+          return;
+        }
+        if (!is_commit(built_ecps)) {
+          latest_version = "ecps " + latest_ecps.substr(0, 7) + " (this build doesn't know its own commit)";
+          state = state_e::available;
           return;
         }
         bool ecps_changed = latest_ecps != built_ecps;
