@@ -21,6 +21,11 @@
 #include <deque>
 #include <memory>
 #include <cmath>
+#include <fstream>
+#include <filesystem>
+#include <random>
+#include <cstdio>
+#include <cctype>
 
 #include <WITCH/WITCH.h>
 
@@ -647,6 +652,45 @@ ecps_backend_t::ecps_backend_t() {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t>();
     if (msg.status == 0 && host_allows_input(backend, msg->ChannelID) && !host_input.key(msg->Scancode, msg->State)) {
       ecps_print_throttled("input control: can't press scancode {:#x}", msg->Scancode);
+    }
+    co_return;
+  };
+
+  // file transfer
+  __dme_get(Protocol_S2C, Channel_File_Offer) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Offer_t>();
+    if (msg.status == 0) {
+      co_await backend.on_file_offer(msg.data);
+    }
+  };
+
+  __dme_get(Protocol_S2C, Channel_File_Response) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Response_t>();
+    if (msg.status == 0) {
+      backend.on_file_response(msg.data);
+    }
+    co_return;
+  };
+
+  __dme_get(Protocol_S2C, Channel_File_Chunk) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Chunk_t>();
+    if (msg.status == 0) {
+      co_await backend.on_file_chunk(msg.data);
+    }
+  };
+
+  __dme_get(Protocol_S2C, Channel_File_Ack) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Ack_t>();
+    if (msg.status == 0) {
+      backend.on_file_ack(msg.data);
+    }
+    co_return;
+  };
+
+  __dme_get(Protocol_S2C, Channel_File_Cancel) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Cancel_t>();
+    if (msg.status == 0) {
+      backend.on_file_cancel(msg.data);
     }
     co_return;
   };

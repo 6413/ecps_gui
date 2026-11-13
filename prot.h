@@ -112,6 +112,10 @@ struct ProtocolChannel {
 
 struct Protocol {
   inline static constexpr const char* CryptoContext = "ecps udp v1";
+  // file transfer: end-to-end between two clients, the server only relays the sealed chunks
+  inline static constexpr const char* FileCryptoContext = "ecps file v1";
+  inline static constexpr uint32_t FileChunkSize = 4096;
+  inline static constexpr uint32_t FileNameSize = 128;
   inline static constexpr uint32_t ChannelType_Amount = 1;
   enum {
     ChannelType_ScreenShare_e
@@ -258,6 +262,44 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     Protocol_ChannelID_t ChannelID;
     uint16_t Flag;
   );
+
+  // file transfer, Peer is the receiver here and the sender in the S2C copy of each message.
+  // C2S and S2C layouts must stay identical, the server relays by copying the struct
+  __dme(Channel_File_Offer,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint64_t FileSize;
+    uint8_t EphemeralPublic[32];
+    char Name[128];
+  );
+  __dme(Channel_File_Response,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint8_t Accepted;
+    uint8_t EphemeralPublic[32];
+  );
+  __dme(Channel_File_Chunk,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint64_t Index;
+    uint16_t Size;
+    uint8_t Data[4096];
+    uint8_t Tag[16];
+  );
+  __dme(Channel_File_Ack,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint64_t Received;
+  );
+  __dme(Channel_File_Cancel,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+  );
 }Protocol_C2S;
 
 #ifndef __ecps_client
@@ -380,6 +422,42 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
   __dme(Channel_ScreenShare_ShareToView,
     Protocol_ChannelID_t ChannelID;
     uint16_t Flag;
+  );
+
+  __dme(Channel_File_Offer,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint64_t FileSize;
+    uint8_t EphemeralPublic[32];
+    char Name[128];
+  );
+  __dme(Channel_File_Response,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint8_t Accepted;
+    uint8_t EphemeralPublic[32];
+  );
+  __dme(Channel_File_Chunk,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint64_t Index;
+    uint16_t Size;
+    uint8_t Data[4096];
+    uint8_t Tag[16];
+  );
+  __dme(Channel_File_Ack,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
+    uint64_t Received;
+  );
+  __dme(Channel_File_Cancel,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t Peer;
+    uint32_t TransferID;
   );
 }Protocol_S2C;
 

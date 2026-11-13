@@ -78,6 +78,7 @@ UDP_send(
 #include "TCPPeer.h"
 
 #include "ScreenShare.h"
+#include "FileTransfer.h"
 
 bool TCP_Seal(NET_TCP_peer_t *peer, const void *Data, uintptr_t Size, std::vector<char> &Out){
   auto PeerData = (TCPMain_PeerData_t *)NET_TCP_GetPeerData(peer, g_pile->extid);

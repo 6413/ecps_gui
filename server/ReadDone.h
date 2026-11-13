@@ -428,3 +428,55 @@ case Protocol_C2S_t::Channel_ScreenShare_ShareToView:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_File_Offer:{
+  auto Request = (Protocol_C2S_t::Channel_File_Offer_t *)RestPacket;
+
+  /* the receiver prints this name, never trust it to be terminated */
+  Request->Name[sizeof(Request->Name) - 1] = 0;
+  FileTransfer_Relay<Protocol_S2C_t::Channel_File_Offer_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_File_Offer,
+    Request);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_File_Response:{
+  auto Request = (Protocol_C2S_t::Channel_File_Response_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_File_Response_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_File_Response,
+    Request);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_File_Chunk:{
+  auto Request = (Protocol_C2S_t::Channel_File_Chunk_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_File_Chunk_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_File_Chunk,
+    Request);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_File_Ack:{
+  auto Request = (Protocol_C2S_t::Channel_File_Ack_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_File_Ack_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_File_Ack,
+    Request);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_File_Cancel:{
+  auto Request = (Protocol_C2S_t::Channel_File_Cancel_t *)RestPacket;
+
+  FileTransfer_Relay<Protocol_S2C_t::Channel_File_Cancel_t>(
+    SessionID,
+    Protocol_S2C_t::Channel_File_Cancel,
+    Request);
+
+  goto StateDone_gt;
+}

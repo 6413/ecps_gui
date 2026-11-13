@@ -684,6 +684,7 @@ struct ecps_backend_t {
     }
     session_id = {};
     udp_crypto = {};
+    fail_active_file_transfers("connection to the server was lost");
     fan::print("disconnected from server:", reason);
   }
   fan::event::task_t supervise() {
@@ -1095,5 +1096,7 @@ struct ecps_backend_t {
   std::vector<channel_list_info_t> available_channels;
   std::unordered_map<Protocol_ChannelID_t::Type, std::vector<session_info_t>> channel_sessions;
   bool did_just_join = false; // need manual reset from gui
+
+#include "file_transfer.h"
 
 }ecps_backend;
