@@ -59,36 +59,35 @@ struct ecps_gui_t {
       ecps_backend.set_channel_streaming(own, true);
     }
 
+    static const char* share_button_text(bool compact) {
+      bool sharing = ecps_backend.is_streaming_to_any_channel();
+      return sharing ? (compact ? "Stop" : "Stop sharing") : (compact ? "Share" : "Share screen");
+    }
+
     // the channel argument is only kept for the callers, the button acts on your own channel
     static bool render_stream_toggle_button(ecps_backend_t::Protocol_ChannelID_t,
       fan::vec2 button_size = fan::vec2(200.0f, 0), bool compact = false) {
       bool sharing = ecps_backend.is_streaming_to_any_channel();
       auto target = share_target();
       bool can_share = sharing || target.i != (uint16_t)-1;
-      const char* text = sharing ? (compact ? "Stop" : "Stop sharing") : (compact ? "Share" : "Share screen");
-      fan::vec4 color = sharing ? fan::vec4(0.8f, 0.2f, 0.2f, 0.9f) : fan::vec4(0.2f, 0.8f, 0.2f, 0.9f);
+      const char* text = share_button_text(compact);
 
-      gui::push_style_color(gui::col_button, color);
-      if (!can_share) {
-        gui::begin_disabled();
-      }
-      bool clicked = gui::button(text, button_size);
-      if (!can_share) {
-        gui::end_disabled();
-        if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
-          gui::set_tooltip("Join or create a channel first");
+      bool clicked = pill_button("##share_toggle", sharing ? icon_e::stop : icon_e::monitor, text,
+        sharing ? 0xff0d0d99u : 0xff1a720du, sharing ? 0xff1212c9u : 0xff269c12u, can_share, button_size.x, button_size.y);
+      if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
+        if (!can_share) {
+          gui::set_tooltip("Join a channel first");
         }
-      }
-      if (can_share && !sharing && gui::is_item_hovered()) {
-        std::string where = "your channel";
-        for (const auto& channel : ecps_backend.available_channels) {
-          if (channel.channel_id.i == target.i && !ecps_backend.is_hosting_channel(target)) {
-            where = channel.name + "'s channel";
+        else if (!sharing) {
+          std::string where = "your channel";
+          for (const auto& channel : ecps_backend.available_channels) {
+            if (channel.channel_id.i == target.i && !ecps_backend.is_hosting_channel(target)) {
+              where = channel.name;
+            }
           }
+          gui::set_tooltip("Share into " + where);
         }
-        gui::set_tooltip("Shares your screen into " + where);
       }
-      gui::pop_style_color();
 
       if (clicked && can_share) {
         set_sharing(!sharing);
@@ -100,13 +99,7 @@ struct ecps_gui_t {
       fan::vec2 available_area,
       fan::vec2 window_content_size,
       f32_t bottom_margin = 50.0f) {
-      const char* button_text = ecps_backend.is_streaming_to_any_channel() ? "Stop sharing" : "Share screen";
-
-      fan::vec2 text_size = gui::calc_text_size(button_text);
-      fan::vec2 button_size = fan::vec2(
-        text_size.x + gui::get_style().FramePadding.x * 2,
-        text_size.y + gui::get_style().FramePadding.y * 2
-      );
+      fan::vec2 button_size(pill_button_width(share_button_text(false)), gui::get_frame_height());
 
       fan::vec2 button_pos = fan::vec2(
         (available_area.x - button_size.x) / 2,
@@ -117,6 +110,199 @@ struct ecps_gui_t {
       return render_stream_toggle_button(channel_id, button_size);
     }
   };
+
+  // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
+  // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop };
+
+  // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
+  static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
+    f32_t h = size * 0.5f;
+    f32_t t = std::max(1.5f, size * 0.09f) + grow * 2.f;
+    auto P = [&](f32_t x, f32_t y) { return c + fan::vec2(x * h, y * h); };
+    auto line = [&](fan::vec2 a, fan::vec2 b, f32_t thickness = -1.f) { list->AddLine(a, b, color, thickness < 0 ? t : thickness + grow * 2.f); };
+    auto dot = [&](fan::vec2 at, f32_t radius) { list->AddCircleFilled(at, radius + grow, color, 16); };
+    auto arrow_head = [&](fan::vec2 tip, fan::vec2 dir) {
+      fan::vec2 side(-dir.y, dir.x);
+      line(tip, tip - dir * (h * 0.42f) + side * (h * 0.38f));
+      line(tip, tip - dir * (h * 0.42f) - side * (h * 0.38f));
+    };
+    switch (icon) {
+      case icon_e::gear: {
+        list->AddCircle(c, h * 0.5f, color, 24, h * 0.3f + grow * 2.f);
+        for (int i = 0; i < 8; ++i) {
+          f32_t a = i * 3.14159265f / 4.f;
+          fan::vec2 d(std::cos(a), std::sin(a));
+          line(c + d * (h * 0.55f), c + d * (h * 0.92f), h * 0.26f);
+        }
+        break;
+      }
+      case icon_e::fullscreen:
+      case icon_e::exit_fullscreen: {
+        bool out = icon == icon_e::fullscreen;
+        for (int sx = -1; sx <= 1; sx += 2) {
+          for (int sy = -1; sy <= 1; sy += 2) {
+            fan::vec2 corner = out ? P(sx * 0.82f, sy * 0.82f) : P(sx * 0.3f, sy * 0.3f);
+            f32_t len = h * 0.45f * (out ? -1.f : 1.f);
+            line(corner, corner + fan::vec2(sx * len, 0));
+            line(corner, corner + fan::vec2(0, sy * len));
+          }
+        }
+        break;
+      }
+      case icon_e::plus:
+        line(P(-0.75f, 0), P(0.75f, 0));
+        line(P(0, -0.75f), P(0, 0.75f));
+        break;
+      case icon_e::server:
+        list->AddRect(P(-0.82f, -0.8f), P(0.82f, -0.1f), color, h * 0.15f, 0, t);
+        list->AddRect(P(-0.82f, 0.1f), P(0.82f, 0.8f), color, h * 0.15f, 0, t);
+        dot(P(0.45f, -0.45f), h * 0.11f);
+        dot(P(0.45f, 0.45f), h * 0.11f);
+        break;
+      case icon_e::leave:
+        line(P(-0.05f, -0.82f), P(-0.8f, -0.82f));
+        line(P(-0.8f, -0.82f), P(-0.8f, 0.82f));
+        line(P(-0.8f, 0.82f), P(-0.05f, 0.82f));
+        line(P(-0.3f, 0), P(0.88f, 0));
+        arrow_head(P(0.88f, 0), fan::vec2(1, 0));
+        break;
+      case icon_e::join:
+        line(P(0.05f, -0.82f), P(0.8f, -0.82f));
+        line(P(0.8f, -0.82f), P(0.8f, 0.82f));
+        line(P(0.8f, 0.82f), P(0.05f, 0.82f));
+        line(P(-0.88f, 0), P(0.35f, 0));
+        arrow_head(P(0.35f, 0), fan::vec2(1, 0));
+        break;
+      case icon_e::refresh: {
+        f32_t r = h * 0.68f;
+        f32_t a0 = 3.14159265f * 0.15f, a1 = 3.14159265f * 1.72f;
+        list->PathArcTo(c, r, a0, a1, 24);
+        list->PathStroke(color, 0, t);
+        fan::vec2 e = c + fan::vec2(std::cos(a1), std::sin(a1)) * r;
+        fan::vec2 tangent(-std::sin(a1), std::cos(a1));
+        fan::vec2 normal(std::cos(a1), std::sin(a1));
+        list->AddTriangleFilled(e + tangent * (h * 0.38f), e + normal * (h * 0.34f + grow), e - normal * (h * 0.34f + grow), color);
+        break;
+      }
+      case icon_e::send_file:
+        list->PathLineTo(P(-0.62f, -0.88f));
+        list->PathLineTo(P(0.22f, -0.88f));
+        list->PathLineTo(P(0.62f, -0.48f));
+        list->PathLineTo(P(0.62f, 0.88f));
+        list->PathLineTo(P(-0.62f, 0.88f));
+        list->PathStroke(color, 1, t);
+        line(P(0, 0.52f), P(0, -0.28f));
+        arrow_head(P(0, -0.28f), fan::vec2(0, -1));
+        break;
+      case icon_e::eye:
+        list->AddBezierQuadratic(P(-0.95f, 0), P(0, -0.95f), P(0.95f, 0), color, t, 16);
+        list->AddBezierQuadratic(P(-0.95f, 0), P(0, 0.95f), P(0.95f, 0), color, t, 16);
+        dot(c, h * 0.27f);
+        break;
+      case icon_e::monitor:
+        list->AddRect(P(-0.9f, -0.78f), P(0.9f, 0.42f), color, h * 0.12f, 0, t);
+        line(P(0, 0.42f), P(0, 0.72f));
+        line(P(-0.42f, 0.78f), P(0.42f, 0.78f));
+        line(P(0, 0.18f), P(0, -0.48f));
+        arrow_head(P(0, -0.48f), fan::vec2(0, -1));
+        break;
+      case icon_e::stop:
+        list->AddRectFilled(P(-0.5f, -0.5f), P(0.5f, 0.5f), color, h * 0.12f);
+        break;
+    }
+  }
+
+  // with a dark edge, for icons over the picture, which can be anything from black to white
+  static void draw_icon_outlined(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color) {
+    draw_icon(list, icon, c, size, 0xc8000000u, 1.6f);
+    draw_icon(list, icon, c, size, color);
+  }
+
+  enum class icon_style_e { plain, danger, accent, overlay };
+
+  // a square button with an icon and a tooltip
+  static bool icon_button(const char* id, icon_e icon, std::string_view tooltip, f32_t size = 0.f, icon_style_e style = icon_style_e::plain) {
+    if (size <= 0.f) {
+      size = gui::get_frame_height();
+    }
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    bool clicked = gui::invisible_button(id, fan::vec2(size, size));
+    bool hovered = gui::is_item_hovered();
+    bool held = gui::is_item_active();
+    auto* list = gui::get_window_draw_list();
+    fan::vec2 c = at + fan::vec2(size, size) * 0.5f;
+    std::uint32_t icon_color = hovered ? 0xffffffffu : 0xffff9e6au;
+    f32_t rounding = size * 0.28f;
+    switch (style) {
+      case icon_style_e::plain:
+        list->AddRectFilled(at, at + fan::vec2(size, size), held ? 0xff61210fu : hovered ? 0xff3a170cu : 0xff0f0907u, rounding);
+        break;
+      case icon_style_e::danger:
+        list->AddRectFilled(at, at + fan::vec2(size, size), held ? 0xff0c0c70u : hovered ? 0xff0a0a52u : 0xff05051au, rounding);
+        icon_color = hovered ? 0xffffffffu : 0xff6a6affu;
+        break;
+      case icon_style_e::accent:
+        list->AddRectFilled(at, at + fan::vec2(size, size), held ? 0xff61210fu : hovered ? 0xff4a1a0du : 0xff2a1009u, rounding);
+        icon_color = hovered ? 0xffffffffu : 0xffff7a33u;
+        break;
+      case icon_style_e::overlay:
+        list->AddCircleFilled(c, size * 0.5f, hovered ? 0xb4000000u : 0x64000000u, 24);
+        icon_color = hovered ? 0xffffffffu : 0xffe0e0e0u;
+        break;
+    }
+    if (style == icon_style_e::overlay) {
+      draw_icon_outlined(list, icon, c, size * 0.56f, icon_color);
+    }
+    else {
+      draw_icon(list, icon, c, size * 0.56f, icon_color);
+    }
+    if (hovered && !tooltip.empty()) {
+      gui::set_tooltip(tooltip);
+    }
+    return clicked;
+  }
+
+  // a rounded button with a small icon in front of its word, coloured by what it does
+  static f32_t pill_button_width(std::string_view text) {
+    f32_t height = gui::get_frame_height();
+    return height * 0.62f + 8.f + gui::calc_text_size(text).x + 30.f;
+  }
+
+  static bool pill_button(const char* id, icon_e icon, std::string_view text, std::uint32_t color, std::uint32_t hover_color,
+    bool enabled = true, f32_t width = 0.f, f32_t height = 0.f) {
+    if (height <= 0.f) {
+      height = gui::get_frame_height();
+    }
+    if (width <= 0.f) {
+      width = pill_button_width(text);
+    }
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    bool clicked = gui::invisible_button(id, fan::vec2(width, height));
+    bool hovered = gui::is_item_hovered(gui::hovered_flags_allow_when_disabled);
+    auto* list = gui::get_window_draw_list();
+    std::uint32_t fill = !enabled ? 0xff141414u : hovered ? hover_color : color;
+    list->AddRectFilled(at, at + fan::vec2(width, height), fill, height * 0.5f);
+    f32_t icon_size = height * 0.62f;
+    f32_t content = icon_size + 8.f + gui::calc_text_size(text).x;
+    fan::vec2 start = at + fan::vec2((width - content) * 0.5f, 0);
+    std::uint32_t ink = enabled ? 0xffffffffu : 0xff606060u;
+    draw_icon(list, icon, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size * 0.8f, ink);
+    std::string label(text);
+    list->AddText(start + fan::vec2(icon_size + 8.f, (height - gui::get_font_size()) * 0.5f), ink, label.c_str());
+    return clicked && enabled;
+  }
+
+  // a small rounded label, like HOST or LIVE, on the current line
+  static void badge(std::string_view text, std::uint32_t fill, std::uint32_t ink) {
+    std::string label(text);
+    fan::vec2 size = gui::calc_text_size(label);
+    fan::vec2 at = gui::get_cursor_screen_pos() + fan::vec2(0, -1.f);
+    fan::vec2 box = size + fan::vec2(14.f, 2.f);
+    gui::get_window_draw_list()->AddRectFilled(at, at + box, fill, box.y * 0.5f);
+    gui::get_window_draw_list()->AddText(at + fan::vec2(7.f, 1.f), ink, label.c_str());
+    gui::dummy(box - fan::vec2(0, 2.f));
+  }
 
   struct icon_button_helper_t {
     static bool render_transparent_icon_button(const char* id, fan::graphics::image_t icon,
@@ -233,6 +419,14 @@ struct ecps_gui_t {
   ecps_gui_t() {
 
     engine.set_clear_color(gui::get_color(gui::col_window_bg));
+    // lines are smoothed by their own geometry: the textured way needs the font atlas sampled with filtering,
+    // and without it every drawn line and icon came out jagged
+    gui::get_style().AntiAliasedLinesUseTex = false;
+    gui::get_style().AntiAliasedLines = true;
+    gui::get_style().AntiAliasedFill = true;
+    // more segments in circles and rounded corners, the default leaves their edges a little stepped
+    gui::get_style().CircleTessellationMaxError = 0.12f;
+    gui::get_style().CurveTessellationTol = 0.5f;
 
     // dropping files on the window sends them, the next frame asks to whom if it isn't obvious
     file_drop_handle = engine.window.on_drop([this](const fan::window_t::drop_data_t& d) {
@@ -550,6 +744,7 @@ struct ecps_gui_t {
       gui::set_next_window_pos(window_pos);
       gui::set_next_window_size(window_size);
       gui::set_next_window_bg_alpha(0.99);
+      This->push_theme();
       if (gui::begin("Channel Browser", &p_open,
         gui::window_flags_no_docking |
         gui::window_flags_no_saved_settings |
@@ -564,7 +759,12 @@ struct ecps_gui_t {
         // near the top edge (drawn over the stream by render_autohide_bar)
         // a tab change that was asked for but not done yet (main_tab is 0 or 2) keeps the tabs on screen until it is
         // done: the tab bar needs a frame or two to switch, and without it the Stream View would hide the tabs again
-        if (This->ui_autohide && current_tab == 1 && (main_tab == -1 || main_tab == 1)) {
+        // a tab asked for elsewhere (main_tab) takes effect here
+        if (main_tab != -1) {
+          current_tab = main_tab;
+          main_tab = -1;
+        }
+        if (This->ui_autohide && current_tab == 1) {
           This->report_display_sizes();
           updater.tick();
           updater.tick_restart();
@@ -594,38 +794,20 @@ struct ecps_gui_t {
           first_open = true;
         }
 
-        if (gui::begin_tab_bar("MainTabs")) {
-
-          if (gui::begin_tab_item("Channels", nullptr, main_tab == 0 ? gui::tab_item_flags_set_selected : 0)) {
-            if (main_tab == 0) main_tab = -1;
-
-            current_tab = 0;
-
-            render_channels_content();
-            gui::end_tab_item();
-          }
-
-          if (gui::begin_tab_item("Stream View", nullptr, main_tab == 1 ? gui::tab_item_flags_set_selected : 0)) {
-            if (main_tab == 1) main_tab = -1;
-
-            current_tab = 1;
-
-            render_stream_view_content();
-            gui::end_tab_item();
-          }
-
-          if (gui::begin_tab_item("Debug", nullptr, main_tab == 2 ? gui::tab_item_flags_set_selected : 0)) {
-            if (main_tab == 2) main_tab = -1;
-            current_tab = 2;
-            This->render_debug_tab();
-            gui::end_tab_item();
-          }
-
-          gui::end_tab_bar();
+        // the bar above holds the tabs, the one chosen fills the rest
+        switch (current_tab) {
+          case 0: render_channels_content(); break;
+          case 1: render_stream_view_content(); break;
+          case 2: This->render_debug_tab(); break;
+          default: current_tab = 0; break;
         }
         }
       }
       gui::end();
+      if (This->ui_autohide && current_tab == 1) {
+        This->render_autohide_bar(window_pos, window_size);
+      }
+      This->pop_theme();
     }
 
     void render_channels_content() {
@@ -808,12 +990,17 @@ struct ecps_gui_t {
 
         if (has_selection && !is_host_of_selected) {
           if (already_in_selected) {
-            f32_t button_width = button_helper_t::calculate_text_button_width("Leave");
-            if (button_helper_t::render_colored_button("Leave", fan::vec4(0.8f, 0.3f, 0.3f, 1.0f) / 1.1, fan::vec2(button_width, 0))) {
+            if (icon_button("##leave_channel", icon_e::leave, "Leave channel", gui::get_frame_height() * 1.15f, icon_style_e::danger)) {
+              // a channel joined by itself would be joined again at once, leaving it stops that
+              for (const auto& channel : ecps_backend.available_channels) {
+                if (channel.channel_id.i == This->selected_channel_id.i && This->auto_join_host == channel.name) {
+                  This->set_auto_join(std::string());
+                }
+              }
               This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
                 try {
-                  fan::print("TODO channel_leave");
-                  co_return;
+                  co_await ecps_backend.channel_quit(channel_id);
+                  co_await ecps_backend.request_channel_list();
                 }
                 catch (...) {
                   fan::print("Failed to leave channel");
@@ -823,8 +1010,7 @@ struct ecps_gui_t {
             gui::same_line();
           }
           else {
-            f32_t button_width = button_helper_t::calculate_text_button_width("Join");
-            if (button_helper_t::render_colored_button("Join", fan::vec4(0.3f, 0.8f, 0.3f, 1.0f) / 1.1, fan::vec2(button_width, 0))) {
+            if (icon_button("##join_channel", icon_e::join, "Join channel", gui::get_frame_height() * 1.15f, icon_style_e::accent)) {
               This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
                 try {
                   co_await ecps_backend.channel_join(channel_id);
@@ -840,8 +1026,7 @@ struct ecps_gui_t {
           }
         }
 
-        f32_t add_button_width = button_helper_t::calculate_text_button_width("Add new");
-        if (button_helper_t::render_colored_button("Add new", fan::vec4(0.3f, 0.3f, 0.3f, 1.0f), fan::vec2(add_button_width, 0))) {
+        if (icon_button("##add_channel", icon_e::plus, "New channel", gui::get_frame_height() * 1.15f)) {
           This->backend_queue([this]() -> fan::event::task_t {
             try {
               auto channel_id = co_await ecps_backend.channel_create();
@@ -857,8 +1042,7 @@ struct ecps_gui_t {
         }
         gui::same_line();
         
-        f32_t connect_button_width = button_helper_t::calculate_text_button_width("Connect");
-        if (button_helper_t::render_colored_button("Connect", fan::vec4(0.3f, 0.3f, 0.3f, 1.0f), fan::vec2(connect_button_width, 0))) {
+        if (icon_button("##connect_server", icon_e::server, "Connect to a server", gui::get_frame_height() * 1.15f)) {
           This->drop_down_server.toggle_render_server_connect = true;
         }
 
@@ -910,7 +1094,7 @@ struct ecps_gui_t {
 
               gui::spacing();
               gui::spacing();
-              if (gui::button("Refresh Users")) {
+              if (icon_button("##refresh_users", icon_e::refresh, "Refresh")) {
                 This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
                   try {
                     co_await ecps_backend.request_channel_session_list(channel_id);
@@ -931,36 +1115,54 @@ struct ecps_gui_t {
               if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
+                  auto sharing_now = ecps_backend.streamers_of(This->selected_channel_id);
                   for (const auto& session : it->second) {
-                    std::string user_display = session.username;
-                    fan::color user_color = fan::colors::white;
-                    if (session.is_host) {
-                      user_display += " (Host)";
-                      user_color = fan::vec4(1.0f, 0.8f, 0.2f, 1.0f);
+                    bool is_sharing = std::find(sharing_now.begin(), sharing_now.end(), (std::uint32_t)session.session_id.i) != sharing_now.end();
+                    bool is_me = session.session_id.i == ecps_backend.session_id.i;
+                    bool has_buttons = already_in_selected && !is_me;
+                    gui::push_id((int)session.session_id.i);
+
+                    f32_t button_size = gui::get_frame_height();
+                    f32_t row_height = button_size + 8.f;
+                    f32_t row_width = gui::get_content_region_avail().x;
+                    fan::vec2 row_at = gui::get_cursor_screen_pos();
+                    if (gui::is_mouse_hovering_rect(row_at, row_at + fan::vec2(row_width, row_height))) {
+                      gui::get_window_draw_list()->AddRectFilled(row_at, row_at + fan::vec2(row_width, row_height), 0xff0b0706u, 6.f);
                     }
 
-                    auto sharing_now = ecps_backend.streamers_of(This->selected_channel_id);
-                    bool is_sharing = std::find(sharing_now.begin(), sharing_now.end(), (std::uint32_t)session.session_id.i) != sharing_now.end();
-                    if (is_sharing) {
-                      user_display += "  [sharing]";
+                    gui::set_cursor_screen_pos(row_at + fan::vec2(10.f, (row_height - gui::get_font_size()) * 0.5f));
+                    gui::text(fan::color(0.9f, 0.9f, 0.9f, 1.f), session.username);
+                    if (is_me) {
+                      gui::same_line(0, 6.f);
+                      gui::text(fan::color(0.4f, 0.4f, 0.45f, 1.f), "(you)");
                     }
-                    gui::text(user_color, user_display);
-                    gui::same_line();
-                    gui::text("ID: " + std::to_string(session.session_id.i));
-                    if (already_in_selected && session.session_id.i != ecps_backend.session_id.i) {
-                      gui::same_line();
-                      gui::push_id((int)session.session_id.i);
-                      if (gui::button("Send file")) {
+                    if (session.is_host) {
+                      gui::same_line(0, 10.f);
+                      badge("host", 0x50ff5919u, 0xffffa070u);
+                    }
+                    if (is_sharing) {
+                      gui::same_line(0, 8.f);
+                      badge("live", 0x600a0affu, 0xff6a6affu);
+                    }
+                    gui::same_line(0, 10.f);
+                    gui::text(fan::color(0.3f, 0.3f, 0.34f, 1.f), "#" + std::to_string(session.session_id.i));
+
+                    if (has_buttons) {
+                      f32_t x = row_at.x + row_width - 8.f - button_size;
+                      gui::set_cursor_screen_pos(fan::vec2(x, row_at.y + 4.f));
+                      if (icon_button("##send_file", icon_e::send_file, "Send a file")) {
                         This->send_file_dialog(This->selected_channel_id, session.session_id);
                       }
                       if (is_sharing) {
-                        gui::same_line();
-                        if (gui::button("Watch")) {
+                        gui::set_cursor_screen_pos(fan::vec2(x - button_size - 4.f, row_at.y + 4.f));
+                        if (icon_button("##watch", icon_e::eye, "Watch")) {
                           This->set_watch(This->selected_channel_id, (std::uint32_t)session.session_id.i);
                         }
                       }
-                      gui::pop_id();
                     }
+                    gui::set_cursor_screen_pos(row_at + fan::vec2(0, row_height + 2.f));
+                    gui::dummy(fan::vec2(0, 0));
+                    gui::pop_id();
                   }
                 }
                 else {
@@ -1040,6 +1242,7 @@ struct ecps_gui_t {
     void render_stream_settings_content_compact() {
       gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
       gui::push_style_var(gui::style_var_frame_rounding, 5.f);
+      push_settings_colors();
       bool streaming = ecps_backend.is_streaming_to_any_channel();
       bool viewing = ecps_backend.is_viewing_any_channel();
       auto* rt = get_render_thread();
@@ -1079,7 +1282,7 @@ struct ecps_gui_t {
 
         bool remote_control = This->stream_settings.input_control != 0;
         if (settings_switch("Remote control", &remote_control,
-          "Viewers can use your mouse and keyboard. Keep it off in games with anti-cheat")) {
+          "Viewers can use your mouse and keyboard")) {
           This->stream_settings.input_control = remote_control ? 1 : 0;
           This->send_input_control_flag();
         }
@@ -1099,11 +1302,11 @@ struct ecps_gui_t {
       // ---- how it shows
       settings_section("DISPLAY");
       settings_switch("Stats over the picture", &This->show_stream_stats,
-        "What this computer sends and receives, drawn over the stream. Drag it where you want it");
+        "Drag the box to move it");
 
       // ---- the details, folded away
-      gui::dummy(fan::vec2(0, 4.f));
-      if (gui::collapsing_header("Advanced")) {
+      gui::dummy(fan::vec2(0, 6.f));
+      if (settings_fold("Advanced", &advanced_open)) {
         if (streaming && rt) {
           render_encoder_row(rt);
           render_scaling_row(rt);
@@ -1127,11 +1330,14 @@ struct ecps_gui_t {
           text_wrapped_disabled("Encoder and decoder settings show while you share or watch.");
         }
       }
-      if (gui::collapsing_header("Network")) {
+      if (settings_fold("Network", &network_open)) {
         render_network_details();
       }
+      gui::pop_style_color(settings_color_count);
       gui::pop_style_var(2);
     }
+    bool advanced_open = false;
+    bool network_open = false;
 
     void render_encoder_row(render_thread_t* rt) {
       static auto encoder_names = [] {
@@ -1244,8 +1450,12 @@ struct ecps_gui_t {
 
     // a name at the left and a value at the right, for the network details
     static void stat_row(const std::string& label, const std::string& value, fan::color color = fan::color(0.9f, 0.9f, 0.9f, 1.f)) {
-      gui::text(fan::color(0.62f, 0.62f, 0.66f, 1.f), label);
-      gui::same_line(std::max(gui::get_cursor_pos_x(), gui::get_content_region_avail().x + gui::get_cursor_pos_x() - gui::calc_text_size(value).x));
+      f32_t start = gui::get_cursor_pos_x();
+      f32_t right = start + gui::get_content_region_avail().x;
+      gui::text(fan::color(0.55f, 0.55f, 0.6f, 1.f), label);
+      f32_t label_end = start + gui::calc_text_size(label).x + 10.f;
+      gui::same_line();
+      gui::set_cursor_pos_x(std::max(label_end, right - gui::calc_text_size(value).x));
       gui::text(color, value);
     }
 
@@ -1272,8 +1482,10 @@ struct ecps_gui_t {
       }
       std::uint64_t packet_drops = stats.Packet_HeadDrop + stats.Packet_BodyDrop;
       stat_row("Packets", std::to_string(stats.Packet_Total));
-      stat_row("Packets lost", std::to_string(packet_drops) + " (" + std::to_string(stats.Packet_HeadDrop) + " head, " +
-        std::to_string(stats.Packet_BodyDrop) + " body)");
+      stat_row("Packets lost", std::to_string(packet_drops));
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip(std::to_string(stats.Packet_HeadDrop) + " first parts, " + std::to_string(stats.Packet_BodyDrop) + " other parts");
+      }
       if (stats.Packet_Total > 0) {
         double rate = (double)packet_drops * 100.0 / stats.Packet_Total;
         stat_row("Packet loss", fan::to_string(rate, 2) + " %", rate > 2.0 ? bad : good);
@@ -1285,7 +1497,7 @@ struct ecps_gui_t {
         double fill = flow.BucketSize ? (double)flow.Bucket * 100.0 / flow.BucketSize : 0.0;
         stat_row("Send budget", fan::to_string(fill, 0) + " %", fill < 20.0 ? bad : good);
         if (gui::is_item_hovered()) {
-          gui::set_tooltip("How much of the send rate is left. Low means the stream is held back");
+          gui::set_tooltip("Low: the stream is held back");
         }
       }
 
@@ -1738,13 +1950,14 @@ struct ecps_gui_t {
         f32_t settings_y = window_size.y - icon_size - margin;
         gui::set_cursor_pos(fan::vec2(settings_x, settings_y));
 
-        if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen_settings", This->icon_settings, fan::vec2(icon_size, icon_size))) {
+        if (icon_button("##btn_fullscreen_settings", icon_e::gear,
+          This->stream_settings.show_in_stream_view ? "Hide settings" : "Settings", icon_size + 12.f, icon_style_e::overlay)) {
           This->stream_settings.show_in_stream_view = !This->stream_settings.show_in_stream_view;
         }
 
         gui::same_line();
 
-        if (icon_button_helper_t::render_transparent_icon_button("#btn_exit_fullscreen", This->icon_fullscreen, fan::vec2(icon_size, icon_size))) {
+        if (icon_button("##btn_exit_fullscreen", icon_e::exit_fullscreen, "Leave full screen", icon_size + 12.f, icon_style_e::overlay)) {
           is_fullscreen_stream = false;
           engine.window.set_windowed();
         }
@@ -2104,7 +2317,7 @@ struct ecps_gui_t {
     if (!fan::audio::loopback_capture_t::is_supported()) {
       return;
     }
-    if (settings_switch("Share audio", &stream_settings.share_audio, "Send what this computer plays to the viewers")) {
+    if (settings_switch("Share audio", &stream_settings.share_audio, "Send your computer's sound")) {
       save_audio_settings();
     }
     if (!stream_settings.share_audio) {
@@ -2145,7 +2358,7 @@ struct ecps_gui_t {
     bool can_exclude = fan::audio::loopback_capture_t::can_exclude_processes();
     bool exclude = can_exclude && settings.exclude_discord;
     if (can_exclude && settings_switch("Leave out Discord", &exclude,
-      "Records every app except Discord, so voice calls are not shared.\nRecords all outputs, not only the selected device.\nWith SteelSeries Sonar it records the Sonar - Gaming device instead.")) {
+      "Every app except Discord, so calls stay private")) {
       settings.exclude_discord = exclude;
       save_audio_settings();
     }
@@ -2208,7 +2421,7 @@ struct ecps_gui_t {
   std::chrono::steady_clock::time_point loopback_devices_listed;
 
   void render_play_audio_controls() {
-    if (settings_switch("Play audio", &stream_settings.play_audio, "Play the sound of the stream you watch")) {
+    if (settings_switch("Play audio", &stream_settings.play_audio, "Play the stream's sound")) {
       save_audio_settings();
     }
     if (stream_settings.play_audio) {
@@ -2363,7 +2576,6 @@ struct ecps_gui_t {
   // stream area, over the picture, and fades out unless the mouse is near the bottom or there is no picture, so
   // the stream gets the whole height. Call it inside the stream child, no window or focus tricks of its own
   void render_stream_toolbar() {
-    render_autohide_bar();
     render_stream_stats_overlay();
     render_stream_top_overlay();
     auto& io = gui::get_io();
@@ -2390,24 +2602,20 @@ struct ecps_gui_t {
     gui::push_style_var(gui::style_var_alpha, std::max(toolbar_alpha, 0.02f));
     f32_t y = area_size.y - frame_height - 14.f + gui::get_scroll_y();
     // as wide as the text needs, a fixed width cut the label off
-    const char* share_text = ecps_backend.is_streaming_to_any_channel() ? "Stop sharing" : "Share screen";
-    f32_t button_width = gui::calc_text_size(share_text).x + gui::get_style().FramePadding.x * 2 + 28.f;
+    f32_t button_width = pill_button_width(stream_button_renderer_t::share_button_text(false));
     gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
     gui::same_line();
     gui::set_cursor_pos_x(area_size.x - (frame_height * 2) - 14.f);
 
-    f32_t icon_size = gui::get_text_line_height();
-    f32_t padding = gui::get_style().FramePadding.y;
-    if (icon_button_helper_t::render_transparent_icon_button("#btn_settings", icon_settings,
-      fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
+    if (icon_button("##btn_settings", icon_e::gear, stream_settings.show_in_stream_view ? "Hide settings" : "Settings",
+      frame_height, icon_style_e::overlay)) {
       stream_settings.show_in_stream_view = !stream_settings.show_in_stream_view;
     }
 
     gui::same_line(area_size.x - frame_height - 4.f);
-    if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen", icon_fullscreen,
-      fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
+    if (icon_button("##btn_fullscreen", icon_e::fullscreen, "Full screen", frame_height, icon_style_e::overlay)) {
       is_fullscreen_stream = true;
       fullscreen_toolbar_alpha = 1.f;
       fullscreen_toolbar_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
@@ -2420,17 +2628,23 @@ struct ecps_gui_t {
   void render_stream_empty_hint(fan::vec2 area) {
     std::string title;
     std::string detail;
-    if (ecps_backend.is_streaming_to_any_channel()) {
-      title = "Starting the stream...";
+    bool others_sharing = false;
+    for (const auto& channel : ecps_backend.channel_info) {
+      for (std::uint32_t session : ecps_backend.streamers_of(channel.channel_id)) {
+        others_sharing |= session != (std::uint32_t)ecps_backend.session_id.i;
+      }
+    }
+    if (others_sharing) {
+      title = "Loading the stream...";
       detail = "The first picture takes a moment";
     }
-    else if (ecps_backend.is_hosting_any_channel()) {
-      title = "You are not sharing your screen";
-      detail = "Move the mouse to the bottom edge and press Share screen";
+    else if (ecps_backend.is_streaming_to_any_channel()) {
+      title = "You are sharing";
+      detail = "Turn on Preview in the settings to see it here";
     }
     else if (!ecps_backend.channel_info.empty()) {
-      title = "Waiting for the host's stream";
-      detail = "It appears here when the host starts sharing";
+      title = "Nobody is sharing yet";
+      detail = "Press Share to share your screen, or wait for someone else";
     }
     else {
       title = "Not in a channel";
@@ -2502,9 +2716,12 @@ struct ecps_gui_t {
       std::snprintf(text, sizeof(text), "%.*f", decimals, value);
       return std::string(text);
     };
-    auto row = [](const char* label, const std::string& value) {
+    f32_t value_column = gui::get_cursor_pos_x() + gui::calc_text_size("Viewers may play here").x + 28.f;
+    auto row = [value_column](const char* label, const std::string& value) {
+      f32_t start = gui::get_cursor_pos_x();
       gui::text_disabled(label);
-      gui::same_line(230);
+      gui::same_line();
+      gui::set_cursor_pos_x(std::max(value_column, start + gui::calc_text_size(label).x + 16.f));
       gui::text(value);
     };
     // a size that was never set holds garbage, show that as "none yet" instead of a huge number
@@ -2679,6 +2896,18 @@ struct ecps_gui_t {
   bool preview_own_share = false;
   std::chrono::steady_clock::time_point capture_picker_opened_at;
 
+  // The window is drawn through an sRGB swapchain, which brightens what it is given as if it were linear. Screen
+  // pixels are sRGB already, so they go in through this table, or the pictures look washed out
+  static inline const std::array<std::uint8_t, 256> srgb_to_linear = [] {
+    std::array<std::uint8_t, 256> table{};
+    for (int i = 0; i < 256; ++i) {
+      f64_t c = i / 255.0;
+      f64_t linear = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+      table[i] = (std::uint8_t)std::lround(linear * 255.0);
+    }
+    return table;
+  }();
+
   // thumb_pixels gets the picture as rgba, at most max_width wide. handle 0 is the screen
   bool grab_window_rgba(std::uintptr_t handle, int max_width, fan::vec2i& size) {
     HWND hwnd = (HWND)handle;
@@ -2732,9 +2961,9 @@ struct ecps_gui_t {
           for (int x = 0; x < out_width; ++x) {
             const std::uint8_t* from = source + ((std::size_t)y * step * bitmap_width + (std::size_t)x * step) * 4;
             std::uint8_t* to = &thumb_pixels[((std::size_t)y * out_width + x) * 4];
-            to[0] = from[2];
-            to[1] = from[1];
-            to[2] = from[0];
+            to[0] = srgb_to_linear[from[2]];
+            to[1] = srgb_to_linear[from[1]];
+            to[2] = srgb_to_linear[from[0]];
             to[3] = 255;
           }
         }
@@ -2818,6 +3047,8 @@ struct ecps_gui_t {
   }
 
   // The window picker: every window as a small picture, click one to share it, like the share pickers of chat apps
+  fan::vec2 capture_picker_size;
+
   void render_capture_picker(fan::graphics::screen_capture_t& capture, render_thread_t* rt) {
     if (capture_picker_requested) {
       capture_picker_requested = false;
@@ -2825,12 +3056,16 @@ struct ecps_gui_t {
       capture_picker_opened_at = std::chrono::steady_clock::now();
       // as big as fits in the window, centered, so nothing is out of view
       fan::vec2 display = gui::get_io().DisplaySize;
-      fan::vec2 size(std::min(760.f, display.x - 40.f), std::min(520.f, display.y - 40.f));
-      gui::set_next_window_size(size);
-      gui::set_next_window_pos((display - size) * 0.5f);
+      capture_picker_size = fan::vec2(std::min(820.f, display.x - 60.f), std::min(600.f, display.y - 60.f));
+      gui::set_next_window_pos((display - capture_picker_size) * 0.5f);
       gui::open_popup("Choose what to share");
     }
-    if (!gui::begin_popup("Choose what to share")) {
+    gui::push_style_color(gui::col_popup_bg, fan::color(0.006f, 0.006f, 0.009f, 0.99f));
+    gui::push_style_var(gui::style_var_window_padding, fan::vec2(14.f, 12.f));
+    bool open = gui::begin_popup("Choose what to share");
+    gui::pop_style_var();
+    gui::pop_style_color();
+    if (!open) {
       return;
     }
     auto now = std::chrono::steady_clock::now();
@@ -2838,56 +3073,81 @@ struct ecps_gui_t {
       refresh_capture_windows(); // new windows show up, closed ones go
       capture_picker_opened_at = now;
     }
+
+    gui::text(fan::color(0.2f, 0.45f, 1.f, 1.f), "CHOOSE WHAT TO SHARE");
+    gui::same_line();
+    gui::text(fan::color(0.5f, 0.5f, 0.55f, 1.f), "  click one, Esc closes");
+
+    // the cards scroll inside a box of a fixed size, the popup itself never grows past the window
+    fan::vec2 box = capture_picker_size - fan::vec2(28.f, gui::get_frame_height() + 30.f);
+    gui::push_style_color(gui::col_child_bg, fan::color(0, 0, 0, 0));
+    gui::begin_child("##capture_cards", box);
     std::uintptr_t current = capture.target_window.load();
-    const fan::vec2 cell(210.f, 118.f);
-    f32_t spacing = gui::get_style().ItemSpacing.x;
-    int columns = std::max(1, (int)((gui::get_content_region_avail().x + spacing) / (cell.x + spacing)));
+    f32_t title_height = gui::get_font_size() + 10.f;
+    const fan::vec2 image_area(200.f, 112.f);
+    const fan::vec2 card_size(image_area.x + 12.f, image_area.y + 12.f + title_height);
+    f32_t spacing = 10.f;
+    int columns = std::max(1, (int)((gui::get_content_region_avail().x + spacing) / (card_size.x + spacing)));
     int budget = 2;
     bool changed = false;
     int index = 0;
+    auto* list = gui::get_window_draw_list();
 
-    auto place = [&] {
+    auto card = [&](std::uintptr_t handle, const std::string& title) {
       if (index % columns != 0) {
-        gui::same_line();
+        gui::same_line(0, spacing);
       }
       ++index;
-    };
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      gui::push_id((int)(handle & 0x7fffffff));
+      bool clicked = gui::invisible_button("##card", card_size);
+      gui::pop_id();
+      bool hovered = gui::is_item_hovered();
+      bool selected = handle == current;
+      if (hovered) {
+        gui::set_tooltip(title);
+      }
+      list->AddRectFilled(at, at + card_size, hovered ? 0xff120b09u : 0xff070505u, 8.f);
+      if (selected) {
+        list->AddRect(at, at + card_size, accent_u32, 8.f, 0, 2.5f);
+      }
+      else if (hovered) {
+        list->AddRect(at, at + card_size, 0x90ff5919u, 8.f, 0, 1.5f);
+      }
 
-    place();
-    gui::begin_group();
-    if (gui::button("Whole screen##pick_screen", cell)) {
-      capture.target_window = 0;
-      changed = true;
-    }
-    gui::text(current == 0 ? "> Whole screen" : "Whole screen");
-    gui::dummy(fan::vec2(cell.x, 0.f));
-    gui::end_group();
-
-    for (const auto& window : capture_windows) {
-      place();
-      gui::push_id((int)(window.handle & 0x7fffffff));
-      gui::begin_group();
-      auto& thumb = refresh_thumb(window.handle, 320, 2500, budget);
-      bool clicked;
+      auto& thumb = refresh_thumb(handle, 320, handle == 0 ? 1500 : 2500, budget);
       if (thumb.loaded) {
-        f32_t scale = std::min(cell.x / thumb.size.x, cell.y / thumb.size.y);
-        clicked = gui::image_button("##pick", thumb.image, fan::vec2(thumb.size.x * scale, thumb.size.y * scale));
+        f32_t scale = std::min(image_area.x / thumb.size.x, image_area.y / thumb.size.y);
+        fan::vec2 size = thumb.size * scale;
+        gui::set_cursor_screen_pos(at + fan::vec2(6.f, 6.f) + (image_area - size) * 0.5f);
+        gui::image(thumb.image, size);
       }
       else {
-        clicked = gui::button("...##pick", cell);
+        fan::vec2 text = gui::calc_text_size("...");
+        list->AddText(at + fan::vec2(6.f, 6.f) + (image_area - text) * 0.5f, 0xff808080u, "...");
       }
+      std::string shown = fit_title(title, image_area.x);
+      list->AddText(at + fan::vec2(8.f, image_area.y + 14.f), selected ? 0xffffffffu : 0xffb4b4b4u, shown.c_str());
+      // back to where the card ends, so the next one lines up
+      gui::set_cursor_screen_pos(at);
+      gui::dummy(card_size);
+
       if (clicked) {
-        capture_window_title = window.title;
-        capture.target_window = window.handle;
+        if (handle != 0) {
+          capture_window_title = title;
+        }
+        capture.target_window = handle;
         changed = true;
       }
-      gui::text(std::string(current == window.handle ? "> " : "") + fit_title(window.title, cell.x - 6.f));
-      if (gui::is_item_hovered()) {
-        gui::set_tooltip(window.title);
-      }
-      gui::end_group();
-      gui::pop_id();
+    };
+
+    card(0, "Whole screen");
+    for (const auto& window : capture_windows) {
+      card(window.handle, window.title);
     }
+    gui::end_child();
+    gui::pop_style_color();
+
     if (changed) {
       // viewers need a new keyframe, the picture changed size and content
       rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
@@ -2908,15 +3168,16 @@ struct ecps_gui_t {
     }
     std::string label = current == 0 ? std::string("Whole screen") : shorten_title(capture_window_title, 30);
     settings_row("Source", [&] {
-      if (gui::button(label + "##capture_source", fan::vec2(-1.f, 0.f))) {
+      std::string shown = fit_title(label, gui::get_content_region_avail().x - gui::get_style().FramePadding.x * 2.f);
+      if (gui::button(shown + "##capture_source", fan::vec2(-1.f, 0.f))) {
         capture_picker_requested = true;
       }
       if (gui::is_item_hovered()) {
-        gui::set_tooltip("Pick the screen or a window to share");
+        gui::set_tooltip("Choose what to share");
       }
     });
     render_capture_picker(capture, rt);
-    settings_switch("Preview", &preview_own_share, "A small live picture of what you share");
+    settings_switch("Preview", &preview_own_share, "See what you share");
     if (preview_own_share) {
       draw_share_preview(current, gui::get_content_region_avail().x);
     }
@@ -3556,30 +3817,107 @@ struct ecps_gui_t {
   std::unordered_map<std::uint32_t, bool> stream_state_sent;
   std::chrono::steady_clock::time_point stream_state_sent_at;
 
-  // ---- building blocks of the settings panel ---------------------------------------------------------------
+  // ---- the theme -------------------------------------------------------------------------------------------
+  // Pushed around the main window, so every panel, popup and control in it shares it. Dark fields and buttons,
+  // blue where something is chosen or used. (The gui is drawn in linear colour and shown through sRGB: small
+  // numbers here look much lighter on screen)
+  int theme_colors_pushed = 0;
+  int theme_vars_pushed = 0;
 
-  // a section title: small, coloured, with a thin line under it
+  void push_theme() {
+    theme_colors_pushed = 0;
+    theme_vars_pushed = 0;
+    auto color = [this](gui::col_t index, fan::color value) {
+      gui::push_style_color(index, value);
+      ++theme_colors_pushed;
+    };
+    auto var = [this](auto index, auto value) {
+      gui::push_style_var(index, value);
+      ++theme_vars_pushed;
+    };
+    fan::color field(0.016f, 0.018f, 0.026f, 1.f);
+    fan::color field_hover(0.035f, 0.045f, 0.08f, 1.f);
+    fan::color blue_dim(0.045f, 0.08f, 0.2f, 1.f);
+    fan::color blue(0.06f, 0.13f, 0.38f, 1.f);
+    fan::color blue_bright(0.1f, 0.35f, 1.f, 1.f);
+    fan::color line(0.028f, 0.031f, 0.045f, 1.f);
+
+    color(gui::col_frame_bg, field);
+    color(gui::col_frame_bg_hovered, field_hover);
+    color(gui::col_frame_bg_active, blue_dim);
+    color(gui::col_button, fan::color(0.022f, 0.025f, 0.036f, 1.f));
+    color(gui::col_button_hovered, blue_dim);
+    color(gui::col_button_active, blue);
+    color(gui::col_header, blue_dim);
+    color(gui::col_header_hovered, blue);
+    color(gui::col_header_active, fan::color(0.08f, 0.18f, 0.5f, 1.f));
+    color(gui::col_check_mark, blue_bright);
+    color(gui::col_slider_grab, blue_bright);
+    color(gui::col_slider_grab_active, fan::color(0.2f, 0.5f, 1.f, 1.f));
+    color(gui::col_tab, fan::color(0.012f, 0.013f, 0.019f, 1.f));
+    color(gui::col_tab_hovered, blue_dim);
+    color(gui::col_tab_selected, blue);
+    color(gui::col_tab_selected_overline, blue_bright);
+    color(gui::col_tab_dimmed, fan::color(0.012f, 0.013f, 0.019f, 1.f));
+    color(gui::col_tab_dimmed_selected, blue_dim);
+    color(gui::col_border, line);
+    color(gui::col_separator, line);
+    color(gui::col_separator_hovered, blue);
+    color(gui::col_separator_active, blue_bright);
+    color(gui::col_popup_bg, fan::color(0.006f, 0.006f, 0.009f, 0.98f));
+    color(gui::col_table_header_bg, fan::color(0.012f, 0.014f, 0.021f, 1.f));
+    color(gui::col_table_border_strong, line);
+    color(gui::col_table_border_light, fan::color(0.016f, 0.018f, 0.026f, 1.f));
+    color(gui::col_table_row_bg_alt, fan::color(1.f, 1.f, 1.f, 0.025f));
+    color(gui::col_scrollbar_bg, fan::color(0.f, 0.f, 0.f, 0.f));
+    color(gui::col_scrollbar_grab, fan::color(0.03f, 0.034f, 0.05f, 1.f));
+    color(gui::col_scrollbar_grab_hovered, blue_dim);
+    color(gui::col_scrollbar_grab_active, blue);
+    color(gui::col_text_selected_bg, fan::color(0.1f, 0.35f, 1.f, 0.35f));
+    color(gui::col_resize_grip, fan::color(0.f, 0.f, 0.f, 0.f));
+
+    var(gui::style_var_frame_rounding, 5.f);
+    var(gui::style_var_child_rounding, 8.f);
+    var(gui::style_var_popup_rounding, 8.f);
+    var(gui::style_var_grab_rounding, 4.f);
+    var(gui::style_var_tab_rounding, 5.f);
+    var(gui::style_var_scrollbar_rounding, 6.f);
+  }
+
+  void pop_theme() {
+    gui::pop_style_color(theme_colors_pushed);
+    gui::pop_style_var(theme_vars_pushed);
+  }
+
+  // ---- building blocks of the settings panel ---------------------------------------------------------------
+  // (the gui is drawn in linear colour and shown through sRGB: small numbers here look much lighter on screen)
+
+  static constexpr std::uint32_t accent_u32 = 0xffff5919u;       // a clear blue
+  static constexpr std::uint32_t accent_hover_u32 = 0xffff7a33u;
+
+  // a section title: small, blue, with a thin line under it
   static void settings_section(const char* title) {
-    gui::dummy(fan::vec2(0, 4.f));
-    gui::text(fan::color(0.55f, 0.68f, 1.f, 1.f), title);
+    gui::dummy(fan::vec2(0, 6.f));
+    gui::text(fan::color(0.2f, 0.45f, 1.f, 1.f), title);
     fan::vec2 at = gui::get_cursor_screen_pos() - fan::vec2(0, 4.f);
-    gui::get_window_draw_list()->AddLine(at, at + fan::vec2(gui::get_content_region_avail().x, 0), 0x40ffffffu, 1.f);
+    gui::get_window_draw_list()->AddLine(at, at + fan::vec2(gui::get_content_region_avail().x, 0), 0x50ff5919u, 1.f);
     gui::dummy(fan::vec2(0, 1.f));
   }
 
   // One setting: its name at the left, the control filling the rest of the row. A narrow panel puts the name above
   static void settings_row(const char* label, auto&& control) {
-    f32_t width = gui::get_content_region_avail().x;
-    f32_t label_width = gui::calc_text_size("Resolution").x + 18.f;
     f32_t start = gui::get_cursor_pos_x();
+    f32_t width = gui::get_content_region_avail().x;
+    f32_t label_width = gui::calc_text_size("Resolution").x + 14.f;
     gui::push_id(label);
-    if (width - label_width < 140.f) {
-      gui::text(fan::color(0.75f, 0.75f, 0.8f, 1.f), label);
+    if (width - label_width < 190.f) {
+      gui::text(fan::color(0.6f, 0.6f, 0.66f, 1.f), label);
     }
     else {
       gui::align_text_to_frame_padding();
-      gui::text(fan::color(0.75f, 0.75f, 0.8f, 1.f), label);
-      gui::same_line(start + label_width);
+      gui::text(fan::color(0.6f, 0.6f, 0.66f, 1.f), label);
+      gui::same_line();
+      gui::set_cursor_pos_x(start + label_width);
     }
     gui::push_item_width(-1);
     control();
@@ -3603,15 +3941,63 @@ struct ecps_gui_t {
       gui::set_tooltip(tooltip);
     }
     auto* list = gui::get_window_draw_list();
-    list->AddText(at + fan::vec2(0, (height - gui::get_font_size()) * 0.5f), hovered ? 0xffffffffu : 0xffe2e2e2u, label);
-    f32_t track_height = height * 0.66f;
+    f32_t track_height = height * 0.62f;
     f32_t track_width = track_height * 1.85f;
+    std::string shown = fit_title(label, width - track_width - 14.f);
+    if (hovered && !tooltip && shown != label) {
+      gui::set_tooltip(label);
+    }
+    list->AddText(at + fan::vec2(0, (height - gui::get_font_size()) * 0.5f), hovered ? 0xffffffffu : 0xffc8c8c8u, shown.c_str());
     fan::vec2 track = at + fan::vec2(width - track_width - 2.f, (height - track_height) * 0.5f);
-    std::uint32_t track_color = *value ? (hovered ? 0xfff8b058u : 0xfff0a040u) : (hovered ? 0xff6a6a6au : 0xff4c4c4cu);
+    std::uint32_t track_color = *value ? (hovered ? accent_hover_u32 : accent_u32) : (hovered ? 0xff221f1eu : 0xff141312u);
     list->AddRectFilled(track, track + fan::vec2(track_width, track_height), track_color, track_height * 0.5f);
     f32_t knob_x = *value ? track_width - track_height * 0.5f : track_height * 0.5f;
-    list->AddCircleFilled(track + fan::vec2(knob_x, track_height * 0.5f), track_height * 0.5f - 2.5f, 0xffffffffu);
+    list->AddCircleFilled(track + fan::vec2(knob_x, track_height * 0.5f), track_height * 0.5f - 2.5f, *value ? 0xffffffffu : 0xffb0b0b0u);
     return clicked;
+  }
+
+  // a part of the panel that folds away: an arrow and its name on a darker strip
+  static bool settings_fold(const char* title, bool* open) {
+    gui::dummy(fan::vec2(0, 2.f));
+    f32_t height = gui::get_frame_height();
+    f32_t width = gui::get_content_region_avail().x;
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::push_id(title);
+    if (gui::invisible_button("##fold", fan::vec2(width, height))) {
+      *open = !*open;
+    }
+    gui::pop_id();
+    bool hovered = gui::is_item_hovered();
+    auto* list = gui::get_window_draw_list();
+    list->AddRectFilled(at, at + fan::vec2(width, height), hovered ? 0xff0e0a09u : 0xff070505u, 5.f);
+    f32_t size = gui::get_font_size() * 0.3f;
+    fan::vec2 center = at + fan::vec2(16.f, height * 0.5f);
+    if (*open) {
+      list->AddTriangleFilled(center + fan::vec2(-size, -size * 0.55f), center + fan::vec2(size, -size * 0.55f),
+        center + fan::vec2(0, size * 0.75f), accent_u32);
+    }
+    else {
+      list->AddTriangleFilled(center + fan::vec2(-size * 0.55f, -size), center + fan::vec2(-size * 0.55f, size),
+        center + fan::vec2(size * 0.75f, 0), accent_u32);
+    }
+    list->AddText(at + fan::vec2(32.f, (height - gui::get_font_size()) * 0.5f), hovered ? 0xffffffffu : 0xffd8d8d8u, title);
+    return *open;
+  }
+
+  // the colours of the panel's own controls: darker fields, blue when used
+  static constexpr int settings_color_count = 11;
+  static void push_settings_colors() {
+    gui::push_style_color(gui::col_frame_bg, fan::color(0.016f, 0.018f, 0.026f, 1.f));
+    gui::push_style_color(gui::col_frame_bg_hovered, fan::color(0.035f, 0.045f, 0.08f, 1.f));
+    gui::push_style_color(gui::col_frame_bg_active, fan::color(0.05f, 0.1f, 0.26f, 1.f));
+    gui::push_style_color(gui::col_button, fan::color(0.02f, 0.023f, 0.034f, 1.f));
+    gui::push_style_color(gui::col_button_hovered, fan::color(0.045f, 0.08f, 0.2f, 1.f));
+    gui::push_style_color(gui::col_button_active, fan::color(0.06f, 0.13f, 0.38f, 1.f));
+    gui::push_style_color(gui::col_slider_grab, fan::color(0.1f, 0.35f, 1.f, 1.f));
+    gui::push_style_color(gui::col_slider_grab_active, fan::color(0.2f, 0.5f, 1.f, 1.f));
+    gui::push_style_color(gui::col_popup_bg, fan::color(0.008f, 0.009f, 0.013f, 0.98f));
+    gui::push_style_color(gui::col_header, fan::color(0.045f, 0.08f, 0.2f, 1.f));
+    gui::push_style_color(gui::col_header_hovered, fan::color(0.06f, 0.13f, 0.38f, 1.f));
   }
 
   // ---- the interface that hides ------------------------------------------------------------------------------
@@ -3641,13 +4027,13 @@ struct ecps_gui_t {
 
   // The bar and the tabs when the interface is hidden: drawn over the top of the stream, shown while the mouse is
   // near the top edge (and a moment after), with a Pin button that puts everything back
-  void render_autohide_bar() {
+  // The bar and the tabs when the interface is hidden: a window of its own over the top of the main window, at
+  // the same place as the pinned bar, shown while the mouse is near the top edge (and a moment after)
+  void render_autohide_bar(fan::vec2 area_pos, fan::vec2 area_size) {
     if (!ui_autohide) {
       return;
     }
     auto& io = gui::get_io();
-    fan::vec2 area_pos = gui::get_window_pos();
-    fan::vec2 area_size = gui::get_window_size();
     f32_t frame_height = gui::get_frame_height();
     f32_t bar_height = frame_height + 18.f;
 
@@ -3656,61 +4042,32 @@ struct ecps_gui_t {
     bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
       io.MousePos.y >= area_pos.y && io.MousePos.y <= area_pos.y + reach;
     auto now = std::chrono::steady_clock::now();
-    if (mouse_near || gui::is_any_item_active()) {
+    if (mouse_near || autohide_bar_active) {
       autohide_visible_until = now + std::chrono::milliseconds(1200);
     }
     f32_t target = now < autohide_visible_until ? 1.f : 0.f;
     autohide_alpha += (target - autohide_alpha) * std::min(1.f, io.DeltaTime * 14.f);
     if (target == 0.f && autohide_alpha < 0.02f) {
       autohide_alpha = 0.f;
-      return;
+      return; // no window at all, so nothing blocks the stream under it
     }
 
+    gui::set_next_window_pos(area_pos);
+    gui::set_next_window_size(fan::vec2(area_size.x, bar_height + 2.f));
+    gui::push_style_var(gui::style_var_window_padding, fan::vec2(0, 0));
+    gui::push_style_var(gui::style_var_window_border_size, 0.f);
     gui::push_style_var(gui::style_var_alpha, std::max(autohide_alpha, 0.02f));
-    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(10.f, 2.f));
-    gui::get_window_draw_list()->AddRectFilled(area_pos, area_pos + fan::vec2(area_size.x, bar_height), 0xe6141414u);
-
-    f32_t scroll = gui::get_scroll_y();
-    gui::set_cursor_pos(fan::vec2(12.f, 9.f + scroll));
-    if (gui::button("Channels")) {
-      window_handler.main_tab = 0;
-      window_handler.current_tab = 0;
+    if (gui::begin("##autohide_bar", nullptr,
+      gui::window_flags_topmost | gui::window_flags_no_decoration | gui::window_flags_no_background | gui::window_flags_no_move |
+      gui::window_flags_no_saved_settings | gui::window_flags_no_docking | gui::window_flags_no_focus_on_appearing |
+      gui::window_flags_no_nav | gui::window_flags_no_scroll_with_mouse)) {
+      render_nav_bar(gui::get_window_pos(), area_size.x, bar_height, 0.f, autohide_alpha, true);
+      autohide_bar_active = gui::is_any_item_active() || gui::is_popup_open("##top_bar_menu");
     }
-    gui::same_line();
-    gui::begin_disabled();
-    gui::button("Stream View");
-    gui::end_disabled();
-    gui::same_line();
-    if (gui::button("Debug")) {
-      window_handler.main_tab = 2;
-      window_handler.current_tab = 2;
-    }
-    gui::same_line(0, 24.f);
-    if (gui::button("Pin interface")) {
-      set_ui_autohide(false);
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip("Keep the bar and the tabs on screen");
-    }
-
-    // version and name at the right, both open what they do in the normal bar
-    std::string version = std::string("v") + ecps_version;
-    std::string name = ecps_backend.get_current_username();
-    f32_t right = area_size.x - 16.f;
-    f32_t name_width = gui::calc_text_size(name).x;
-    f32_t version_width = gui::calc_text_size(version).x;
-    gui::set_cursor_pos(fan::vec2(right - name_width, 9.f + scroll));
-    gui::text(fan::color(0.7f, 0.7f, 1.f, 1.f), name);
-    if (gui::is_item_clicked()) {
-      username_popup_requested = true;
-    }
-    gui::set_cursor_pos(fan::vec2(right - name_width - version_width - 18.f, 9.f + scroll));
-    gui::text(fan::color(0.82f, 0.82f, 0.88f, 1.f), version);
-    if (gui::is_item_clicked()) {
-      about_popup_requested = true;
-    }
-    gui::pop_style_var(2);
+    gui::end();
+    gui::pop_style_var(3);
   }
+  bool autohide_bar_active = false;
 
   bool ui_autohide = false;
   f32_t autohide_alpha = 0.f;
@@ -3803,94 +4160,161 @@ struct ecps_gui_t {
   }
   std::array<f32_t, 8> last_display_sizes{};
 
-  // The bar above the tabs, one slim row: name and version (click for the about and update panel), sharing and what
-  // goes out and comes in, and your name at the right. Right-click the version for the compact bar, which leaves
-  // out what goes out and comes in
+  // The bar at the top: the tabs as words, sharing and what goes out and comes in, then at the right the version,
+  // your name and the pin. The same bar shows over the stream when the interface is hidden, see render_autohide_bar
   void render_top_bar() {
     report_display_sizes();
     updater.tick();
     updater.tick_restart();
+    f32_t bar_height = gui::get_frame_height() + 18.f;
+    render_nav_bar(gui::get_window_pos(), gui::get_window_size().x, bar_height, 0.f, 1.f, false);
+    gui::set_cursor_pos(fan::vec2(gui::get_style().WindowPadding.x, bar_height + 10.f));
+    render_about_popup();
+  }
+
+  void render_nav_bar(fan::vec2 area_pos, f32_t width, f32_t bar_height, f32_t y_offset, f32_t fade, bool overlay) {
     using state_e = updater_t::state_e;
+    auto* list = gui::get_window_draw_list();
+    f32_t frame_height = gui::get_frame_height();
+    std::uint32_t alpha = (std::uint32_t)(std::clamp(fade, 0.f, 1.f) * 255.f);
+    auto faded = [alpha](std::uint32_t color) {
+      return (color & 0x00ffffffu) | ((((color >> 24) * alpha) / 255u) << 24);
+    };
+    // a dark strip with a thin blue line under it
+    fan::vec2 top = area_pos + fan::vec2(0, y_offset > 0 ? 0 : 0);
+    list->AddRectFilled(top, top + fan::vec2(width, bar_height), faded(0xf4020101u));
+    list->AddLine(top + fan::vec2(0, bar_height), top + fan::vec2(width, bar_height), faded(0x70ff5919u), 1.f);
 
-    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(10.f, 2.f));
-    gui::push_style_var(gui::style_var_item_spacing, fan::vec2(10.f, 4.f));
+    f32_t row_y = (bar_height - frame_height) * 0.5f + y_offset;
+    f32_t text_y = (bar_height - gui::get_font_size()) * 0.5f + y_offset;
 
-    gui::text(fan::color(0.82f, 0.82f, 0.88f, 1.f), std::string(top_bar_compact ? "v" : "ECPS v") + ecps_version);
-    bool open_about = gui::is_item_clicked();
+    // the tabs, as words: the one you are on is white and underlined
+    gui::set_cursor_pos(fan::vec2(6.f, row_y));
+    auto tab = [&](const char* label, int index) {
+      bool active = window_handler.current_tab == index;
+      fan::vec2 text = gui::calc_text_size(label);
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      bool clicked = gui::invisible_button(label, fan::vec2(text.x + 24.f, frame_height));
+      bool hovered = gui::is_item_hovered();
+      std::uint32_t color = active ? 0xffffffffu : hovered ? 0xffd0d0d0u : 0xff6e6e6eu;
+      list->AddText(at + fan::vec2(12.f, (frame_height - gui::get_font_size()) * 0.5f), faded(color), label);
+      if (active) {
+        list->AddRectFilled(at + fan::vec2(12.f, frame_height - 3.f), at + fan::vec2(text.x + 12.f, frame_height - 1.f), faded(accent_u32), 1.f);
+      }
+      gui::same_line(0, 2.f);
+      if (clicked && !active) {
+        window_handler.main_tab = index;
+      }
+    };
+    tab("Channels", 0);
+    tab("Stream View", 1);
+    tab("Debug", 2);
+
+    // what goes out and comes in is written after the tabs, once the right side is placed and the room is known
+    gui::same_line(0, 22.f);
+    fan::vec2 after_tabs = gui::get_cursor_pos();
+
+    // at the right, from the edge in: the pin, your name, the version, then notes about updates and the name
+    f32_t right = width - 10.f;
+    f32_t pin_size = frame_height;
+    right -= pin_size;
+    gui::set_cursor_pos(fan::vec2(right, row_y));
+    fan::vec2 pin_at = gui::get_cursor_screen_pos();
+    bool pin_clicked = gui::invisible_button("##pin_interface", fan::vec2(pin_size, pin_size));
+    bool pin_hovered = gui::is_item_hovered();
+    if (pin_hovered) {
+      gui::set_tooltip(overlay
+        ? "Pin the bar"
+        : "Unpin: hide the bar in Stream View");
+      list->AddCircleFilled(pin_at + fan::vec2(pin_size, pin_size) * 0.5f, pin_size * 0.5f, faded(0xff1a1310u));
+    }
+    {
+      // a push pin: round head, short body, needle. Blue while pinned
+      fan::vec2 c = pin_at + fan::vec2(pin_size, pin_size) * 0.5f;
+      f32_t u = pin_size * 0.11f;
+      std::uint32_t color = faded(!overlay ? (pin_hovered ? accent_hover_u32 : accent_u32) : (pin_hovered ? 0xffffffffu : 0xff9a9a9au));
+      list->AddCircleFilled(c + fan::vec2(u * 1.4f, -u * 1.4f), u * 1.5f, color);
+      list->AddLine(c + fan::vec2(u * 1.4f, -u * 1.4f), c + fan::vec2(-u * 0.6f, u * 0.6f), color, u * 1.3f);
+      list->AddLine(c + fan::vec2(-u * 1.6f, -u * 0.2f), c + fan::vec2(u * 0.2f, u * 1.6f), color, u * 0.9f);
+      list->AddLine(c + fan::vec2(-u * 0.6f, u * 0.6f), c + fan::vec2(-u * 3.f, u * 3.f), color, u * 0.5f);
+    }
+    if (pin_clicked) {
+      set_ui_autohide(!overlay);
+    }
+
+    std::string name = ecps_backend.get_current_username();
+    right -= 14.f + gui::calc_text_size(name).x;
+    gui::set_cursor_pos(fan::vec2(right, text_y));
+    gui::text(fan::color(0.35f, 0.5f, 1.f, 1.f), name);
+    if (gui::is_item_clicked()) {
+      username_popup_requested = true;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Click to change your name");
+    }
+
+    std::string version = std::string("v") + ecps_version;
+    right -= 16.f + gui::calc_text_size(version).x;
+    gui::set_cursor_pos(fan::vec2(right, text_y));
+    gui::text(fan::color(0.45f, 0.45f, 0.5f, 1.f), version);
+    if (gui::is_item_clicked()) {
+      about_popup_requested = true;
+    }
     if (gui::is_item_clicked(1)) {
       gui::open_popup("##top_bar_menu");
     }
     if (gui::is_item_hovered()) {
-      gui::set_tooltip("About and updates. Right-click: compact bar");
+      gui::set_tooltip("About and updates");
     }
 
     // something about updates that needs a look, or just happened
     const char* hint = nullptr;
     fan::color hint_color(1.f, 1.f, 1.f, 1.f);
     switch (updater.state.load()) {
-      case state_e::available: hint = "update available"; hint_color = fan::color(1.f, 0.82f, 0.35f, 1.f); break;
-      case state_e::building: hint = "updating..."; hint_color = fan::color(0.55f, 0.8f, 1.f, 1.f); break;
-      case state_e::ready: hint = "restarting..."; hint_color = fan::color(0.4f, 1.f, 0.5f, 1.f); break;
+      case state_e::available: hint = "update available"; hint_color = fan::color(1.f, 0.7f, 0.15f, 1.f); break;
+      case state_e::building: hint = "updating..."; hint_color = fan::color(0.3f, 0.6f, 1.f, 1.f); break;
+      case state_e::ready: hint = "restarting..."; hint_color = fan::color(0.15f, 1.f, 0.3f, 1.f); break;
       case state_e::failed:
-      case state_e::build_failed: hint = "update failed"; hint_color = fan::color(1.f, 0.5f, 0.45f, 1.f); break;
+      case state_e::build_failed: hint = "update failed"; hint_color = fan::color(1.f, 0.25f, 0.2f, 1.f); break;
       default: break;
     }
-    if (hint) {
-      gui::same_line(0, 8.f);
-      gui::text(hint_color, hint);
-      if (gui::is_item_clicked()) {
-        open_about = true;
+    std::string update_notice = updater.update_notice();
+    std::string notice = username_notice_text();
+    for (const auto& [text, color, opens_about] : {
+      std::tuple<std::string, fan::color, bool>{hint ? std::string(hint) : std::string(), hint_color, true},
+      std::tuple<std::string, fan::color, bool>{update_notice, fan::color(0.15f, 1.f, 0.3f, 1.f), false},
+      std::tuple<std::string, fan::color, bool>{notice, fan::color(1.f, 0.3f, 0.2f, 1.f), false},
+    }) {
+      if (text.empty()) {
+        continue;
+      }
+      right -= 18.f + gui::calc_text_size(text).x;
+      gui::set_cursor_pos(fan::vec2(right, text_y));
+      gui::text(color, text);
+      if (opens_about && gui::is_item_clicked()) {
+        about_popup_requested = true;
       }
     }
-    std::string update_notice = updater.update_notice();
-    if (!update_notice.empty()) {
-      gui::same_line(0, 12.f);
-      gui::text(fan::color(0.4f, 1.f, 0.5f, 1.f), update_notice);
-    }
-    if (open_about) {
-      about_popup_requested = true;
-    }
 
-    gui::same_line(0, 24.f);
-    render_share_status(!top_bar_compact);
-    gui::same_line(0, 12.f);
-    if (gui::button(top_bar_compact ? "Hide" : "Hide UI")) {
-      set_ui_autohide(true);
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip("Hide the bar and the tabs in the Stream View. They come back when the mouse is near the top edge");
-    }
+    // the share button, left of all that
+    f32_t pill_height = std::round(frame_height * 0.82f);
+    f32_t pill_width = pill_button_width(stream_button_renderer_t::share_button_text(true));
+    right -= 26.f + pill_width;
+    gui::set_cursor_pos(fan::vec2(right, (bar_height - pill_height) * 0.5f + y_offset));
+    stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(pill_width, pill_height), true);
 
-    // your name, at the right, with the note about a taken saved name before it
-    std::string current_user = std::string(top_bar_compact ? "" : "User: ") + ecps_backend.get_current_username();
-    fan::vec2 text_size = gui::calc_text_size(current_user);
-    std::string notice = username_notice_text();
-    f32_t notice_width = notice.empty() ? 0.f : gui::calc_text_size(notice).x + 24.f;
-    gui::same_line(gui::get_window_size().x - text_size.x - notice_width - 20);
-    if (!notice.empty()) {
-      gui::text(fan::color(1.f, 0.55f, 0.45f, 1.f), notice);
-      gui::same_line(0, 24.f);
+    if (!top_bar_compact) {
+      gui::set_cursor_pos(fan::vec2(after_tabs.x, text_y));
+      render_share_chips(right - 20.f - after_tabs.x);
     }
-    gui::text(fan::color(0.7f, 0.7f, 1.0f, 1.0f), current_user);
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip("Click to change your name");
-    }
-    if (gui::is_item_clicked()) {
-      username_popup_requested = true;
-    }
-    gui::pop_style_var(2);
 
     if (gui::begin_popup("##top_bar_menu")) {
-      if (gui::selectable(top_bar_compact ? "Show the full bar" : "Show the compact bar")) {
+      if (gui::selectable(top_bar_compact ? "Show what goes out and comes in" : "Leave out what goes out and comes in")) {
         top_bar_compact = !top_bar_compact;
         save_ui_config();
       }
-      if (gui::selectable("Hide the interface in the Stream View")) {
-        set_ui_autohide(true);
-      }
       gui::end_popup();
     }
-    render_about_popup();
   }
 
   // version, which build it is, and the update controls
@@ -3978,14 +4402,13 @@ struct ecps_gui_t {
 
   // Top bar: share your screen (always into your own channel) and, while it happens, what goes out and what
   // comes in, both at once. They are separate things: you can send and watch in the same moment
-  void render_share_status(bool with_chips = true) {
+  // what goes out and comes in, as long as it fits in room
+  void render_share_chips(f32_t room) {
     auto* rt = get_render_thread();
-    stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(0, 0), !with_chips);
-    if (!rt || !with_chips) {
+    if (!rt) {
       return;
     }
-    // what is left of the row, the name sits at the right
-    f32_t room = gui::get_window_size().x - gui::get_cursor_pos_x() - 340.f;
+    bool first = true;
 
     bool sending = ecps_backend.is_streaming_to_any_channel();
     bool receiving = debug_sample.view_pps > 0.5f;
@@ -3994,17 +4417,19 @@ struct ecps_gui_t {
         "  " + number_text(debug_sample.share_fps, 0) + " fps  " + number_text(debug_sample.share_kbps / 1000.0, 1) + " Mbit/s";
       f32_t width = gui::calc_text_size(text).x + 16.f;
       if (width <= room) {
-        gui::same_line(0, 16.f);
-        gui::text(fan::color(0.55f, 0.8f, 1.f, 1.f), text);
+        gui::text(fan::color(0.3f, 0.6f, 1.f, 1.f), text);
         room -= width;
+        first = false;
       }
     }
     if (receiving) {
       std::string text = "Receiving " + size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) +
         "  " + number_text(debug_sample.decoded_fps, 0) + " fps  " + number_text(debug_sample.view_kbps / 1000.0, 1) + " Mbit/s";
       if (gui::calc_text_size(text).x + 16.f <= room) {
-        gui::same_line(0, 16.f);
-        gui::text(fan::color(0.55f, 1.f, 0.7f, 1.f), text);
+        if (!first) {
+          gui::same_line(0, 16.f);
+        }
+        gui::text(fan::color(0.2f, 0.85f, 0.4f, 1.f), text);
       }
     }
   }

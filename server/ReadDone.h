@@ -228,7 +228,39 @@ case Protocol_C2S_t::JoinChannel:{
   goto StateDone_gt;
 }
 case Protocol_C2S_t::QuitChannel:{
-  /* not implemented yet */
+  auto Request = (Protocol_C2S_t::QuitChannel_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  Protocol_ChannelSessionID_t ChannelSessionID = Request->ChannelSessionID;
+  if(IsAnythingInvalid(SessionID, ChannelID, ChannelSessionID) == true){
+    goto StateDone_gt;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type == Protocol::ChannelType_ScreenShare_e){
+    auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+    if(ChannelData->HostSessionID == SessionID){
+      /* the host leaving closes the channel, the same as when it disconnects */
+      Session::_Close_ChannelClose(ChannelID);
+      Channel->SessionList.Close();
+      ChannelData->~Channel_ScreenShare_Data_t();
+      A_resize(Channel->Buffer, 0);
+      g_pile->ChannelList.unlrec(ChannelID);
+      Channel_BroadcastChannelList();
+      goto StateDone_gt;
+    }
+    ScreenShare_SetStreamer(ChannelID, SessionID, false, false);
+  }
+  if(Session->Watching && Session->WatchChannel == ChannelID.i){
+    Session->Watching = 0;
+  }
+  {
+    auto ChannelSession = &Channel->SessionList[ChannelSessionID];
+    Session->ChannelList.unlrec(ChannelSession->SessionChannelID);
+    Channel->SessionList.unlrec(ChannelSessionID);
+  }
+  Channel_BroadcastSessionList(ChannelID);
+  Channel_BroadcastChannelList();
+
   goto StateDone_gt;
 }
 case Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag:{

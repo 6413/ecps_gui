@@ -939,6 +939,15 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
+  __dme_get(Protocol_S2C, KickedFromChannel) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    // a channel closed (its host left) or we were put out of it
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::KickedFromChannel_t>();
+    if (msg.status == 0) {
+      backend.forget_channel(msg->ChannelID);
+    }
+    co_return;
+  };
+
   __dme_get(Protocol_S2C, Channel_File_Cancel) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Cancel_t>();
     if (msg.status == 0) {

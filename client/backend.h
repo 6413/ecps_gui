@@ -919,6 +919,32 @@ struct ecps_backend_t {
     did_just_join = !is_own_channel;
   }
 
+  // leaves a channel: the server is told, and everything kept about the channel here goes
+  fan::event::task_t channel_quit(Protocol_ChannelID_t channel_id) {
+    Protocol_C2S_t::QuitChannel_t rest;
+    rest.ChannelID = channel_id;
+    bool joined = false;
+    for (const auto& channel : channel_info) {
+      if (channel.channel_id.i == channel_id.i) {
+        rest.ChannelSessionID = channel.session_id;
+        joined = true;
+      }
+    }
+    if (!joined) {
+      co_return;
+    }
+    forget_channel(channel_id);
+    co_await tcp_write(Protocol_C2S_t::QuitChannel, &rest, sizeof(rest));
+  }
+
+  void forget_channel(Protocol_ChannelID_t channel_id) {
+    channel_info.erase(std::remove_if(channel_info.begin(), channel_info.end(),
+      [&](const auto& channel) { return channel.channel_id.i == channel_id.i; }), channel_info.end());
+    channel_sessions.erase(channel_id.i);
+    std::lock_guard<std::mutex> lock(streamers_mutex);
+    channel_streamers.erase((std::uint32_t)channel_id.i);
+  }
+
   bool is_channel_id_valid(Protocol_ChannelID_t channel_id) const {
     return channel_id.i != (uint16_t)-1 && channel_id.i != 0;
   }
