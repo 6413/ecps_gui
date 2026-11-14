@@ -140,6 +140,7 @@ struct ecps_gui_t {
   #include "gui/stream_overlay.h"
 
   #include "gui/capture.h"
+  #include "gui/capture_linux.h"
 
   #include "gui/session.h"
 

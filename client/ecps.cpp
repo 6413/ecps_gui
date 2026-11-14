@@ -204,6 +204,15 @@ struct worker_thread_scope_t {
   }
 };
 
+// lets go of the screen capture, the next read opens it again (on Wayland: asks which screen or window).
+// A fan older than close_screen() still builds, it just keeps the old capture until restart. The generic lambda
+// makes the requires check dependent, so a missing member is not an error
+static void close_capture(auto& encoder) {
+  if constexpr (requires { encoder.close_screen(); }) {
+    encoder.close_screen();
+  }
+}
+
 static void stop_worker_threads() {
   app_stopping.store(true);
   // a worker stuck in a driver call must not keep the program from closing
@@ -1412,6 +1421,12 @@ int main() {
           last_idr_time = now;
         }
 
+      #if !defined(_WIN32)
+        // "Change..." while sharing: the next read opens the share dialog again
+        if (rt->ecps_gui.capture_reselect.exchange(false)) {
+          close_capture(rt->screen_encoder);
+        }
+      #endif
         // waits for the next frame of the desktop, but a failed read returns at once
         if (!rt->screen_encoder.screen_read()) {
           ++stats.read_failed;
@@ -1420,6 +1435,12 @@ int main() {
         }
         ++stats.read_ok;
         stage_times.capture.add(rt->screen_encoder.capture_time_ns);
+      #if !defined(_WIN32)
+        {
+          auto& geometry = rt->screen_encoder.mdscr.Geometry;
+          rt->ecps_gui.store_capture_preview(rt->screen_encoder.screen_buffer, geometry.Resolution.x, geometry.Resolution.y, geometry.LineSize);
+        }
+      #endif
 
         {
           // the encoder is set to a landscape size, a portrait screen squeezed into it comes out stretched.
@@ -1513,17 +1534,29 @@ int main() {
       }
       else {
         if (was_streaming) {
-          // stopped: let go of the capture, so the next Start asks which screen or window to share again
+          // stopped: let go of the capture, so the next Start asks which screen or window to share again.
+          // A source chosen with "Choose..." is kept, it is what the next share uses
           was_streaming = false;
-          // a fan older than close_screen() still builds, it just keeps the old capture until restart.
-          // The generic lambda makes the requires check dependent, so a missing member is not an error
-          [](auto& encoder) {
-            if constexpr (requires { encoder.close_screen(); }) {
-              encoder.close_screen();
-            }
-          }(rt->screen_encoder);
+        #if !defined(_WIN32)
+          if (!rt->ecps_gui.capture_armed.load())
+        #endif
+          close_capture(rt->screen_encoder);
         }
         first_frame = true;
+      #if !defined(_WIN32)
+        if (rt->ecps_gui.capture_reselect.exchange(false)) {
+          close_capture(rt->screen_encoder);
+        }
+        if (rt->ecps_gui.capture_armed.load()) {
+          // chosen but not shared yet: the first read opens the share dialog, the frames after it only feed the preview
+          if (rt->screen_encoder.screen_read()) {
+            auto& geometry = rt->screen_encoder.mdscr.Geometry;
+            rt->ecps_gui.store_capture_preview(rt->screen_encoder.screen_buffer, geometry.Resolution.x, geometry.Resolution.y, geometry.LineSize);
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          continue;
+        }
+      #endif
         const int fps = std::max<int>(rt->screen_encoder.config_.frame_rate, 1);
         const auto sleep_time = std::chrono::microseconds(1000000 / fps);
         std::this_thread::sleep_for(sleep_time);

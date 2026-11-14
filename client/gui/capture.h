@@ -49,18 +49,6 @@
   bool preview_own_share = false;
   std::chrono::steady_clock::time_point capture_picker_opened_at;
 
-  // The window is drawn through an sRGB swapchain, which brightens what it is given as if it were linear. Screen
-  // pixels are sRGB already, so they go in through this table, or the pictures look washed out
-  static inline const std::array<std::uint8_t, 256> srgb_to_linear = [] {
-    std::array<std::uint8_t, 256> table{};
-    for (int i = 0; i < 256; ++i) {
-      f64_t c = i / 255.0;
-      f64_t linear = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
-      table[i] = (std::uint8_t)std::lround(linear * 255.0);
-    }
-    return table;
-  }();
-
   // thumb_pixels gets the picture as rgba, at most max_width wide. handle 0 is the screen
   bool grab_window_rgba(std::uintptr_t handle, int max_width, fan::vec2i& size) {
     HWND hwnd = (HWND)handle;

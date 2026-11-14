@@ -517,9 +517,7 @@
 
       // ---- what you share
       settings_section("SHARING");
-    #if defined(_WIN32)
       This->render_capture_source();
-    #endif
       if (streaming && rt) {
         This->resolution_controls.render_resolution_controls();
 
