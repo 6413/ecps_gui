@@ -2886,7 +2886,7 @@ struct ecps_gui_t {
   // start by itself, and neither is letting others read the logs
   std::string collect_resume_state() {
     fan::json state = fan::json::object();
-    state["saved_at"] = (long long)std::time(nullptr);
+    state["saved_at"] = (std::int64_t)std::time(nullptr);
     state["tab"] = window_handler.current_tab;
     fan::json joined = fan::json::array();
     for (const auto& channel : ecps_backend.channel_info) {
