@@ -61,11 +61,11 @@ struct ecps_gui_t {
 
     // the channel argument is only kept for the callers, the button acts on your own channel
     static bool render_stream_toggle_button(ecps_backend_t::Protocol_ChannelID_t,
-      fan::vec2 button_size = fan::vec2(200.0f, 0)) {
+      fan::vec2 button_size = fan::vec2(200.0f, 0), bool compact = false) {
       bool sharing = ecps_backend.is_streaming_to_any_channel();
       auto target = share_target();
       bool can_share = sharing || target.i != (uint16_t)-1;
-      const char* text = sharing ? "Stop sharing" : "Share my screen";
+      const char* text = sharing ? (compact ? "Stop" : "Stop sharing") : (compact ? "Share" : "Share screen");
       fan::vec4 color = sharing ? fan::vec4(0.8f, 0.2f, 0.2f, 0.9f) : fan::vec4(0.2f, 0.8f, 0.2f, 0.9f);
 
       gui::push_style_color(gui::col_button, color);
@@ -76,7 +76,7 @@ struct ecps_gui_t {
       if (!can_share) {
         gui::end_disabled();
         if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
-          gui::set_tooltip("Connect to a server first");
+          gui::set_tooltip("Join or create a channel first");
         }
       }
       if (can_share && !sharing && gui::is_item_hovered()) {
@@ -100,7 +100,7 @@ struct ecps_gui_t {
       fan::vec2 available_area,
       fan::vec2 window_content_size,
       f32_t bottom_margin = 50.0f) {
-      const char* button_text = ecps_backend.is_streaming_to_any_channel() ? "Stop sharing" : "Share my screen";
+      const char* button_text = ecps_backend.is_streaming_to_any_channel() ? "Stop sharing" : "Share screen";
 
       fan::vec2 text_size = gui::calc_text_size(button_text);
       fan::vec2 button_size = fan::vec2(
@@ -266,6 +266,7 @@ struct ecps_gui_t {
       if (config.contains("ui") && config["ui"].is_object()) {
         fan::json ui = config["ui"];
         top_bar_compact = ui.value("compact_bar", false);
+        ui_autohide = ui.value("autohide", false);
       }
       if (config.contains("stream") && config["stream"].is_object()) {
         fan::json stream = config["stream"];
@@ -310,16 +311,12 @@ struct ecps_gui_t {
       backend_queue([=]() -> fan::event::task_t {
         try {
           if (!co_await ecps_backend.connect(ip, string_to_number(port))) {
-            ecps_backend.restore_own_channel = true;
             co_return;
           }
           co_await ecps_backend.login();
 
-          auto channel_id = co_await ecps_backend.channel_create();
-          co_await ecps_backend.channel_join(channel_id, true);
+          // no channel is made for you, pick one from the list or make your own with "Add new"
           co_await ecps_backend.request_channel_list();
-
-          This->selected_channel_id = channel_id;
         }
         catch (...) {
 
@@ -563,6 +560,18 @@ struct ecps_gui_t {
         gui::window_flags_no_title_bar)
         ) {
 
+        // Stream View with the interface hidden: the stream gets the whole window, the bar and the tabs come back
+        // near the top edge (drawn over the stream by render_autohide_bar)
+        // a tab change that was asked for but not done yet (main_tab is 0 or 2) keeps the tabs on screen until it is
+        // done: the tab bar needs a frame or two to switch, and without it the Stream View would hide the tabs again
+        if (This->ui_autohide && current_tab == 1 && (main_tab == -1 || main_tab == 1)) {
+          This->report_display_sizes();
+          updater.tick();
+          updater.tick_restart();
+          render_stream_view_content();
+          This->render_about_popup();
+        }
+        else {
         This->render_top_bar();
 
         static bool first_open = true;
@@ -613,6 +622,7 @@ struct ecps_gui_t {
           }
 
           gui::end_tab_bar();
+        }
         }
       }
       gui::end();
@@ -835,7 +845,7 @@ struct ecps_gui_t {
           This->backend_queue([this]() -> fan::event::task_t {
             try {
               auto channel_id = co_await ecps_backend.channel_create();
-              co_await ecps_backend.channel_join(channel_id);
+              co_await ecps_backend.channel_join(channel_id, true);
               co_await ecps_backend.request_channel_list();
               co_await ecps_backend.request_channel_session_list(channel_id);
               This->selected_channel_id = channel_id;
@@ -963,7 +973,7 @@ struct ecps_gui_t {
               gui::spacing();
               if (is_host_of_selected && gui::begin_child("HostControls", fan::vec2(0, 0), 0)) {
                 gui::text(ecps_backend.is_streaming_to_any_channel() ? "You are sharing your screen" : "Your screen is not shared");
-                text_wrapped_disabled("Use \"Share my screen\" at the top. Others join this channel to watch you.");
+                text_wrapped_disabled("Use \"Share screen\" at the top. Others join this channel to watch you.");
                 if (gui::checkbox("Preview own stream", &This->show_own_stream)) {
                   if (auto rt = get_render_thread(); rt) {
                     if (This->show_own_stream) {
@@ -1031,6 +1041,8 @@ struct ecps_gui_t {
       f32_t available_width = gui::get_content_region_avail().x;
 
       gui::spacing();
+
+      gui::checkbox("Show stats over the picture", &This->show_stream_stats);
 
       if (ecps_backend.is_streaming_to_any_channel()) {
         This->resolution_controls.render_resolution_controls();
@@ -2447,7 +2459,9 @@ struct ecps_gui_t {
   // stream area, over the picture, and fades out unless the mouse is near the bottom or there is no picture, so
   // the stream gets the whole height. Call it inside the stream child, no window or focus tricks of its own
   void render_stream_toolbar() {
+    render_autohide_bar();
     render_stream_stats_overlay();
+    render_stream_top_overlay();
     auto& io = gui::get_io();
     fan::vec2 area_pos = gui::get_window_pos();
     fan::vec2 area_size = gui::get_window_size();
@@ -2471,11 +2485,9 @@ struct ecps_gui_t {
 
     gui::push_style_var(gui::style_var_alpha, std::max(toolbar_alpha, 0.02f));
     f32_t y = area_size.y - frame_height - 14.f + gui::get_scroll_y();
-    f32_t button_width = 200.f;
-    gui::set_cursor_pos(fan::vec2(14.f, y));
-    gui::checkbox("Stats", &show_stream_stats);
-    gui::same_line(0, 14.f);
-    render_watch_picker(std::min(240.f, area_size.x * 0.26f));
+    // as wide as the text needs, a fixed width cut the label off
+    const char* share_text = ecps_backend.is_streaming_to_any_channel() ? "Stop sharing" : "Share screen";
+    f32_t button_width = gui::calc_text_size(share_text).x + gui::get_style().FramePadding.x * 2 + 28.f;
     gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
@@ -2510,7 +2522,7 @@ struct ecps_gui_t {
     }
     else if (ecps_backend.is_hosting_any_channel()) {
       title = "You are not sharing your screen";
-      detail = "Move the mouse to the bottom edge and press Share my screen";
+      detail = "Move the mouse to the bottom edge and press Share screen";
     }
     else if (!ecps_backend.channel_info.empty()) {
       title = "Waiting for the host's stream";
@@ -3281,15 +3293,55 @@ struct ecps_gui_t {
     }
   }
 
-  // who to watch, in the toolbar of the stream view
-  void render_watch_picker(f32_t width) {
-    auto options = streamer_options();
+  std::string watch_preview(const std::vector<streamer_option_t>& options) const {
     std::string preview = options.empty() ? "Nobody is sharing" : "Pick who to watch";
     for (const auto& option : options) {
       if (watch_active && (std::uint32_t)option.channel.i == watch_channel && option.session == watch_source) {
         preview = "Watching " + option.name;
       }
     }
+    return preview;
+  }
+
+  // The top right of the stream area: the Stats tick and whose screen is watched. It fades out like the toolbar and
+  // comes back when the mouse goes near the top edge, or while there is no picture
+  void render_stream_top_overlay() {
+    // with nobody sharing, or one sharer (which is watched by itself), there is nothing to choose
+    auto options = streamer_options();
+    if (options.size() < 2) {
+      top_overlay_alpha = 0.f;
+      return;
+    }
+    auto& io = gui::get_io();
+    fan::vec2 area_pos = gui::get_window_pos();
+    fan::vec2 area_size = gui::get_window_size();
+    f32_t frame_height = gui::get_frame_height();
+    bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
+      io.MousePos.y >= area_pos.y && io.MousePos.y <= area_pos.y + frame_height * 3.f;
+    auto* rt = get_render_thread();
+    bool has_picture = rt && rt->network_frame.get_image() != engine.default_texture;
+    auto now = std::chrono::steady_clock::now();
+    if (mouse_near || !has_picture) {
+      top_overlay_visible_until = now + std::chrono::milliseconds(1500);
+    }
+    f32_t target = now < top_overlay_visible_until ? 1.f : 0.f;
+    top_overlay_alpha += (target - top_overlay_alpha) * std::min(1.f, io.DeltaTime * 14.f);
+    if (target == 0.f && top_overlay_alpha < 0.02f) {
+      top_overlay_alpha = 0.f;
+      return;
+    }
+
+    f32_t picker_width = std::max(180.f, gui::calc_text_size(watch_preview(options)).x + frame_height * 1.8f);
+    gui::push_style_var(gui::style_var_alpha, std::max(top_overlay_alpha, 0.02f));
+    gui::set_cursor_pos(fan::vec2(area_size.x - picker_width - 14.f, 10.f + stream_top_offset() + gui::get_scroll_y()));
+    render_watch_picker(picker_width);
+    gui::pop_style_var();
+  }
+
+  // who to watch
+  void render_watch_picker(f32_t width) {
+    auto options = streamer_options();
+    std::string preview = watch_preview(options);
     gui::push_item_width(width);
     if (gui::begin_combo("##watch_picker", preview)) {
       for (const auto& option : options) {
@@ -3308,6 +3360,130 @@ struct ecps_gui_t {
   std::uint32_t watch_source = 0;
   std::unordered_map<std::uint32_t, bool> stream_state_sent;
   std::chrono::steady_clock::time_point stream_state_sent_at;
+
+  // ---- the interface that hides ------------------------------------------------------------------------------
+
+  void save_ui_config() {
+    fan::json ui = fan::json::object();
+    ui["compact_bar"] = top_bar_compact;
+    ui["autohide"] = ui_autohide;
+    write_to_config("ui", ui);
+  }
+
+  // on: the bar and the tabs leave the Stream View and show again near the top edge. Off pins them back in place
+  void set_ui_autohide(bool on) {
+    ui_autohide = on;
+    autohide_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    if (on) {
+      window_handler.main_tab = 1;
+      window_handler.current_tab = 1;
+    }
+    save_ui_config();
+  }
+
+  // how far the overlays in the stream area move down while the bar is shown over it
+  f32_t stream_top_offset() const {
+    return ui_autohide ? autohide_alpha * (gui::get_frame_height() + 18.f) : 0.f;
+  }
+
+  // The bar and the tabs when the interface is hidden: drawn over the top of the stream, shown while the mouse is
+  // near the top edge (and a moment after), with a Pin button that puts everything back
+  void render_autohide_bar() {
+    if (!ui_autohide) {
+      return;
+    }
+    auto& io = gui::get_io();
+    fan::vec2 area_pos = gui::get_window_pos();
+    fan::vec2 area_size = gui::get_window_size();
+    f32_t frame_height = gui::get_frame_height();
+    f32_t bar_height = frame_height + 18.f;
+
+    // a thin strip brings it back, once it is there the whole bar keeps it
+    f32_t reach = autohide_alpha > 0.05f ? bar_height + 16.f : frame_height * 0.9f;
+    bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
+      io.MousePos.y >= area_pos.y && io.MousePos.y <= area_pos.y + reach;
+    auto now = std::chrono::steady_clock::now();
+    if (mouse_near || gui::is_any_item_active()) {
+      autohide_visible_until = now + std::chrono::milliseconds(1200);
+    }
+    f32_t target = now < autohide_visible_until ? 1.f : 0.f;
+    autohide_alpha += (target - autohide_alpha) * std::min(1.f, io.DeltaTime * 14.f);
+    if (target == 0.f && autohide_alpha < 0.02f) {
+      autohide_alpha = 0.f;
+      return;
+    }
+
+    gui::push_style_var(gui::style_var_alpha, std::max(autohide_alpha, 0.02f));
+    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(10.f, 2.f));
+    gui::get_window_draw_list()->AddRectFilled(area_pos, area_pos + fan::vec2(area_size.x, bar_height), 0xe6141414u);
+
+    f32_t scroll = gui::get_scroll_y();
+    gui::set_cursor_pos(fan::vec2(12.f, 9.f + scroll));
+    if (gui::button("Channels")) {
+      window_handler.main_tab = 0;
+      window_handler.current_tab = 0;
+    }
+    gui::same_line();
+    gui::begin_disabled();
+    gui::button("Stream View");
+    gui::end_disabled();
+    gui::same_line();
+    if (gui::button("Debug")) {
+      window_handler.main_tab = 2;
+      window_handler.current_tab = 2;
+    }
+    gui::same_line(0, 24.f);
+    if (gui::button("Pin interface")) {
+      set_ui_autohide(false);
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Keep the bar and the tabs on screen");
+    }
+
+    // version and name at the right, both open what they do in the normal bar
+    std::string version = std::string("v") + ecps_version;
+    std::string name = ecps_backend.get_current_username();
+    f32_t right = area_size.x - 16.f;
+    f32_t name_width = gui::calc_text_size(name).x;
+    f32_t version_width = gui::calc_text_size(version).x;
+    gui::set_cursor_pos(fan::vec2(right - name_width, 9.f + scroll));
+    gui::text(fan::color(0.7f, 0.7f, 1.f, 1.f), name);
+    if (gui::is_item_clicked()) {
+      username_popup_requested = true;
+    }
+    gui::set_cursor_pos(fan::vec2(right - name_width - version_width - 18.f, 9.f + scroll));
+    gui::text(fan::color(0.82f, 0.82f, 0.88f, 1.f), version);
+    if (gui::is_item_clicked()) {
+      about_popup_requested = true;
+    }
+    gui::pop_style_var(2);
+  }
+
+  bool ui_autohide = false;
+  f32_t autohide_alpha = 0.f;
+  std::chrono::steady_clock::time_point autohide_visible_until;
+
+  // A channel stays selected whenever there is one to select: if the selection is gone (nothing picked yet, or the
+  // channel closed), yours is taken, else the first one this client is in
+  void update_selected_channel() {
+    if (ecps_backend.channel_info.empty()) {
+      return;
+    }
+    if (selected_channel_id.i != (uint16_t)-1) {
+      bool joined = ecps_backend.is_channel_joined(selected_channel_id);
+      bool listed = ecps_backend.is_channel_available(selected_channel_id);
+      if (joined || listed || !ecps_backend.channel_list_received) {
+        return;
+      }
+    }
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (ecps_backend.is_hosting_channel(channel.channel_id)) {
+        selected_channel_id = channel.channel_id;
+        return;
+      }
+    }
+    selected_channel_id = ecps_backend.channel_info.front().channel_id;
+  }
 
   // grey text that breaks at the edge of its panel, a long hint must not run out of it
   static void text_wrapped_disabled(const std::string& text) {
@@ -3350,7 +3526,7 @@ struct ecps_gui_t {
     gui::push_style_var(gui::style_var_frame_padding, fan::vec2(10.f, 2.f));
     gui::push_style_var(gui::style_var_item_spacing, fan::vec2(10.f, 4.f));
 
-    gui::text(fan::color(0.82f, 0.82f, 0.88f, 1.f), std::string("ECPS v") + ecps_version);
+    gui::text(fan::color(0.82f, 0.82f, 0.88f, 1.f), std::string(top_bar_compact ? "v" : "ECPS v") + ecps_version);
     bool open_about = gui::is_item_clicked();
     if (gui::is_item_clicked(1)) {
       gui::open_popup("##top_bar_menu");
@@ -3388,9 +3564,16 @@ struct ecps_gui_t {
 
     gui::same_line(0, 24.f);
     render_share_status(!top_bar_compact);
+    gui::same_line(0, 12.f);
+    if (gui::button(top_bar_compact ? "Hide" : "Hide UI")) {
+      set_ui_autohide(true);
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Hide the bar and the tabs in the Stream View. They come back when the mouse is near the top edge");
+    }
 
     // your name, at the right, with the note about a taken saved name before it
-    std::string current_user = "User: " + ecps_backend.get_current_username();
+    std::string current_user = std::string(top_bar_compact ? "" : "User: ") + ecps_backend.get_current_username();
     fan::vec2 text_size = gui::calc_text_size(current_user);
     std::string notice = username_notice_text();
     f32_t notice_width = notice.empty() ? 0.f : gui::calc_text_size(notice).x + 24.f;
@@ -3409,11 +3592,12 @@ struct ecps_gui_t {
     gui::pop_style_var(2);
 
     if (gui::begin_popup("##top_bar_menu")) {
-      if (gui::selectable("Compact bar", top_bar_compact)) {
+      if (gui::selectable(top_bar_compact ? "Show the full bar" : "Show the compact bar")) {
         top_bar_compact = !top_bar_compact;
-        fan::json ui = fan::json::object();
-        ui["compact_bar"] = top_bar_compact;
-        write_to_config("ui", ui);
+        save_ui_config();
+      }
+      if (gui::selectable("Hide the interface in the Stream View")) {
+        set_ui_autohide(true);
       }
       gui::end_popup();
     }
@@ -3507,7 +3691,7 @@ struct ecps_gui_t {
   // comes in, both at once. They are separate things: you can send and watch in the same moment
   void render_share_status(bool with_chips = true) {
     auto* rt = get_render_thread();
-    stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(0, 0));
+    stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(0, 0), !with_chips);
     if (!rt || !with_chips) {
       return;
     }
@@ -3578,12 +3762,12 @@ struct ecps_gui_t {
       width = std::max(width, gui::calc_text_size(line.text).x);
     }
     f32_t line_height = gui::get_text_line_height_with_spacing();
-    gui::set_cursor_pos(fan::vec2(12, 12));
+    gui::set_cursor_pos(fan::vec2(12, 12 + stream_top_offset()));
     fan::vec2 at = gui::get_cursor_screen_pos();
     gui::get_window_draw_list()->AddRectFilled(at - fan::vec2(8, 6), at + fan::vec2(width + 8, lines.size() * line_height + 4),
       0xb4000000u, 6.f);
     for (std::size_t i = 0; i < lines.size(); ++i) {
-      gui::set_cursor_pos(fan::vec2(12, 12 + i * line_height));
+      gui::set_cursor_pos(fan::vec2(12, 12 + stream_top_offset() + i * line_height));
       gui::text(lines[i].color, lines[i].text);
     }
   }
@@ -3986,6 +4170,7 @@ struct ecps_gui_t {
     update_host_cursor();
     update_username();
     update_stream_settings_persistence();
+    update_selected_channel();
     update_stream_state();
     update_watch();
     update_debug_sample();
@@ -4073,6 +4258,8 @@ struct ecps_gui_t {
   std::unordered_map<std::uint32_t, std::uint8_t> sent_channel_flags;
   std::chrono::steady_clock::time_point flags_sent_at;
   bool show_stream_stats = false;
+  f32_t top_overlay_alpha = 1.f;
+  std::chrono::steady_clock::time_point top_overlay_visible_until;
   bool top_bar_compact = false;
   bool about_popup_requested = false;
   f32_t toolbar_alpha = 1.f;
