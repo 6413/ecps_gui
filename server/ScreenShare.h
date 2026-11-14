@@ -72,44 +72,142 @@ ScreenShare_SessionQuit
   Channel->SessionList.unlrec(ChannelSessionID);
 }
 
-void StorePacketForRecovery(Protocol_ChannelID_t channel_id, uint16_t sequence, 
+bool ScreenShare_IsMember(Protocol_SessionID_t SessionID, Protocol_ChannelID_t ChannelID){
+  if(IsChannelInvalid(ChannelID) == true){
+    return false;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto nr = Channel->SessionList.GetNodeFirst();
+  while(nr != Channel->SessionList.dst){
+    auto n = Channel->SessionList.GetNodeByReference(nr);
+    if(n->data.SessionID == SessionID){
+      return true;
+    }
+    nr = n->NextNodeReference;
+  }
+  return false;
+}
+
+/* the session whose video a viewer gets in a channel: the one it picked, else the host (older clients never pick) */
+Protocol_SessionID_t ScreenShare_WatchedSource(Protocol_SessionID_t Viewer, Protocol_ChannelID_t ChannelID){
+  auto Session = &g_pile->SessionList[Viewer];
+  if(Session->Watching && Session->WatchChannel == ChannelID.i){
+    return Protocol_SessionID_t(Session->WatchSource);
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  return ChannelData->HostSessionID;
+}
+
+void ScreenShare_FillStreamers(Protocol_ChannelID_t ChannelID, Protocol_S2C_t::Channel_ScreenShare_View_Streamers_t &Message){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  Message.ChannelID = ChannelID;
+  Message.Count = 0;
+  for(uint32_t Streamer : ChannelData->Streamers){
+    if(Message.Count >= 8){
+      break;
+    }
+    Message.Streamers[Message.Count++] = Protocol_SessionID_t((Protocol_SessionID_t::Type)Streamer);
+  }
+}
+
+void ScreenShare_SendStreamersTo(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
+  Protocol_S2C_t::Channel_ScreenShare_View_Streamers_t Message{};
+  ScreenShare_FillStreamers(ChannelID, Message);
+  Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_ScreenShare_View_Streamers, Message);
+}
+
+void ScreenShare_BroadcastStreamers(Protocol_ChannelID_t ChannelID){
+  Protocol_S2C_t::Channel_ScreenShare_View_Streamers_t Message{};
+  ScreenShare_FillStreamers(ChannelID, Message);
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto nr = Channel->SessionList.GetNodeFirst();
+  while(nr != Channel->SessionList.dst){
+    auto n = Channel->SessionList.GetNodeByReference(nr);
+    auto Peer = g_pile->SessionList[n->data.SessionID].TCP.peer;
+    if(Peer != nullptr && g_pile->SessionList[n->data.SessionID].TCP.Crypto.ready){
+      Session::WriteCommand(n->data.SessionID, 0, Protocol_S2C_t::Channel_ScreenShare_View_Streamers, Message);
+    }
+    nr = n->NextNodeReference;
+  }
+}
+
+/* Explicit is a session saying it started or stopped. Without it (video simply arriving) a session is added once
+   and only a close or a stop from it takes it away again, so a few late packets can't bring back a stopped one */
+void ScreenShare_SetStreamer(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, bool Streaming, bool Explicit){
+  if(IsChannelInvalid(ChannelID) == true){
+    return;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  uint32_t Id = (uint32_t)SessionID.i;
+
+  if(Explicit && std::find(ChannelData->Announced.begin(), ChannelData->Announced.end(), Id) == ChannelData->Announced.end()){
+    ChannelData->Announced.push_back(Id);
+  }
+  bool Announced = std::find(ChannelData->Announced.begin(), ChannelData->Announced.end(), Id) != ChannelData->Announced.end();
+  if(!Explicit && Announced && Streaming){
+    return;
+  }
+
+  auto It = std::find(ChannelData->Streamers.begin(), ChannelData->Streamers.end(), Id);
+  bool Changed = false;
+  if(Streaming && It == ChannelData->Streamers.end() && ChannelData->Streamers.size() < 8){
+    ChannelData->Streamers.push_back(Id);
+    Changed = true;
+  }
+  else if(!Streaming && It != ChannelData->Streamers.end()){
+    ChannelData->Streamers.erase(It);
+    Changed = true;
+  }
+  if(!Streaming){
+    ChannelData->Streams.erase(Id);
+    if(!Explicit){
+      std::erase(ChannelData->Announced, Id);
+    }
+  }
+  if(Changed){
+    ScreenShare_BroadcastStreamers(ChannelID);
+  }
+}
+
+void StorePacketForRecovery(Protocol_ChannelID_t channel_id, Protocol_SessionID_t source, uint16_t sequence,
                            uint16_t current, const void* data, size_t size) {
   if (IsChannelInvalid(channel_id)) return;
-  
+
   auto Channel = &g_pile->ChannelList[channel_id];
   auto ChannelData = (Channel_ScreenShare_Data_t*)Channel->Buffer;
-  
-  // sequence and current are the host's numbers. Unchecked, 4096 packets for each kept sequence
+  auto& stream = ChannelData->Streams[(uint32_t)source.i];
+
+  // sequence and current are the sender's numbers. Unchecked, 4096 packets for each kept sequence
   // would have the server hold hundreds of megabytes for one channel
   constexpr size_t MaxStoredBytes = 32 * 1024 * 1024;
 
-  auto& tracker = ChannelData->Frames[sequence % ChannelData->Frames.size()];
+  auto& tracker = stream.Frames[sequence % stream.Frames.size()];
   if (tracker.Sequence == sequence && tracker.Expected && current >= tracker.Expected) {
     return;
   }
 
-  auto& packets = ChannelData->SentPackets[sequence];
+  auto& packets = stream.SentPackets[sequence];
   if (packets.size() <= current) {
     packets.resize(current + 1);
   }
 
   auto& slot = packets[current];
-  if (ChannelData->SentBytes - slot.size() + size <= MaxStoredBytes) {
-    ChannelData->SentBytes -= slot.size();
+  if (stream.SentBytes - slot.size() + size <= MaxStoredBytes) {
+    stream.SentBytes -= slot.size();
     slot.assign(
       static_cast<const uint8_t*>(data),
       static_cast<const uint8_t*>(data) + size
     );
-    ChannelData->SentBytes += size;
+    stream.SentBytes += size;
   }
 
-  if (ChannelData->SentPackets.size() > 50) {
-    std::erase_if(ChannelData->SentPackets, [sequence, ChannelData](const auto& p) {
+  if (stream.SentPackets.size() > 50) {
+    std::erase_if(stream.SentPackets, [sequence, &stream](const auto& p) {
       if (((sequence - p.first) & 0xfff) <= 32) {
         return false;
       }
       for (const auto& packet : p.second) {
-        ChannelData->SentBytes -= packet.size();
+        stream.SentBytes -= packet.size();
       }
       return true;
     });
@@ -119,15 +217,21 @@ void StorePacketForRecovery(Protocol_ChannelID_t channel_id, uint16_t sequence,
 void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t channel_id, uint16_t sequence,
                            const uint16_t* missing_indices, uint16_t missing_count) {
   if (IsChannelInvalid(channel_id)) return;
-  
+
   auto Channel = &g_pile->ChannelList[channel_id];
   auto ChannelData = (Channel_ScreenShare_Data_t*)Channel->Buffer;
-  
-  auto it = ChannelData->SentPackets.find(sequence);
-  if (it == ChannelData->SentPackets.end()) {
+
+  // the resends come from the video of the session this viewer watches
+  Protocol_SessionID_t source = ScreenShare_WatchedSource(requester, channel_id);
+  auto stream_it = ChannelData->Streams.find((uint32_t)source.i);
+  if (stream_it == ChannelData->Streams.end()) {
     return;
   }
-  
+  auto it = stream_it->second.SentPackets.find(sequence);
+  if (it == stream_it->second.SentPackets.end()) {
+    return;
+  }
+
   auto& packets = it->second;
   auto Session = &g_pile->SessionList[requester];
   if(Session->UDP.Address.ip == 0){
@@ -156,21 +260,25 @@ void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t
   }
 }
 
-void ScreenShare_StreamPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_size_t DataSize) {
+/* Source is the session the video comes from. It goes to the viewers that picked it, and to the ones that picked
+   nothing when it is the host */
+void ScreenShare_StreamPacket(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t Source, void *Data, IO_size_t DataSize) {
   auto Body = (ScreenShare_StreamHeader_Body_t*)Data;
   uint16_t sequence = Body->GetSequence();
   uint16_t current = Body->GetCurrent();
-  
-  StorePacketForRecovery(ChannelID, sequence, current, Data, DataSize);
-  
+
+  StorePacketForRecovery(ChannelID, Source, sequence, current, Data, DataSize);
+
   auto Channel = &g_pile->ChannelList[ChannelID];
-  auto ChannelSubData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
 
   auto nr = Channel->SessionList.GetNodeFirst();
   ChannelSessionList_Node_t *n;
   for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
     n = Channel->SessionList.GetNodeByReference(nr);
-    if(n->data.SessionID == ChannelSubData->HostSessionID){
+    if(n->data.SessionID == Source){
+      continue;
+    }
+    if(ScreenShare_WatchedSource(n->data.SessionID, ChannelID) != Source){
       continue;
     }
     auto Session = &g_pile->SessionList[n->data.SessionID];
@@ -185,9 +293,8 @@ void ScreenShare_StreamPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_siz
   }
 }
 
-void ScreenShare_AudioPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_size_t DataSize) {
+void ScreenShare_AudioPacket(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t Source, void *Data, IO_size_t DataSize) {
   auto Channel = &g_pile->ChannelList[ChannelID];
-  auto ChannelSubData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
 
   ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData_t cd;
   cd.ChannelID = ChannelID;
@@ -195,7 +302,10 @@ void ScreenShare_AudioPacket(Protocol_ChannelID_t ChannelID, void *Data, IO_size
   ChannelSessionList_Node_t *n;
   for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
     n = Channel->SessionList.GetNodeByReference(nr);
-    if(n->data.SessionID == ChannelSubData->HostSessionID){
+    if(n->data.SessionID == Source){
+      continue;
+    }
+    if(ScreenShare_WatchedSource(n->data.SessionID, ChannelID) != Source){
       continue;
     }
     if(g_pile->SessionList[n->data.SessionID].UDP.Address.ip == 0){

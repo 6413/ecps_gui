@@ -750,6 +750,20 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
+  __dme_get(Protocol_S2C, Channel_ScreenShare_View_Streamers) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_Streamers_t>();
+    if (msg.status != 0) {
+      co_return;
+    }
+    std::vector<std::uint32_t> streamers;
+    for (std::uint8_t i = 0; i < msg->Count && i < 8; ++i) {
+      streamers.push_back((std::uint32_t)msg->Streamers[i].i);
+    }
+    std::lock_guard<std::mutex> lock(backend.streamers_mutex);
+    backend.channel_streamers[(std::uint32_t)msg->ChannelID.i] = std::move(streamers);
+    co_return;
+  };
+
   __dme_get(Protocol_S2C, SetUsername_Result) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::SetUsername_Result_t>();
     if (msg.status != 0) {
@@ -765,6 +779,12 @@ ecps_backend_t::ecps_backend_t() {
     }
     backend.username_result.store(msg->Result);
     backend.username_result_seq.fetch_add(1);
+
+    // the first one comes unasked right after login and shows this is a newer server: now the saved name can be
+    // asked for, and the other newer messages may be sent
+    if (!backend.server_new.exchange(true) && !backend.desired_username.empty() && backend.desired_username != name) {
+      co_await backend.send_set_username(backend.desired_username);
+    }
     co_return;
   };
 
@@ -1438,6 +1458,7 @@ int main() {
 
         if (encoded_size > 0 && encoded_data) {
           ++stats.frames;
+          ecps_backend.share_frames_encoded.fetch_add(1, std::memory_order_relaxed);
           stats.bytes += encoded_size;
           if (rt->ecps_gui.show_own_stream &&
             !decode_queue.push(std::vector<uint8_t>(encoded_data, encoded_data + encoded_size))) {

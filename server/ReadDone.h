@@ -223,6 +223,7 @@ case Protocol_C2S_t::JoinChannel:{
   Channel_BroadcastSessionList(ChannelID);
   Channel_BroadcastChannelList();
   ScreenShare_SendFlagTo(ChannelID, {ChannelID, ChannelSessionID});
+  ScreenShare_SendStreamersTo(ChannelID, SessionID);
 
   goto StateDone_gt;
 }
@@ -494,25 +495,57 @@ case Protocol_C2S_t::Channel_Log_Data:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_ScreenShare_Share_StreamState:{
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_StreamState_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsAnythingInvalid(SessionID, ChannelID, Request->ChannelSessionID) == true){
+    goto StateDone_gt;
+  }
+  ScreenShare_SetStreamer(ChannelID, SessionID, Request->Streaming != 0, true);
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::Channel_ScreenShare_View_Watch:{
+  auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_Watch_t *)RestPacket;
+
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsAnythingInvalid(SessionID, ChannelID, Request->ChannelSessionID) == true){
+    goto StateDone_gt;
+  }
+  if(Request->HasSource == 0){
+    Session->Watching = 0;
+    goto StateDone_gt;
+  }
+  /* only someone in the channel can be watched */
+  if(Session::IsInvalid(Request->Source) == true || ScreenShare_IsMember(Request->Source, ChannelID) == false){
+    goto StateDone_gt;
+  }
+  Session->Watching = 1;
+  Session->WatchChannel = ChannelID.i;
+  Session->WatchSource = Request->Source.i;
+
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor:{
 
   auto Request = (Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor_t *)RestPacket;
 
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
-  if(IsChannelInvalid(ChannelID) == true){
+  if(IsAnythingInvalid(SessionID, ChannelID, Request->ChannelSessionID) == true){
     goto StateDone_gt;
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
-  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  if(ChannelData->HostSessionID != SessionID){
-    goto StateDone_gt;
-  }
 
   auto nr = Channel->SessionList.GetNodeFirst();
   ChannelSessionList_Node_t *n;
   for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
     n = Channel->SessionList.GetNodeByReference(nr);
     if(n->data.SessionID == SessionID){
+      continue;
+    }
+    /* only the viewers that watch this session, the others would draw it over somebody else's picture */
+    if(ScreenShare_WatchedSource(n->data.SessionID, ChannelID) != SessionID){
       continue;
     }
 
@@ -572,16 +605,21 @@ case Protocol_C2S_t::Channel_ScreenShare_ViewToShare:{
   if(IsChannelInvalid(ChannelID) == true){
     goto StateDone_gt;
   }
-  auto Channel = &g_pile->ChannelList[ChannelID];
-  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  
-  // Send the flag from viewer to host
+  if(ScreenShare_IsMember(SessionID, ChannelID) == false){
+    goto StateDone_gt;
+  }
+
+  /* from the viewer to the session it watches (the host unless it picked someone else) */
+  Protocol_SessionID_t Target = ScreenShare_WatchedSource(SessionID, ChannelID);
+  if(Session::IsInvalid(Target) == true || Target == SessionID){
+    goto StateDone_gt;
+  }
   Protocol_S2C_t::Channel_ScreenShare_ViewToShare_t Payload;
   Payload.ChannelID = ChannelID;
   Payload.Flag = Request->Flag;
 
   Session::WriteCommand(
-    ChannelData->HostSessionID,
+    Target,
     0,
     Protocol_S2C_t::Channel_ScreenShare_ViewToShare,
     Payload);

@@ -409,7 +409,9 @@ void track_server_packet(Protocol_SessionID_t host_session_id,
   auto ChannelData = (Channel_ScreenShare_Data_t*)g_pile->ChannelList[channel_id].Buffer;
   uint64_t now = EV_nowi(&g_pile->listener);
 
-  auto& frame = ChannelData->Frames[sequence % ChannelData->Frames.size()];
+  // host_session_id is whoever sent the packet, every sender has frames of its own
+  auto& stream = ChannelData->Streams[(uint32_t)host_session_id.i];
+  auto& frame = stream.Frames[sequence % stream.Frames.size()];
   if (frame.Sequence != sequence) {
     frame = {};
     frame.Sequence = sequence;
@@ -423,7 +425,7 @@ void track_server_packet(Protocol_SessionID_t host_session_id,
     ++frame.Received;
   }
 
-  for (auto& f : ChannelData->Frames) {
+  for (auto& f : stream.Frames) {
     bool incomplete = f.Sequence != (uint16_t)-1 && f.Expected && f.Received < f.Expected;
     if (incomplete && f.Requests < 3 && now - f.LastRequestAt > 30000000ULL && f.Sequence != sequence) {
       request_missing_from_host(host_session_id, channel_id, f);
@@ -489,20 +491,7 @@ static bool udp_read_one() {
       ++g_udp_stats.bad_channel;
       return true;
     }
-    if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
-      ++g_udp_stats.not_host;
-    #if ecps_debug_prints >= 1
-      // once per sender and channel: who sent it, and who the server thinks hosts that channel
-      static std::set<uint64_t> told;
-      uint64_t key = ((uint64_t)SessionID.i << 32) | (uint64_t)RestPacket->ChannelID.i;
-      if (told.insert(key).second) {
-        auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[RestPacket->ChannelID].Buffer;
-        fan::print("udp: session", (uint64_t)SessionID.i, "sent video for channel", (uint64_t)RestPacket->ChannelID.i,
-          "but the host of that channel is session", (uint64_t)ChannelData->HostSessionID.i);
-      }
-    #endif
-      return true;
-    }
+    /* any member can share into the channel, the sender is the source of what it sends */
 
     auto StreamData = (uint8_t*)&RestPacket[1];
     IO_size_t StreamSize = size - (StreamData - buffer);
@@ -525,9 +514,10 @@ static bool udp_read_one() {
       possible = Head->GetPossible();
     }
 
+    ScreenShare_SetStreamer(RestPacket->ChannelID, SessionID, true, false);
     track_server_packet(SessionID, RestPacket->ChannelID, sequence, current, possible);
 
-    ScreenShare_StreamPacket(RestPacket->ChannelID, StreamData, StreamSize);
+    ScreenShare_StreamPacket(RestPacket->ChannelID, SessionID, StreamData, StreamSize);
     break;
   }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData: {
@@ -539,11 +529,8 @@ static bool udp_read_one() {
     if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
       break;
     }
-    if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
-      break;
-    }
     auto AudioData = (uint8_t*)&RestPacket[1];
-    ScreenShare_AudioPacket(RestPacket->ChannelID, AudioData, size - (AudioData - buffer));
+    ScreenShare_AudioPacket(RestPacket->ChannelID, SessionID, AudioData, size - (AudioData - buffer));
     break;
   }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {

@@ -384,6 +384,7 @@ struct ecps_backend_t {
   // what the share thread reports, to tell a stalled capture or encoder from packets that never arrive
   std::atomic<uint64_t> stream_udp_packets{0};
   std::atomic<uint64_t> stream_udp_bytes{0};
+  std::atomic<uint64_t> share_frames_encoded{0};
   // the same on the viewing side: packets that arrived, frames put back together, frames decoded
   std::atomic<uint64_t> view_udp_packets{0};
   std::atomic<uint64_t> view_udp_bytes{0};
@@ -566,6 +567,14 @@ struct ecps_backend_t {
             sequence, view.m_Sequence, (int16_t)(sequence - view.m_Sequence));
         #endif
 
+          // another streamer is being watched now, its sequence has nothing to do with the old one's
+          if (view_resync.exchange(false) && sequence != view.m_Sequence) {
+            if (view.m_Possible != (uint16_t)-1) {
+              view.FixFrameOnComplete();
+            }
+            view.SetNewSequence(sequence);
+          }
+
           bool is_sequence_valid = true;
           if (sequence != view.m_Sequence) {
             int16_t diff = (int16_t)(sequence - view.m_Sequence);
@@ -710,6 +719,7 @@ struct ecps_backend_t {
     }
     session_id = {};
     udp_crypto = {};
+    server_new = false;
     {
       std::lock_guard<std::mutex> lock(username_mutex);
       my_username.clear();
@@ -775,6 +785,10 @@ struct ecps_backend_t {
     }
     catch (...) {}
   }
+  // An older server drops a connection that sends it a message it doesn't know. This turns true when the server
+  // sends the name message right after login, which only a newer one does, and every newer message waits for it
+  std::atomic<bool> server_new {false};
+
   // the name this client wants (from the config) and what the server last answered
   std::string desired_username;
   mutable std::mutex username_mutex;
@@ -783,7 +797,60 @@ struct ecps_backend_t {
   std::atomic<std::uint8_t> username_result {0};
   std::atomic<std::uint32_t> username_result_seq {0};
 
+  // Who shares in each channel, as the server last said (the network thread writes, the UI reads), and a flag that
+  // tells the receive path the watched streamer changed: the next video packet starts a new sequence, whatever
+  // its number is
+  mutable std::mutex streamers_mutex;
+  std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> channel_streamers;
+  std::atomic<bool> view_resync {false};
+
+  std::vector<std::uint32_t> streamers_of(Protocol_ChannelID_t channel_id) const {
+    std::lock_guard<std::mutex> lock(streamers_mutex);
+    auto it = channel_streamers.find((std::uint32_t)channel_id.i);
+    return it == channel_streamers.end() ? std::vector<std::uint32_t>() : it->second;
+  }
+
+  fan::event::task_t send_stream_state(Protocol_ChannelID_t channel_id, Protocol_ChannelSessionID_t channel_session_id, bool streaming) {
+    if (!server_new.load()) {
+      co_return;
+    }
+    try {
+      Protocol_C2S_t::Channel_ScreenShare_Share_StreamState_t rest;
+      std::memset(&rest, 0, sizeof(rest));
+      rest.ChannelID = channel_id;
+      rest.ChannelSessionID = channel_session_id;
+      rest.Streaming = streaming ? 1 : 0;
+      co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_Share_StreamState, &rest, sizeof(rest));
+    }
+    catch (...) {}
+  }
+
+  fan::event::task_t send_watch(Protocol_ChannelID_t channel_id, Protocol_ChannelSessionID_t channel_session_id, Protocol_SessionID_t source) {
+    if (!server_new.load()) {
+      co_return;
+    }
+    try {
+      Protocol_C2S_t::Channel_ScreenShare_View_Watch_t rest;
+      std::memset(&rest, 0, sizeof(rest));
+      rest.ChannelID = channel_id;
+      rest.ChannelSessionID = channel_session_id;
+      rest.HasSource = 1;
+      rest.Source = source;
+      co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_View_Watch, &rest, sizeof(rest));
+      // a new picture starts with a keyframe, ask the new streamer for one
+      Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t keyframe;
+      std::memset(&keyframe, 0, sizeof(keyframe));
+      keyframe.ChannelID = channel_id;
+      keyframe.Flag = ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
+      co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_ViewToShare, &keyframe, sizeof(keyframe));
+    }
+    catch (...) {}
+  }
+
   fan::event::task_t send_set_username(std::string name) {
+    if (!server_new.load()) {
+      co_return;
+    }
     try {
       Protocol_C2S_t::SetUsername_t rest;
       std::memset(&rest, 0, sizeof(rest));
@@ -799,10 +866,7 @@ struct ecps_backend_t {
       Protocol_C2S_t::Request_Login_t rest;
       rest.Type = Protocol::LoginType_t::Anonymous;
       co_await tcp_write(Protocol_C2S_t::Request_Login, &rest, sizeof(rest));
-      // every login, the first and the ones after a reconnect, asks for the saved name again
-      if (!desired_username.empty()) {
-        co_await send_set_username(desired_username);
-      }
+      // the saved name is asked for when the server shows it is a new one, see the SetUsername_Result handler
       co_return;
     }
     catch (fan::exception_t e) {

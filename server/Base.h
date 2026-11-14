@@ -129,7 +129,10 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
     uint32_t RecoverySent; \
   }UDP; \
   char Username[32]; \
-  uint64_t UsernameChangedAt;
+  uint64_t UsernameChangedAt; \
+  uint8_t Watching; \
+  Protocol_ChannelID_t::Type WatchChannel; \
+  Protocol_SessionID_t::Type WatchSource;
 #define BLL_set_IsNodeRecycled 1
 #include <BLL/BLL.h>
 
@@ -155,13 +158,24 @@ struct ScreenShare_FrameTracker_t{
   std::bitset<0x1000> Got;
 };
 
-struct Channel_ScreenShare_Data_t{
-  uint8_t Flag = 0;
-  Protocol_SessionID_t HostSessionID;
+/* what the server keeps of one session's video in a channel: its frames for resends, and which frames are whole */
+struct ScreenShare_Stream_t{
   std::unordered_map<uint16_t, std::vector<std::vector<uint8_t>>> SentPackets;
   // payload bytes held in SentPackets
   size_t SentBytes = 0;
   std::array<ScreenShare_FrameTracker_t, 8> Frames;
+};
+
+struct Channel_ScreenShare_Data_t{
+  uint8_t Flag = 0;
+  Protocol_SessionID_t HostSessionID;
+  /* one entry for every session that sends video into the channel, the host is just the usual one */
+  std::unordered_map<uint32_t, ScreenShare_Stream_t> Streams;
+  /* the sessions sharing now, in the order they started, never more than 8 */
+  std::vector<uint32_t> Streamers;
+  /* sessions that say so themselves when they start and stop. The others (older clients) count as sharing
+     while video comes from them */
+  std::vector<uint32_t> Announced;
 };
 
 struct pile_t{

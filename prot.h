@@ -344,6 +344,22 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     char Name[32];
   );
 
+  // a member of a channel says it started or stopped sharing its screen into it. Any member can, not only the host
+  __dme(Channel_ScreenShare_Share_StreamState,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_ChannelSessionID_t ChannelSessionID;
+    uint8_t Streaming;
+  );
+
+  // whose screen this client wants to receive in the channel. HasSource 0 means the host's, which is what clients
+  // that never send this get
+  __dme(Channel_ScreenShare_View_Watch,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_ChannelSessionID_t ChannelSessionID;
+    uint8_t HasSource;
+    Protocol_SessionID_t Source;
+  );
+
   // remote logs: Peer is the other client, the server only relays between two sessions of a channel.
   // C2S and S2C layouts stay identical like the file messages
   __dme(Channel_Log_Request,
@@ -550,6 +566,13 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
   __dme(SetUsername_Result,
     uint8_t Result;
     char Name[32];
+  );
+
+  // who shares a screen in the channel right now, up to 8, in the order they started
+  __dme(Channel_ScreenShare_View_Streamers,
+    Protocol_ChannelID_t ChannelID;
+    uint8_t Count;
+    Protocol_SessionID_t Streamers[8];
   );
 
   // remote logs: Peer is the other client, the server only relays between two sessions of a channel.

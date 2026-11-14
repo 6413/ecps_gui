@@ -1,3 +1,6 @@
+/* defined in ScreenShare.h, which comes after this */
+void ScreenShare_SetStreamer(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, bool Streaming, bool Explicit);
+
 namespace Session{
 
 bool IsInvalid(Protocol_SessionID_t SessionID){
@@ -31,6 +34,7 @@ Protocol_SessionID_t OpenFromTCPPeer(NET_TCP_peer_t *peer){
   new (&Session->TCP.Crypto) fan::network::crypto::secure_stream_t();
 
   Session->UsernameChangedAt = 0;
+  Session->Watching = 0;
   Username_AssignDefault(SessionID, peer->sdstaddr.ip);
 
   Session->UDP.Address.ip = 0;
@@ -76,6 +80,7 @@ void Close(Protocol_SessionID_t SessionID){
           g_pile->ChannelList.unlrec(ChannelID);
           goto gt_NextChannel;
         }
+        ScreenShare_SetStreamer(ChannelID, SessionID, false, false);
         Channel_BroadcastSessionList(ChannelID);
         break;
       }
