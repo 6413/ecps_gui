@@ -442,6 +442,33 @@
   }
 
   // keeps what is watched sensible: still sharing, else the next one (the selected channel's first)
+  // The picture goes away when it stops coming: the one watched stopped sharing, or no frame came for 2 s (a
+  // sharer sends one at least every 100 ms, also when its screen is still). Otherwise the last frame stayed on
+  std::uint64_t picture_frames_seen = 0;
+  std::chrono::steady_clock::time_point picture_last_frame_at;
+
+  void update_stale_picture() {
+    auto* rt = get_render_thread();
+    if (!rt) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    std::uint64_t decoded = ecps_backend.view_frames_decoded.load();
+    if (decoded != picture_frames_seen) {
+      picture_frames_seen = decoded;
+      picture_last_frame_at = now;
+      return;
+    }
+    if (rt->network_frame.get_image() == engine.default_texture) {
+      return;
+    }
+    // your own share shown as a preview has no one to watch, only the time counts for it
+    bool source_gone = !watch_active && !show_own_stream;
+    if (source_gone || now - picture_last_frame_at > std::chrono::seconds(2)) {
+      rt->network_frame.set_image(engine.default_texture);
+    }
+  }
+
   void update_watch() {
     if (ecps_backend.session_id.i == 0) {
       watch_active = false;

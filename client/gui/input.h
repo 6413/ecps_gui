@@ -139,6 +139,7 @@
     update_stream_state();
     update_watch();
     update_auto_show();
+    update_stale_picture();
     update_debug_sample();
     update_auto_join();
     update_midi_forward();
