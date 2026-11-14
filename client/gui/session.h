@@ -1,0 +1,564 @@
+// Part of ecps_gui_t, included inside the struct by gui.h: names, joining by itself, resuming after an update, saved stream settings, many streamers.
+
+  // ---- name -------------------------------------------------------------------------------------------------
+
+  // the same rule the server applies: 1 to 24 of letters, digits, space, _ . -, no space at either end
+  static bool username_is_valid(const std::string& name) {
+    if (name.empty() || name.size() > 24 || name.front() == ' ' || name.back() == ' ') {
+      return false;
+    }
+    for (char c : name) {
+      bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '_' || c == '.' || c == '-';
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  std::string username_notice_text() const {
+    if (!username_notice.empty() && std::chrono::steady_clock::now() < username_notice_until) {
+      return username_notice;
+    }
+    return {};
+  }
+
+  // looks at what the server answered about names. The answer to a change we asked for goes to the popup,
+  // an answer we didn't ask for that says no is the saved name not being free here
+  void update_username() {
+    std::uint32_t seq = ecps_backend.username_result_seq.load();
+    if (seq == username_seen_seq) {
+      return;
+    }
+    username_seen_seq = seq;
+    int result = ecps_backend.username_result.load();
+    std::string name;
+    {
+      std::lock_guard<std::mutex> lock(ecps_backend.username_mutex);
+      name = ecps_backend.username_result_name;
+    }
+    if (username_pending) {
+      username_pending = false;
+      if (result == 0) {
+        username_error.clear();
+        ecps_backend.desired_username = username_pending_default ? std::string() : name;
+        write_to_config("username", ecps_backend.desired_username);
+        username_close_popup = true;
+      }
+      else if (result == 1) {
+        username_error = "That name is taken, pick another one";
+      }
+      else if (result == 2) {
+        username_error = "Use 1 to 24 letters, digits, spaces, _ . or -";
+      }
+      else {
+        username_error = "Wait a second and try again";
+      }
+    }
+    else if (result == 1 && !ecps_backend.desired_username.empty()) {
+      username_notice = "\"" + ecps_backend.desired_username + "\" is taken here, you are " + name;
+      username_notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    }
+  }
+
+  void render_username_popup() {
+    if (username_popup_requested) {
+      username_popup_requested = false;
+      username_input = ecps_backend.get_current_username();
+      username_error.clear();
+      gui::set_next_window_pos(fan::vec2(engine.window.get_size().x, engine.window.get_size().y) / 2 - fan::vec2(190, 90));
+      gui::open_popup("Change name");
+    }
+    if (!gui::begin_popup("Change name")) {
+      return;
+    }
+    gui::text("Your name");
+    gui::push_item_width(320);
+    bool enter = gui::input_text("##username_input", &username_input, gui::input_text_flags_enter_returns_true);
+    gui::pop_item_width();
+    text_wrapped_disabled("1 to 24 letters, digits, spaces, _ . or -. Nobody else can use the same name at the same time.");
+    if (!username_error.empty()) {
+      gui::text(fan::color(1.f, 0.5f, 0.45f, 1.f), username_error);
+    }
+    if (!ecps_backend.server_new.load()) {
+      gui::text(fan::color(1.f, 0.7f, 0.4f, 1.f), "This server is too old for names, update it first");
+    }
+    bool can_save = !username_pending && username_is_valid(username_input) && ecps_backend.server_new.load();
+    gui::begin_disabled(!can_save);
+    if (gui::button("Save") || (enter && can_save)) {
+      username_pending = true;
+      username_pending_default = false;
+      username_error.clear();
+      backend_queue([name = username_input]() -> fan::event::task_t {
+        co_await ecps_backend.send_set_username(name);
+      });
+    }
+    gui::end_disabled();
+    gui::same_line();
+    if (gui::button("Use default name")) {
+      username_pending = true;
+      username_pending_default = true;
+      username_error.clear();
+      backend_queue([]() -> fan::event::task_t {
+        co_await ecps_backend.send_set_username(std::string());
+      });
+    }
+    gui::same_line();
+    if (gui::button("Cancel")) {
+      gui::close_current_popup();
+    }
+    if (username_close_popup) {
+      username_close_popup = false;
+      gui::close_current_popup();
+    }
+    gui::end_popup();
+  }
+
+  // ---- joining channels by themselves --------------------------------------------------------------------------
+
+  void set_auto_join(const std::string& host_name) {
+    auto_join_host = host_name;
+    write_to_config("auto_join", host_name);
+  }
+
+  // Channels are named after their host, and names are unique. A channel that is ticked "Join automatically",
+  // or that we were in before an update, is joined as soon as it exists, and looked for again until then
+  void update_auto_join() {
+    if (auto_join_host.empty() && resume_join.empty() && resume_select.empty()) {
+      return;
+    }
+    if (!ecps_backend.connected || ecps_backend.session_id.i == 0) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now < next_auto_join) {
+      return;
+    }
+    next_auto_join = now + std::chrono::seconds(2);
+    if (now >= next_auto_join_list) {
+      next_auto_join_list = now + std::chrono::seconds(6);
+      backend_queue([]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.request_channel_list();
+        }
+        catch (...) {}
+      });
+    }
+
+    std::vector<std::string> wanted = resume_join;
+    if (!auto_join_host.empty()) {
+      wanted.push_back(auto_join_host);
+    }
+    for (const auto& channel : ecps_backend.available_channels) {
+      if (std::find(wanted.begin(), wanted.end(), channel.name) == wanted.end()) {
+        continue;
+      }
+      if (channel.host_session_id.i == ecps_backend.session_id.i) {
+        continue; // our own channel
+      }
+      if (ecps_backend.is_channel_joined(channel.channel_id)) {
+        resume_join.erase(std::remove(resume_join.begin(), resume_join.end(), channel.name), resume_join.end());
+        continue;
+      }
+      auto tried = auto_join_tried.find(channel.name);
+      if (tried != auto_join_tried.end() && now - tried->second < std::chrono::seconds(6)) {
+        continue; // a join for it is on its way
+      }
+      auto_join_tried[channel.name] = now;
+      backend_queue([id = channel.channel_id]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.channel_join(id);
+          co_await ecps_backend.request_channel_list();
+          co_await ecps_backend.request_channel_session_list(id);
+        }
+        catch (...) {}
+      });
+    }
+
+    // the channel that was open before an update, once we are in it
+    if (!resume_select.empty()) {
+      for (const auto& channel : ecps_backend.available_channels) {
+        if (channel.name == resume_select && (ecps_backend.is_channel_joined(channel.channel_id) ||
+          channel.host_session_id.i == ecps_backend.session_id.i)) {
+          selected_channel_id = channel.channel_id;
+          resume_select.clear();
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- picking the session up again after an update ----------------------------------------------------------
+
+  std::string channel_name_of(ecps_backend_t::Protocol_ChannelID_t channel_id) const {
+    for (const auto& channel : ecps_backend.available_channels) {
+      if (channel.channel_id.i == channel_id.i) {
+        return channel.name;
+      }
+    }
+    return {};
+  }
+
+  // what the Update button hands to the new process. Not streaming: sharing the screen again is not something to
+  // start by itself, and neither is letting others read the logs
+  std::string collect_resume_state() {
+    fan::json state = fan::json::object();
+    state["saved_at"] = (std::int64_t)std::time(nullptr);
+    state["tab"] = window_handler.current_tab;
+    fan::json joined = fan::json::array();
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (ecps_backend.is_hosting_channel(channel.channel_id)) {
+        continue;
+      }
+      std::string name = channel_name_of(channel.channel_id);
+      if (!name.empty()) {
+        joined.push_back(name);
+      }
+    }
+    state["joined"] = joined;
+    state["selected"] = channel_name_of(selected_channel_id);
+    fan::json midi = fan::json::object();
+    midi["send_host"] = send_midi;
+    midi["send_viewers"] = send_midi_viewers;
+    midi["allow"] = allow_midi;
+    midi["play"] = play_host_midi;
+    midi["piano"] = show_midi_piano;
+    midi["volume"] = midi_volume;
+    state["midi"] = midi;
+    state["show_own_stream"] = show_own_stream;
+    return state.dump();
+  }
+
+  void load_resume_state() {
+    if (!fan::io::file::exists(updater_t::state_file)) {
+      return;
+    }
+    std::string data;
+    fan::io::file::read(std::string(updater_t::state_file), &data);
+    std::error_code ec;
+    std::filesystem::remove(updater_t::state_file, ec);
+    try {
+      fan::json state = fan::json::parse(data);
+      // a leftover from long ago is not what the user just did
+      std::int64_t age = (std::int64_t)std::time(nullptr) - state.value("saved_at", (std::int64_t)0);
+      if (age < 0 || age > 600) {
+        return;
+      }
+      int tab = state.value("tab", 0);
+      if (tab >= 0 && tab <= 2) {
+        window_handler.main_tab = tab;
+      }
+      if (state.contains("joined") && state["joined"].is_array()) {
+        for (const auto& name : state["joined"]) {
+          if (name.is_string()) {
+            resume_join.push_back(name.get<std::string>());
+          }
+        }
+      }
+      resume_select = state.value("selected", std::string());
+      if (state.contains("midi") && state["midi"].is_object()) {
+        fan::json midi = state["midi"];
+        send_midi = midi.value("send_host", send_midi);
+        send_midi_viewers = midi.value("send_viewers", send_midi_viewers);
+        allow_midi = midi.value("allow", allow_midi);
+        play_host_midi = midi.value("play", play_host_midi);
+        show_midi_piano = midi.value("piano", show_midi_piano);
+        midi_volume = midi.value("volume", midi_volume);
+      }
+      show_own_stream = state.value("show_own_stream", show_own_stream);
+    }
+    catch (...) {}
+  }
+
+  std::string username_input;
+  bool username_popup_requested = false;
+  bool username_pending = false;
+  bool username_pending_default = false;
+  bool username_close_popup = false;
+  std::string username_error;
+  std::string username_notice;
+  std::chrono::steady_clock::time_point username_notice_until;
+  std::uint32_t username_seen_seq = 0;
+
+  std::string auto_join_host;
+  std::vector<std::string> resume_join;
+  std::string resume_select;
+  std::chrono::steady_clock::time_point next_auto_join;
+  std::chrono::steady_clock::time_point next_auto_join_list;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point> auto_join_tried;
+
+  // ---- stream settings that stay -----------------------------------------------------------------------------
+
+  struct stream_snapshot_t {
+    int width = 0;
+    int height = 0;
+    int fps = 0;
+    int bitrate_mode = 0;
+    f32_t bitrate_mbps = 0;
+    int scaling_quality = -1;
+    bool valid = false;
+
+    bool same(const stream_snapshot_t& other) const {
+      return width == other.width && height == other.height && fps == other.fps &&
+        bitrate_mode == other.bitrate_mode && bitrate_mbps == other.bitrate_mbps && scaling_quality == other.scaling_quality;
+    }
+  };
+
+  stream_snapshot_t current_stream_settings() {
+    stream_snapshot_t now;
+    if (auto* rt = get_render_thread(); rt && rt->screen_encoder.user_set_resolution) {
+      // landscape either way: a portrait screen swaps them by itself and that is not a choice of yours
+      now.width = (int)std::max(rt->screen_encoder.user_width, rt->screen_encoder.user_height);
+      now.height = (int)std::min(rt->screen_encoder.user_width, rt->screen_encoder.user_height);
+    }
+    now.fps = stream_settings.framerate;
+    now.bitrate_mode = stream_settings.bitrate_mode;
+    now.bitrate_mbps = stream_settings.bitrate_mbps;
+    now.scaling_quality = stream_settings.selected_scaling_quality;
+    now.valid = true;
+    return now;
+  }
+
+  // Resolution, frame rate, bitrate and scaling belong to this program, not to a channel. What was used last is
+  // applied at the start, and a change is written to the config a second after the last touch
+  void update_stream_settings_persistence() {
+    auto* rt = get_render_thread();
+    if (!rt || !rt->screen_encoder.is_initialized()) {
+      return;
+    }
+    auto& encoder = rt->screen_encoder;
+    auto now = std::chrono::steady_clock::now();
+
+    if (!stream_applied) {
+      stream_applied = true;
+      if (saved_stream.valid) {
+        if (saved_stream.width >= 160 && saved_stream.height >= 120 && saved_stream.width <= 7680 && saved_stream.height <= 4320) {
+          encoder.set_user_resolution((std::uint32_t)saved_stream.width, (std::uint32_t)saved_stream.height);
+        }
+        if (saved_stream.fps >= 3 && saved_stream.fps <= 144) {
+          stream_settings.framerate = saved_stream.fps;
+          encoder.config_.frame_rate = saved_stream.fps;
+          std::lock_guard<std::mutex> lock(encoder.mutex);
+          encoder.update_flags |= codec_update_e::frame_rate;
+        }
+        if (saved_stream.bitrate_mode == 0 || saved_stream.bitrate_mode == 1) {
+          stream_settings.bitrate_mode = saved_stream.bitrate_mode;
+          stream_settings.use_adaptive_bitrate = saved_stream.bitrate_mode == 0;
+          if (saved_stream.bitrate_mode == 1 && saved_stream.bitrate_mbps >= 0.5f && saved_stream.bitrate_mbps <= 50.f) {
+            stream_settings.bitrate_mbps = saved_stream.bitrate_mbps;
+            encoder.config_.bitrate = (int)(saved_stream.bitrate_mbps * 1000000);
+            std::lock_guard<std::mutex> lock(encoder.mutex);
+            encoder.update_flags |= codec_update_e::rate_control;
+          }
+        }
+        if (saved_stream.scaling_quality >= 0 && saved_stream.scaling_quality <= 4) {
+          stream_settings.selected_scaling_quality = saved_stream.scaling_quality;
+          encoder.update_scaling_quality(static_cast<codec_config_t::scaling_quality_e>(saved_stream.scaling_quality));
+        }
+      }
+      seen_stream = current_stream_settings();
+      return;
+    }
+
+    stream_snapshot_t current = current_stream_settings();
+    if (!current.same(seen_stream)) {
+      seen_stream = current;
+      stream_changed_at = now;
+      return;
+    }
+    if (stream_changed_at != std::chrono::steady_clock::time_point{} && now - stream_changed_at > std::chrono::seconds(1) &&
+      (!saved_stream.valid || !current.same(saved_stream))) {
+      fan::json stream = fan::json::object();
+      stream["width"] = current.width;
+      stream["height"] = current.height;
+      stream["fps"] = current.fps;
+      stream["bitrate_mode"] = current.bitrate_mode;
+      stream["bitrate_mbps"] = current.bitrate_mbps;
+      stream["scaling_quality"] = current.scaling_quality;
+      write_to_config("stream", stream);
+      saved_stream = current;
+      stream_changed_at = std::chrono::steady_clock::time_point{};
+    }
+  }
+
+  stream_snapshot_t saved_stream;
+  stream_snapshot_t seen_stream;
+  bool stream_applied = false;
+  std::chrono::steady_clock::time_point stream_changed_at;
+
+  // ---- many streamers in one channel -------------------------------------------------------------------------
+
+  // Any member of a channel can share into it, and everyone in the channel can watch any sharing member, one at a
+  // time. Sharing goes where the share button says, watching is picked here (the first sharer by default)
+
+  std::string session_label(ecps_backend_t::Protocol_ChannelID_t channel_id, std::uint32_t session) const {
+    auto sessions = ecps_backend.channel_sessions.find(channel_id.i);
+    if (sessions != ecps_backend.channel_sessions.end()) {
+      for (const auto& info : sessions->second) {
+        if ((std::uint32_t)info.session_id.i == session) {
+          return info.username;
+        }
+      }
+    }
+    return "user " + std::to_string(session);
+  }
+
+  struct streamer_option_t {
+    ecps_backend_t::Protocol_ChannelID_t channel;
+    std::uint32_t session;
+    std::string name;
+  };
+
+  // the other members that share right now, in every channel this client is in
+  std::vector<streamer_option_t> streamer_options() const {
+    std::vector<streamer_option_t> options;
+    std::uint32_t me = (std::uint32_t)ecps_backend.session_id.i;
+    for (const auto& channel : ecps_backend.channel_info) {
+      for (std::uint32_t session : ecps_backend.streamers_of(channel.channel_id)) {
+        if (session != me) {
+          options.push_back({channel.channel_id, session, session_label(channel.channel_id, session)});
+        }
+      }
+    }
+    return options;
+  }
+
+  void set_watch(ecps_backend_t::Protocol_ChannelID_t channel_id, std::uint32_t source) {
+    watch_active = true;
+    watch_channel = (std::uint32_t)channel_id.i;
+    watch_source = source;
+    ecps_backend.view_resync = true;
+    if (auto* rt = get_render_thread()) {
+      rt->host_cursor.visible.store(false);
+    }
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (channel.channel_id.i == channel_id.i) {
+        backend_queue([id = channel.channel_id, session = channel.session_id, source]() -> fan::event::task_t {
+          co_await ecps_backend.send_watch(id, session, ecps_backend_t::Protocol_SessionID_t{ (ecps_backend_t::Protocol_SessionID_t::Type)source });
+        });
+        break;
+      }
+    }
+  }
+
+  // keeps what is watched sensible: still sharing, else the next one (the selected channel's first)
+  void update_watch() {
+    if (ecps_backend.session_id.i == 0) {
+      watch_active = false;
+      stream_state_sent.clear();
+      return;
+    }
+    auto options = streamer_options();
+    if (watch_active) {
+      for (const auto& option : options) {
+        if ((std::uint32_t)option.channel.i == watch_channel && option.session == watch_source) {
+          return;
+        }
+      }
+    }
+    if (options.empty()) {
+      watch_active = false;
+      return;
+    }
+    const streamer_option_t* pick = &options.front();
+    for (const auto& option : options) {
+      if (option.channel.i == selected_channel_id.i) {
+        pick = &option;
+        break;
+      }
+    }
+    set_watch(pick->channel, pick->session);
+  }
+
+  // tells the server when this client starts or stops sharing into a channel, and again every 10 s
+  void update_stream_state() {
+    auto now = std::chrono::steady_clock::now();
+    bool refresh = now - stream_state_sent_at > std::chrono::seconds(10);
+    for (const auto& channel : ecps_backend.channel_info) {
+      std::uint32_t key = (std::uint32_t)channel.channel_id.i;
+      auto sent = stream_state_sent.find(key);
+      bool streaming = channel.is_streaming;
+      if (sent == stream_state_sent.end() && !streaming) {
+        stream_state_sent[key] = false; // nothing to say yet
+        continue;
+      }
+      if (!refresh && sent != stream_state_sent.end() && sent->second == streaming) {
+        continue;
+      }
+      stream_state_sent[key] = streaming;
+      backend_queue([id = channel.channel_id, session = channel.session_id, streaming]() -> fan::event::task_t {
+        co_await ecps_backend.send_stream_state(id, session, streaming);
+      });
+    }
+    if (refresh) {
+      stream_state_sent_at = now;
+    }
+  }
+
+  std::string watch_preview(const std::vector<streamer_option_t>& options) const {
+    std::string preview = options.empty() ? "Nobody is sharing" : "Pick who to watch";
+    for (const auto& option : options) {
+      if (watch_active && (std::uint32_t)option.channel.i == watch_channel && option.session == watch_source) {
+        preview = "Watching " + option.name;
+      }
+    }
+    return preview;
+  }
+
+  // The top right of the stream area: the Stats tick and whose screen is watched. It fades out like the toolbar and
+  // comes back when the mouse goes near the top edge, or while there is no picture
+  void render_stream_top_overlay() {
+    // with nobody sharing there is nobody to pick
+    auto options = streamer_options();
+    if (options.empty()) {
+      top_overlay_alpha = 0.f;
+      return;
+    }
+    auto& io = gui::get_io();
+    fan::vec2 area_pos = gui::get_window_pos();
+    fan::vec2 area_size = gui::get_window_size();
+    f32_t frame_height = gui::get_frame_height();
+    bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
+      io.MousePos.y >= area_pos.y && io.MousePos.y <= area_pos.y + frame_height * 3.f;
+    auto* rt = get_render_thread();
+    bool has_picture = rt && rt->network_frame.get_image() != engine.default_texture;
+    auto now = std::chrono::steady_clock::now();
+    if (mouse_near || !has_picture) {
+      top_overlay_visible_until = now + std::chrono::milliseconds(1500);
+    }
+    f32_t target = now < top_overlay_visible_until ? 1.f : 0.f;
+    top_overlay_alpha += (target - top_overlay_alpha) * std::min(1.f, io.DeltaTime * 14.f);
+    if (target == 0.f && top_overlay_alpha < 0.02f) {
+      top_overlay_alpha = 0.f;
+      return;
+    }
+
+    f32_t picker_width = std::max(180.f, gui::calc_text_size(watch_preview(options)).x + frame_height * 1.8f);
+    gui::push_style_var(gui::style_var_alpha, std::max(top_overlay_alpha, 0.02f));
+    gui::set_cursor_pos(fan::vec2(area_size.x - picker_width - 14.f, 10.f + stream_top_offset() + gui::get_scroll_y()));
+    render_watch_picker(picker_width);
+    gui::pop_style_var();
+  }
+
+  // who to watch
+  void render_watch_picker(f32_t width) {
+    auto options = streamer_options();
+    std::string preview = watch_preview(options);
+    gui::push_item_width(width);
+    if (gui::begin_combo("##watch_picker", preview)) {
+      for (const auto& option : options) {
+        bool selected = watch_active && (std::uint32_t)option.channel.i == watch_channel && option.session == watch_source;
+        if (gui::selectable(option.name + "##watch" + std::to_string(option.channel.i) + "_" + std::to_string(option.session), selected)) {
+          set_watch(option.channel, option.session);
+        }
+      }
+      gui::end_combo();
+    }
+    gui::pop_item_width();
+  }
+
+  bool watch_active = false;
+  std::uint32_t watch_channel = 0;
+  std::uint32_t watch_source = 0;
+  std::unordered_map<std::uint32_t, bool> stream_state_sent;
+  std::chrono::steady_clock::time_point stream_state_sent_at;
