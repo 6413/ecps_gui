@@ -30,6 +30,7 @@ import fan.print;
 import fan.network.crypto;
 
 #include "Base.h"
+#include "../client/version.h"
 
 // WITCH's Windows NET backend only defines NET_SOL_SOCKET
 #ifndef NET_SO_SNDBUF
@@ -586,6 +587,7 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
 }
 
 int main(int argc, char** argv) {
+  fan::print(std::string("ecps server v") + ecps_version);
   uint16_t port = 43254;
   if (argc != 2) {
     fan::print("usage:a.exe <port number>");

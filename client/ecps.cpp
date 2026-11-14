@@ -1142,6 +1142,7 @@ uint64_t dynamic_config_t::get_adaptive_bitrate() {
 int main() {
   // from here on everything printed can be read by another client that is allowed to
   log_capture().start();
+  fan::print(std::string("ecps client v") + ecps_version);
   ecps_backend.reconnected_cb = [](ecps_backend_t::Protocol_ChannelID_t channel_id) {
     if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
       rt->ecps_gui.selected_channel_id = channel_id;

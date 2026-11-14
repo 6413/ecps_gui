@@ -1729,29 +1729,50 @@ struct ecps_gui_t {
         gui::end_child();
       }
 
-      gui::push_style_var(gui::style_var_frame_padding, fan::vec2(12, 8));
-
-      stream_button_renderer_t::render_centered_stream_button(This->selected_channel_id, stream_area, window_content_size);
-
-      gui::pop_style_var(1);
-
-      f32_t icon_size = 24.0f;
-      f32_t button_spacing = 10.0f;
-      f32_t margin = 20.0f;
-
-      f32_t settings_x = stream_area.x - (icon_size * 2) - button_spacing - margin;
-      f32_t settings_y = window_size.y - icon_size - margin;
-      gui::set_cursor_pos(fan::vec2(settings_x, settings_y));
-
-      if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen_settings", This->icon_settings, fan::vec2(icon_size, icon_size))) {
-        This->stream_settings.show_in_stream_view = !This->stream_settings.show_in_stream_view;
+      auto& io = gui::get_io();
+      auto now = std::chrono::steady_clock::now();
+      f32_t frame_height = gui::get_frame_height();
+      f32_t zone = frame_height * 3.f;
+      bool mouse_near = io.MousePos.x >= window_pos.x && io.MousePos.x <= window_pos.x + window_size.x &&
+        io.MousePos.y >= window_pos.y + window_size.y - zone && io.MousePos.y <= window_pos.y + window_size.y;
+      bool has_picture = rt->network_frame.get_image() != engine.default_texture;
+      if (mouse_near || !has_picture) {
+        fullscreen_toolbar_visible_until = now + std::chrono::milliseconds(1500);
       }
+      f32_t target = now < fullscreen_toolbar_visible_until ? 1.f : 0.f;
+      fullscreen_toolbar_alpha += (target - fullscreen_toolbar_alpha) * std::min(1.f, io.DeltaTime * 14.f);
+      if (target == 0.f && fullscreen_toolbar_alpha < 0.02f) {
+        fullscreen_toolbar_alpha = 0.f;
+      }
+      else {
+        gui::push_style_var(gui::style_var_alpha, std::max(fullscreen_toolbar_alpha, 0.02f));
 
-      gui::same_line();
+        gui::push_style_var(gui::style_var_frame_padding, fan::vec2(12, 8));
 
-      if (icon_button_helper_t::render_transparent_icon_button("#btn_exit_fullscreen", This->icon_fullscreen, fan::vec2(icon_size, icon_size))) {
-        is_fullscreen_stream = false;
-        engine.window.set_windowed();
+        stream_button_renderer_t::render_centered_stream_button(This->selected_channel_id, stream_area, window_content_size);
+
+        gui::pop_style_var(1);
+
+        f32_t icon_size = 24.0f;
+        f32_t button_spacing = 10.0f;
+        f32_t margin = 20.0f;
+
+        f32_t settings_x = stream_area.x - (icon_size * 2) - button_spacing - margin;
+        f32_t settings_y = window_size.y - icon_size - margin;
+        gui::set_cursor_pos(fan::vec2(settings_x, settings_y));
+
+        if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen_settings", This->icon_settings, fan::vec2(icon_size, icon_size))) {
+          This->stream_settings.show_in_stream_view = !This->stream_settings.show_in_stream_view;
+        }
+
+        gui::same_line();
+
+        if (icon_button_helper_t::render_transparent_icon_button("#btn_exit_fullscreen", This->icon_fullscreen, fan::vec2(icon_size, icon_size))) {
+          is_fullscreen_stream = false;
+          engine.window.set_windowed();
+        }
+
+        gui::pop_style_var();
       }
     }
     else {
@@ -2414,6 +2435,8 @@ struct ecps_gui_t {
     if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen", icon_fullscreen,
       fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
       is_fullscreen_stream = true;
+      fullscreen_toolbar_alpha = 1.f;
+      fullscreen_toolbar_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
       engine.window.set_borderless();
     }
     gui::pop_style_var();
@@ -2596,7 +2619,7 @@ struct ecps_gui_t {
       return;
     }
     fan::vec2 frame_size = rt->network_frame.get_size() * 2;
-    fan::vec2 frame_min = fan::vec2(rt->network_frame.get_position()) - frame_size / 2;
+    fan::vec2 frame_min = gui::get_window_pos() + fan::vec2(rt->network_frame.get_position()) - frame_size / 2;
     if (frame_size.x <= 0 || frame_size.y <= 0) {
       return;
     }
@@ -2605,13 +2628,15 @@ struct ecps_gui_t {
     // an arrow, white with a dark edge so it shows on any picture
     f32_t scale = std::max(1.f, gui::get_frame_height() / 22.f);
     auto point = [&](f32_t x, f32_t y) { return fan::vec2(at.x + x * scale, at.y + y * scale); };
-    auto* list = gui::get_foreground_draw_list();
+    auto* list = gui::get_window_draw_list();
+    list->PushClipRect(frame_min, frame_min + frame_size, true);
     std::uint32_t white = 0xffffffffu;
     std::uint32_t dark = 0xff000000u;
     list->AddTriangleFilled(point(0, 0), point(0, 17), point(12, 12), white);
     list->AddQuadFilled(point(4, 12), point(8, 20), point(11, 18), point(8, 11), white);
     list->AddTriangle(point(0, 0), point(0, 17), point(12, 12), dark, 1.5f);
     list->AddQuad(point(4, 12), point(8, 20), point(11, 18), point(8, 11), dark, 1.5f);
+    list->PopClipRect();
   }
 
 #if defined(_WIN32)
@@ -3544,6 +3569,8 @@ struct ecps_gui_t {
   std::chrono::steady_clock::time_point flags_sent_at;
   f32_t toolbar_alpha = 1.f;
   std::chrono::steady_clock::time_point toolbar_visible_until;
+  f32_t fullscreen_toolbar_alpha = 1.f;
+  std::chrono::steady_clock::time_point fullscreen_toolbar_visible_until;
 
 #undef This
 #undef engine
