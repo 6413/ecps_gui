@@ -1034,347 +1034,268 @@ struct ecps_gui_t {
       }
     }
 
+    // The panel beside the stream. Sections for what you share, what you watch and how it shows, then the details
+    // folded away. Each setting is one row, its name at the left and its control at the right, and what is on or off
+    // is a switch
     void render_stream_settings_content_compact() {
-      gui::push_style_var(gui::style_var_item_spacing, fan::vec2(0, 15.f));
-      uint32_t channel_id = ecps_backend.channel_info.size() > 0 ? 0 : -1;
+      gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
+      gui::push_style_var(gui::style_var_frame_rounding, 5.f);
+      bool streaming = ecps_backend.is_streaming_to_any_channel();
+      bool viewing = ecps_backend.is_viewing_any_channel();
+      auto* rt = get_render_thread();
 
-      f32_t available_width = gui::get_content_region_avail().x;
-
-      gui::spacing();
-
-      gui::checkbox("Show stats over the picture", &This->show_stream_stats);
-
-      if (ecps_backend.is_streaming_to_any_channel()) {
+      // ---- what you share
+      settings_section("SHARING");
+    #if defined(_WIN32)
+      This->render_capture_source();
+    #endif
+      if (streaming && rt) {
         This->resolution_controls.render_resolution_controls();
 
-        gui::text("Framerate");
-        gui::push_item_width(-1);
-        do {
+        settings_row("Framerate", [&] {
           gui::slider("##framerate_compact", &This->stream_settings.framerate, 3.f, 144.f);
           if (gui::is_item_deactivated_after_edit()) {
-            auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-            if (rt) {
-              rt->screen_encoder.config_.frame_rate = This->stream_settings.framerate;
-              {
-                std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
-                rt->screen_encoder.update_flags |= codec_update_e::frame_rate;
-              }
-            }
+            rt->screen_encoder.config_.frame_rate = This->stream_settings.framerate;
+            std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+            rt->screen_encoder.update_flags |= codec_update_e::frame_rate;
           }
-        } while (0);
-        gui::pop_item_width();
+        });
 
-        gui::separator();
-
-        {
-          gui::text("Bitrate Mode");
+        settings_row("Bitrate", [&] {
           const char* bitrate_modes[] = { "Automatic", "Manual" };
           if (gui::combo("##bitrate_mode", &This->stream_settings.bitrate_mode, bitrate_modes, 2)) {
-            if (This->stream_settings.bitrate_mode == 0) {
-              This->stream_settings.use_adaptive_bitrate = true;
-            }
-            else {
-              This->stream_settings.use_adaptive_bitrate = false;
-            }
+            This->stream_settings.use_adaptive_bitrate = This->stream_settings.bitrate_mode == 0;
           }
-
-          if (This->stream_settings.bitrate_mode == 1) {
-            gui::text("Bitrate (Mbps)");
-            gui::push_item_width(-1);
+        });
+        if (This->stream_settings.bitrate_mode == 1) {
+          settings_row("Mbit/s", [&] {
             if (gui::slider("##bitrate_compact", &This->stream_settings.bitrate_mbps, 0.5f, 50.0f, gui::slider_flags_always_clamp)) {
-              auto* rt = get_render_thread();
-              if (rt) {
-                rt->screen_encoder.config_.bitrate = This->stream_settings.bitrate_mbps * 1000000;
-                {
-                  std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
-                  rt->screen_encoder.update_flags |= codec_update_e::rate_control;
-                }
-              }
+              rt->screen_encoder.config_.bitrate = This->stream_settings.bitrate_mbps * 1000000;
+              std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+              rt->screen_encoder.update_flags |= codec_update_e::rate_control;
             }
-            gui::pop_item_width();
-          }
+          });
         }
 
-        gui::separator();
-        do {
-          static auto encoder_names = [] {
-            auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-            if (!rt) {
-              return std::vector<std::string>{"libx264"};
-            }
-
-            auto encoders = rt->screen_encoder.get_encoders();
-            return encoders;
-            }();
-
-          static auto encoder_options = [] {
-            std::vector<const char*> names;
-            names.reserve(encoder_names.size());
-
-            for (const auto& name : encoder_names) {
-              names.push_back(name.c_str());
-            }
-            return names;
-          }();
-
-          gui::text("Encoder");
-          gui::push_item_width(-1);
-
-          if (gui::combo("##encoder_compact", &This->stream_settings.selected_encoder,
-            encoder_options.data(), encoder_options.size())) {
-            auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-            if (rt) {
-              std::string encoder_name = encoder_names[This->stream_settings.selected_encoder];
-
-              codec_config_t::codec_type_e codec_type;
-
-              if (encoder_name.find("264") != std::string::npos) {
-                codec_type = codec_config_t::H264;
-              }
-              else if (encoder_name.find("265") != std::string::npos ||
-                encoder_name.find("hevc") != std::string::npos) {
-                codec_type = codec_config_t::H265;
-              }
-              else if (encoder_name.find("av1") != std::string::npos) {
-                codec_type = codec_config_t::AV1;
-              }
-              else {
-                codec_type = codec_config_t::H264;
-              }
-
-              rt->screen_encoder.config_.codec = codec_type;
-              rt->screen_encoder.new_codec = This->stream_settings.selected_encoder;
-              rt->screen_encoder.update_flags |= codec_update_e::codec;
-              rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
-            }
-          }
-          gui::pop_item_width();
-        } while (0);
-
-        gui::separator();
-        This->render_share_audio_checkbox();
-      }
-      if (ecps_backend.is_viewing_any_channel()) {
-        This->render_play_audio_controls();
-        gui::separator();
-        do {
-
-          static auto decoder_names = [] {
-            auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-            if (!rt) {
-              return std::vector<std::string>{
-                "h264_cuvid", "auto-detect", "libx264", "libx265", "libaom-av1"
-              };
-            }
-
-            auto decoders = rt->screen_decoder.get_decoders();
-            return decoders;
-            }();
-          static bool decoder_inited = false;
-          if (decoder_inited == false) {
-            decoder_inited = true;
-            auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-            if (rt) {
-              for (int i = 0; i < decoder_names.size(); i++) {
-                if (decoder_names[i] == rt->screen_decoder.name) {
-                  This->stream_settings.selected_decoder = i;
-                  break;
-                }
-              }
-              if (This->stream_settings.selected_decoder >= decoder_names.size()) {
-                for (int i = 0; i < decoder_names.size(); i++) {
-                  if (decoder_names[i] == "auto-detect") {
-                    This->stream_settings.selected_decoder = i;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-
-          static auto decoder_options = [] {
-            std::vector<const char*> names;
-            names.reserve(decoder_names.size());
-            for (const auto& name : decoder_names) {
-              names.push_back(name.c_str());
-            }
-            return names;
-          }();
-
-          gui::text("Decoder");
-          gui::push_item_width(-1);
-          if (gui::combo("##decoder_compact", &This->stream_settings.selected_decoder,
-            decoder_options.data(), decoder_options.size())) {
-            auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-            if (rt) {
-              std::string decoder_name = decoder_names[This->stream_settings.selected_decoder];
-              std::string codec_type;
-
-              if (decoder_name.find("h264") != std::string::npos || decoder_name == "h264") {
-                codec_type = "h264";
-              }
-              else if (decoder_name.find("hevc") != std::string::npos || decoder_name == "hevc") {
-                codec_type = "hevc";
-              }
-              else if (decoder_name.find("av1") != std::string::npos || decoder_name == "av1") {
-                codec_type = "av1";
-              }
-              else if (decoder_name == "auto-detect") {
-                codec_type = "h264";
-              }
-              else {
-                codec_type = "h264";
-              }
-
-              rt->screen_decoder.new_codec = This->stream_settings.selected_decoder;
-              rt->screen_decoder.update_flags |= codec_update_e::codec;
-
-              rt->screen_decoder.name = codec_type;
-
-              This->request_idr_reset();
-            }
-          }
-          gui::pop_item_width();
-        } while (0);
-      }
-
-      {
-        auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-        if (rt && ecps_backend.is_streaming_to_any_channel()) {
-          gui::separator();
-
-          gui::text("Scaling Quality");
-
-          static auto quality_options = []() {
-            std::vector<const char*> options;
-            for (int i = 0; i < 5; ++i) {
-              auto quality = static_cast<codec_config_t::scaling_quality_e>(i);
-              options.push_back(fan::graphics::get_scaling_quality_name(quality));
-            }
-            return options;
-            }();
-
-          gui::push_item_width(-1);
-          if (gui::combo("##scaling_quality", &This->stream_settings.selected_scaling_quality,
-            quality_options.data(), quality_options.size())) {
-
-            auto new_quality = static_cast<codec_config_t::scaling_quality_e>(
-              This->stream_settings.selected_scaling_quality);
-
-            rt->screen_encoder.update_scaling_quality(new_quality);
-
-#if ecps_debug_prints >= 1
-            fan::print("GUI: Changed scaling quality to: " +
-              std::string(fan::graphics::get_scaling_quality_name(new_quality)));
-#endif
-          }
-          gui::pop_item_width();
-        }
-      }
-
-      gui::separator();
-
-      if (ecps_backend.is_streaming_to_any_channel()) {
-        gui::text("Input Control");
-
-        const char* input_control_options[] = {"None", "Mouse + Keyboard"};
-        gui::push_item_width(-1);
-        if (gui::combo("##input_control_compact", &This->stream_settings.input_control, input_control_options, 2)) {
+        bool remote_control = This->stream_settings.input_control != 0;
+        if (settings_switch("Remote control", &remote_control,
+          "Viewers can use your mouse and keyboard. Keep it off in games with anti-cheat")) {
+          This->stream_settings.input_control = remote_control ? 1 : 0;
           This->send_input_control_flag();
         }
-        gui::pop_item_width();
-      }
-      gui::separator();
 
-      if (gui::button(This->stream_settings.show_network_debug ? "Hide Network Debug" : "Show Network Debug", fan::vec2(-1, 0))) {
-        This->stream_settings.show_network_debug = !This->stream_settings.show_network_debug;
+        This->render_share_audio_checkbox();
       }
-      if (This->stream_settings.show_network_debug) {
+      else if (!streaming) {
+        text_wrapped_disabled("Quality, audio and remote control show here while you share.");
+      }
+
+      // ---- what you watch
+      if (viewing) {
+        settings_section("WATCHING");
+        This->render_play_audio_controls();
+      }
+
+      // ---- how it shows
+      settings_section("DISPLAY");
+      settings_switch("Stats over the picture", &This->show_stream_stats,
+        "What this computer sends and receives, drawn over the stream. Drag it where you want it");
+
+      // ---- the details, folded away
+      gui::dummy(fan::vec2(0, 4.f));
+      if (gui::collapsing_header("Advanced")) {
+        if (streaming && rt) {
+          render_encoder_row(rt);
+          render_scaling_row(rt);
+        }
+        if (viewing) {
+          render_decoder_row();
+        }
+        if (streaming) {
+          if (gui::button("Reset quality settings")) {
+            This->stream_settings.selected_resolution = 0;
+            This->stream_settings.framerate = 30;
+            This->stream_settings.bitrate_mbps = 5;
+            This->stream_settings.input_control = 0;
+            This->send_input_control_flag();
+          }
+          if (gui::is_item_hovered()) {
+            gui::set_tooltip("30 fps, 5 Mbit/s, remote control off");
+          }
+        }
+        else if (!viewing) {
+          text_wrapped_disabled("Encoder and decoder settings show while you share or watch.");
+        }
+      }
+      if (gui::collapsing_header("Network")) {
+        render_network_details();
+      }
+      gui::pop_style_var(2);
+    }
+
+    void render_encoder_row(render_thread_t* rt) {
+      static auto encoder_names = [] {
+        auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+        if (!rt) {
+          return std::vector<std::string>{"libx264"};
+        }
+        return rt->screen_encoder.get_encoders();
+      }();
+      static auto encoder_options = [] {
+        std::vector<const char*> names;
+        for (const auto& name : encoder_names) {
+          names.push_back(name.c_str());
+        }
+        return names;
+      }();
+
+      settings_row("Encoder", [&] {
+        if (!gui::combo("##encoder_compact", &This->stream_settings.selected_encoder, encoder_options.data(), encoder_options.size())) {
+          return;
+        }
+        std::string encoder_name = encoder_names[This->stream_settings.selected_encoder];
+        codec_config_t::codec_type_e codec_type = codec_config_t::H264;
+        if (encoder_name.find("265") != std::string::npos || encoder_name.find("hevc") != std::string::npos) {
+          codec_type = codec_config_t::H265;
+        }
+        else if (encoder_name.find("av1") != std::string::npos) {
+          codec_type = codec_config_t::AV1;
+        }
+        rt->screen_encoder.config_.codec = codec_type;
+        rt->screen_encoder.new_codec = This->stream_settings.selected_encoder;
+        rt->screen_encoder.update_flags |= codec_update_e::codec;
+        rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
+      });
+    }
+
+    void render_scaling_row(render_thread_t* rt) {
+      static auto quality_options = []() {
+        std::vector<const char*> options;
+        for (int i = 0; i < 5; ++i) {
+          options.push_back(fan::graphics::get_scaling_quality_name(static_cast<codec_config_t::scaling_quality_e>(i)));
+        }
+        return options;
+      }();
+      settings_row("Scaling", [&] {
+        if (gui::combo("##scaling_quality", &This->stream_settings.selected_scaling_quality, quality_options.data(), quality_options.size())) {
+          rt->screen_encoder.update_scaling_quality(static_cast<codec_config_t::scaling_quality_e>(This->stream_settings.selected_scaling_quality));
+        }
+      });
+    }
+
+    void render_decoder_row() {
+      static auto decoder_names = [] {
+        auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+        if (!rt) {
+          return std::vector<std::string>{"h264_cuvid", "auto-detect", "libx264", "libx265", "libaom-av1"};
+        }
+        return rt->screen_decoder.get_decoders();
+      }();
+      static bool decoder_inited = false;
+      if (!decoder_inited) {
+        decoder_inited = true;
+        if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
+          for (int i = 0; i < decoder_names.size(); i++) {
+            if (decoder_names[i] == rt->screen_decoder.name) {
+              This->stream_settings.selected_decoder = i;
+              break;
+            }
+          }
+          if (This->stream_settings.selected_decoder >= decoder_names.size()) {
+            for (int i = 0; i < decoder_names.size(); i++) {
+              if (decoder_names[i] == "auto-detect") {
+                This->stream_settings.selected_decoder = i;
+                break;
+              }
+            }
+          }
+        }
+      }
+      static auto decoder_options = [] {
+        std::vector<const char*> names;
+        for (const auto& name : decoder_names) {
+          names.push_back(name.c_str());
+        }
+        return names;
+      }();
+
+      settings_row("Decoder", [&] {
+        if (!gui::combo("##decoder_compact", &This->stream_settings.selected_decoder, decoder_options.data(), decoder_options.size())) {
+          return;
+        }
+        auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+        if (!rt) {
+          return;
+        }
+        std::string decoder_name = decoder_names[This->stream_settings.selected_decoder];
+        std::string codec_type = "h264";
+        if (decoder_name.find("hevc") != std::string::npos) {
+          codec_type = "hevc";
+        }
+        else if (decoder_name.find("av1") != std::string::npos) {
+          codec_type = "av1";
+        }
+        rt->screen_decoder.new_codec = This->stream_settings.selected_decoder;
+        rt->screen_decoder.update_flags |= codec_update_e::codec;
+        rt->screen_decoder.name = codec_type;
+        This->request_idr_reset();
+      });
+    }
+
+    // a name at the left and a value at the right, for the network details
+    static void stat_row(const std::string& label, const std::string& value, fan::color color = fan::color(0.9f, 0.9f, 0.9f, 1.f)) {
+      gui::text(fan::color(0.62f, 0.62f, 0.66f, 1.f), label);
+      gui::same_line(std::max(gui::get_cursor_pos_x(), gui::get_content_region_avail().x + gui::get_cursor_pos_x() - gui::calc_text_size(value).x));
+      gui::text(color, value);
+    }
+
+    void render_network_details() {
+      auto& stats = ecps_backend.view.m_stats;
+      fan::color good(0.5f, 1.f, 0.6f, 1.f);
+      fan::color bad(1.f, 0.5f, 0.5f, 1.f);
+
+      stat_row("Ping", fan::to_string(ecps_backend.ping_ms, 1) + " ms");
+      if (auto* rt = get_render_thread(); rt && ecps_backend.is_streaming_to_any_channel()) {
+        stat_row("Encode path", rt->screen_encoder.encoder_.uses_gpu_frames() ? "GPU" : "CPU");
+      }
+      stat_row("Capture", fan::to_string(stage_times.capture.ms.load(), 2) + " ms");
+      stat_row("Encode", fan::to_string(stage_times.encode.ms.load(), 2) + " ms");
+      stat_row("Decode", fan::to_string(stage_times.decode.ms.load(), 2) + " ms");
+      stat_row("Upload", fan::to_string(stage_times.upload.ms.load(), 2) + " ms");
+
+      gui::separator();
+      stat_row("Frames", std::to_string(stats.Frame_Total));
+      stat_row("Frames dropped", std::to_string(stats.Frame_Drop));
+      if (stats.Frame_Total > 0) {
+        double rate = (double)stats.Frame_Drop * 100.0 / stats.Frame_Total;
+        stat_row("Frame drop rate", fan::to_string(rate, 2) + " %", rate > 5.0 ? bad : good);
+      }
+      std::uint64_t packet_drops = stats.Packet_HeadDrop + stats.Packet_BodyDrop;
+      stat_row("Packets", std::to_string(stats.Packet_Total));
+      stat_row("Packets lost", std::to_string(packet_drops) + " (" + std::to_string(stats.Packet_HeadDrop) + " head, " +
+        std::to_string(stats.Packet_BodyDrop) + " body)");
+      if (stats.Packet_Total > 0) {
+        double rate = (double)packet_drops * 100.0 / stats.Packet_Total;
+        stat_row("Packet loss", fan::to_string(rate, 2) + " %", rate > 2.0 ? bad : good);
+      }
+
+      if (ecps_backend.is_streaming_to_any_channel()) {
         gui::separator();
-        gui::text("Network Debug Info");
-
-        gui::push_style_color(gui::col_child_bg, fan::vec4(0.1f, 0.1f, 0.1f, 0.8f));
-        gui::begin_child("##network_debug", fan::vec2(0, 0), 1 |
-          fan::graphics::gui::child_flags_auto_resize_x |
-          fan::graphics::gui::child_flags_auto_resize_y);
-
-        auto& stats = ecps_backend.view.m_stats;
-
-        gui::text("Ping (ms): " + fan::to_string(ecps_backend.ping_ms, 4));
-
-        gui::text("=== FRAME STATS ===");
-        gui::text("Total Frames: " + std::to_string(stats.Frame_Total));
-        gui::text("Dropped Frames: " + std::to_string(stats.Frame_Drop));
-
-        if (stats.Frame_Total > 0) {
-          double frame_drop_rate = (double)stats.Frame_Drop * 100.0 / stats.Frame_Total;
-          gui::text(frame_drop_rate > 5.0 ? fan::color(1, 0.5f, 0.5f, 1) : fan::color(0.5f, 1, 0.5f, 1), "Frame Drop Rate: " + std::to_string(frame_drop_rate) + "%");
-        }
-
-        gui::spacing();
-
-        gui::text("=== MS PER FRAME ===");
-        if (auto rt = get_render_thread(); rt) {
-          gui::text(rt->screen_encoder.encoder_.uses_gpu_frames() ? "Encode path: GPU" : "Encode path: CPU");
-        }
-        gui::text("Capture: " + fan::to_string(stage_times.capture.ms.load(), 2));
-        gui::text("Encode: " + fan::to_string(stage_times.encode.ms.load(), 2));
-        gui::text("Decode: " + fan::to_string(stage_times.decode.ms.load(), 2));
-        gui::text("Upload: " + fan::to_string(stage_times.upload.ms.load(), 2));
-
-        gui::spacing();
-
-        gui::text("=== PACKET STATS ===");
-        gui::text("Total Packets: " + std::to_string(stats.Packet_Total));
-        gui::text("Head Drops: " + std::to_string(stats.Packet_HeadDrop));
-        gui::text("Body Drops: " + std::to_string(stats.Packet_BodyDrop));
-
-        uint64_t total_packet_drops = stats.Packet_HeadDrop + stats.Packet_BodyDrop;
-        gui::text("Total Packet Drops: " + std::to_string(total_packet_drops));
-
-        if (stats.Packet_Total > 0) {
-          double packet_drop_rate = (double)total_packet_drops * 100.0 / stats.Packet_Total;
-          gui::text("Packet Drop Rate: " + std::to_string(packet_drop_rate) + "%",
-            packet_drop_rate > 2.0 ? fan::color(1, 0.5f, 0.5f, 1) : fan::color(0.5f, 1, 0.5f, 1));
-        }
-
-        gui::spacing();
-
-        if (ecps_backend.is_streaming_to_any_channel()) {
-          gui::text("=== NETWORK FLOW ===");
-          auto& flow = ecps_backend.share.m_NetworkFlow;
-          gui::text("Bucket: " + std::to_string(flow.Bucket) + " bits");
-          gui::text("Bucket Size: " + std::to_string(flow.BucketSize) + " bits");
-
-          double bucket_percentage = (double)flow.Bucket * 100.0 / flow.BucketSize;
-          gui::text("Bucket Fill: " + std::to_string(bucket_percentage) + "%",
-            bucket_percentage < 20.0 ? fan::color(1, 0.5f, 0.5f, 1) : fan::color(0.5f, 1, 0.5f, 1));
-        }
-
-        gui::end_child();
-        gui::pop_style_color();
-
-        gui::spacing();
-
-        if (gui::button("Reset Statistics", fan::vec2(-1, 0))) {
-          stats.Frame_Drop = 0;
-          stats.Frame_Total = 0;
-          stats.Packet_Total = 0;
-          stats.Packet_HeadDrop = 0;
-          stats.Packet_BodyDrop = 0;
+        auto& flow = ecps_backend.share.m_NetworkFlow;
+        double fill = flow.BucketSize ? (double)flow.Bucket * 100.0 / flow.BucketSize : 0.0;
+        stat_row("Send budget", fan::to_string(fill, 0) + " %", fill < 20.0 ? bad : good);
+        if (gui::is_item_hovered()) {
+          gui::set_tooltip("How much of the send rate is left. Low means the stream is held back");
         }
       }
 
-      gui::separator();
-
-      if (gui::button("Reset Settings", fan::vec2(-1, 0))) {
-        This->stream_settings.selected_resolution = 0;
-        This->stream_settings.framerate = 30;
-        This->stream_settings.bitrate_mbps = 5;
-        This->stream_settings.input_control = 0;
-        This->send_input_control_flag();
+      if (gui::button("Reset counters")) {
+        stats.Frame_Drop = 0;
+        stats.Frame_Total = 0;
+        stats.Packet_Total = 0;
+        stats.Packet_HeadDrop = 0;
+        stats.Packet_BodyDrop = 0;
       }
-      gui::pop_style_var();
     }
 
     void process_stream_settings() {
@@ -1550,7 +1471,6 @@ struct ecps_gui_t {
         last_applied_height = current_height;
       }
 
-      gui::text("Aspect Ratio");
       auto aspect_options = rt->screen_encoder.resolution_manager.get_aspect_ratio_options();
 
       std::vector<std::string> aspect_strings;
@@ -1562,16 +1482,11 @@ struct ecps_gui_t {
         aspect_cstrings.push_back(str.c_str());
       }
 
-      gui::push_item_width(-1);
-      if (gui::combo("##aspect_ratio", &selected_aspect_ratio,
-        aspect_cstrings.data(), aspect_cstrings.size())) {
-        apply_closest_resolution(current_height);
-      }
-      gui::pop_item_width();
-
-      gui::separator();
-
-      gui::text("Resolution");
+      settings_row("Aspect", [&] {
+        if (gui::combo("##aspect_ratio", &selected_aspect_ratio, aspect_cstrings.data(), aspect_cstrings.size())) {
+          apply_closest_resolution(current_height);
+        }
+      });
 
       std::vector<resolution_system_t::resolution_t> available_resolutions = get_filtered_resolutions();
 
@@ -1605,16 +1520,13 @@ struct ecps_gui_t {
         res_cstrings.push_back(str.c_str());
       }
 
-      gui::push_item_width(-1);
-      if (gui::combo("##resolution", &selected_resolution,
-        res_cstrings.data(), res_cstrings.size())) {
-        if (selected_resolution >= 0 && selected_resolution < available_resolutions.size()) {
-          apply_resolution(available_resolutions[selected_resolution]);
+      settings_row("Resolution", [&] {
+        if (gui::combo("##resolution", &selected_resolution, res_cstrings.data(), res_cstrings.size())) {
+          if (selected_resolution >= 0 && selected_resolution < available_resolutions.size()) {
+            apply_resolution(available_resolutions[selected_resolution]);
+          }
         }
-      }
-      gui::pop_item_width();
-
-      gui::separator();
+      });
     }
 
   private:
@@ -2192,7 +2104,7 @@ struct ecps_gui_t {
     if (!fan::audio::loopback_capture_t::is_supported()) {
       return;
     }
-    if (gui::checkbox("Share audio", &stream_settings.share_audio)) {
+    if (settings_switch("Share audio", &stream_settings.share_audio, "Send what this computer plays to the viewers")) {
       save_audio_settings();
     }
     if (!stream_settings.share_audio) {
@@ -2208,9 +2120,9 @@ struct ecps_gui_t {
       }
     }
 
-    gui::text("Capture from");
-    gui::push_item_width(-1);
-    bool combo_open = gui::begin_combo("##audio_device", preview);
+    bool combo_open = false;
+    settings_row("Device", [&] {
+    combo_open = gui::begin_combo("##audio_device", preview);
     if (combo_open) {
       // re-list on open so newly plugged devices show up
       if (!combo_was_open) {
@@ -2226,22 +2138,16 @@ struct ecps_gui_t {
       }
       gui::end_combo();
     }
+    });
     combo_was_open = combo_open;
-    gui::pop_item_width();
 
     auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
     bool can_exclude = fan::audio::loopback_capture_t::can_exclude_processes();
-    gui::begin_disabled(!can_exclude);
     bool exclude = can_exclude && settings.exclude_discord;
-    if (gui::checkbox("Exclude Discord", &exclude)) {
+    if (can_exclude && settings_switch("Leave out Discord", &exclude,
+      "Records every app except Discord, so voice calls are not shared.\nRecords all outputs, not only the selected device.\nWith SteelSeries Sonar it records the Sonar - Gaming device instead.")) {
       settings.exclude_discord = exclude;
       save_audio_settings();
-    }
-    gui::end_disabled();
-    if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
-      gui::set_tooltip(can_exclude
-        ? "Records every app except Discord, so voice calls are not shared.\nRecords all outputs, not only the selected device.\nWith SteelSeries Sonar it records the Sonar - Gaming device instead."
-        : "Not supported on this platform yet");
     }
     if (exclude && !find_sonar_gaming().empty()) {
       text_wrapped_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
@@ -2252,13 +2158,12 @@ struct ecps_gui_t {
         : audio_share.exclude_failed ? "Could not exclude Discord, recording the device" : "Discord is not running");
     }
 
-    gui::text("Capture volume");
-    gui::push_item_width(-1);
-    gui::slider("##audio_gain", &settings.gain, 0.f, 2.f, gui::slider_flags_always_clamp);
-    if (gui::is_item_deactivated_after_edit()) {
-      save_audio_settings();
-    }
-    gui::pop_item_width();
+    settings_row("Level", [&] {
+      gui::slider("##audio_gain", &settings.gain, 0.f, 2.f, gui::slider_flags_always_clamp);
+      if (gui::is_item_deactivated_after_edit()) {
+        save_audio_settings();
+      }
+    });
   }
 
   // the list is re-read at most every 10 s unless forced (it also detects Sonar starting or stopping)
@@ -2303,17 +2208,16 @@ struct ecps_gui_t {
   std::chrono::steady_clock::time_point loopback_devices_listed;
 
   void render_play_audio_controls() {
-    if (gui::checkbox("Play audio", &stream_settings.play_audio)) {
+    if (settings_switch("Play audio", &stream_settings.play_audio, "Play the sound of the stream you watch")) {
       save_audio_settings();
     }
     if (stream_settings.play_audio) {
-      gui::text("Volume");
-      gui::push_item_width(-1);
-      gui::slider("##audio_volume", &stream_settings.audio_volume, 0.f, 2.f, gui::slider_flags_always_clamp);
-      if (gui::is_item_deactivated_after_edit()) {
-        save_audio_settings();
-      }
-      gui::pop_item_width();
+      settings_row("Volume", [&] {
+        gui::slider("##audio_volume", &stream_settings.audio_volume, 0.f, 2.f, gui::slider_flags_always_clamp);
+        if (gui::is_item_deactivated_after_edit()) {
+          save_audio_settings();
+        }
+      });
     }
   }
 
@@ -2727,6 +2631,297 @@ struct ecps_gui_t {
   }
 
 #if defined(_WIN32)
+  // ---- what is captured: the whole screen, or one window (Linux asks in the portal instead) ------------------
+
+  struct capture_window_t {
+    std::uintptr_t handle;
+    std::string title;
+  };
+  std::vector<capture_window_t> capture_windows;
+  std::string capture_window_title;
+
+  static BOOL CALLBACK collect_capture_window(HWND hwnd, LPARAM param) {
+    auto* list = (std::vector<capture_window_t>*)param;
+    if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != nullptr) {
+      return TRUE;
+    }
+    if (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) {
+      return TRUE;
+    }
+    DWORD process = 0;
+    GetWindowThreadProcessId(hwnd, &process);
+    if (process == GetCurrentProcessId()) {
+      return TRUE;
+    }
+    wchar_t title[256];
+    int length = GetWindowTextW(hwnd, title, 256);
+    if (length <= 0) {
+      return TRUE;
+    }
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, title, length, nullptr, 0, nullptr, nullptr);
+    std::string utf8(bytes, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, title, length, utf8.data(), bytes, nullptr, nullptr);
+    list->push_back({(std::uintptr_t)hwnd, utf8});
+    return TRUE;
+  }
+
+  // A small picture of a window as it looks now, for choosing what to share. They are taken here, on the gui thread,
+  // a couple per frame at most, and only for what is shown
+  struct capture_thumb_t {
+    fan::graphics::image_t image;
+    bool loaded = false;
+    fan::vec2 size;
+    std::chrono::steady_clock::time_point at;
+  };
+  std::unordered_map<std::uintptr_t, capture_thumb_t> capture_thumbs;
+  std::vector<std::uint8_t> thumb_pixels;
+  bool capture_picker_requested = false;
+  bool preview_own_share = false;
+  std::chrono::steady_clock::time_point capture_picker_opened_at;
+
+  // thumb_pixels gets the picture as rgba, at most max_width wide. handle 0 is the screen
+  bool grab_window_rgba(std::uintptr_t handle, int max_width, fan::vec2i& size) {
+    HWND hwnd = (HWND)handle;
+    RECT rect;
+    int width, height;
+    if (handle == 0) {
+      width = GetSystemMetrics(SM_CXSCREEN);
+      height = GetSystemMetrics(SM_CYSCREEN);
+    }
+    else {
+      if (!IsWindow(hwnd) || IsIconic(hwnd) || !GetWindowRect(hwnd, &rect)) {
+        return false;
+      }
+      width = rect.right - rect.left;
+      height = rect.bottom - rect.top;
+    }
+    if (width < 16 || height < 16) {
+      return false;
+    }
+    HDC screen_dc = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen_dc);
+    BITMAPINFO info {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    // the screen is shrunk while it is copied, a window is shrunk after
+    int bitmap_width = handle == 0 ? std::min(width, max_width) : width;
+    int bitmap_height = handle == 0 ? std::max(1, height * bitmap_width / width) : height;
+    info.bmiHeader.biWidth = bitmap_width;
+    info.bmiHeader.biHeight = -bitmap_height;
+    void* bits = nullptr;
+    HBITMAP bitmap = dc ? CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    bool ok = false;
+    if (bitmap) {
+      HGDIOBJ old = SelectObject(dc, bitmap);
+      if (handle == 0) {
+        SetStretchBltMode(dc, HALFTONE);
+        ok = StretchBlt(dc, 0, 0, bitmap_width, bitmap_height, screen_dc, 0, 0, width, height, SRCCOPY) != 0;
+      }
+      else {
+        ok = PrintWindow(hwnd, dc, 2) != 0;
+      }
+      if (ok) {
+        int step = handle == 0 ? 1 : std::max(1, bitmap_width / max_width);
+        int out_width = bitmap_width / step;
+        int out_height = bitmap_height / step;
+        thumb_pixels.resize((std::size_t)out_width * out_height * 4);
+        const std::uint8_t* source = (const std::uint8_t*)bits;
+        for (int y = 0; y < out_height; ++y) {
+          for (int x = 0; x < out_width; ++x) {
+            const std::uint8_t* from = source + ((std::size_t)y * step * bitmap_width + (std::size_t)x * step) * 4;
+            std::uint8_t* to = &thumb_pixels[((std::size_t)y * out_width + x) * 4];
+            to[0] = from[2];
+            to[1] = from[1];
+            to[2] = from[0];
+            to[3] = 255;
+          }
+        }
+        size = fan::vec2i(out_width, out_height);
+      }
+      SelectObject(dc, old);
+      DeleteObject(bitmap);
+    }
+    if (dc) {
+      DeleteDC(dc);
+    }
+    ReleaseDC(nullptr, screen_dc);
+    return ok;
+  }
+
+  // takes a new picture when the old one is older than interval_ms. budget counts the pictures left for this frame
+  capture_thumb_t& refresh_thumb(std::uintptr_t handle, int max_width, int interval_ms, int& budget) {
+    auto& thumb = capture_thumbs[handle];
+    auto now = std::chrono::steady_clock::now();
+    if (budget <= 0 || (thumb.loaded && now - thumb.at < std::chrono::milliseconds(interval_ms))) {
+      return thumb;
+    }
+    --budget;
+    thumb.at = now;
+    fan::vec2i size;
+    if (grab_window_rgba(handle, max_width, size)) {
+      fan::image::info_t image_info {thumb_pixels.data(), size, 4};
+      if (thumb.image.valid()) {
+        thumb.image.reload(image_info);
+      }
+      else {
+        thumb.image = engine.image_load(image_info);
+      }
+      thumb.size = fan::vec2((f32_t)size.x, (f32_t)size.y);
+      thumb.loaded = true;
+    }
+    return thumb;
+  }
+
+  void refresh_capture_windows() {
+    capture_windows.clear();
+    EnumWindows(collect_capture_window, (LPARAM)&capture_windows);
+    for (auto it = capture_thumbs.begin(); it != capture_thumbs.end();) {
+      bool alive = it->first == 0 || std::any_of(capture_windows.begin(), capture_windows.end(), [&](const auto& w) { return w.handle == it->first; });
+      if (!alive) {
+        if (it->second.image.valid()) {
+          engine.image_unload(it->second.image);
+        }
+        it = capture_thumbs.erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
+  }
+
+  // a title cut to fit width pixels, so a long one doesn't push its neighbours around
+  static std::string fit_title(std::string title, f32_t width) {
+    if (gui::calc_text_size(title).x <= width) {
+      return title;
+    }
+    while (title.size() > 1 && gui::calc_text_size(title + "...").x > width) {
+      title.pop_back();
+    }
+    return title + "...";
+  }
+
+  static std::string shorten_title(const std::string& title, std::size_t length) {
+    return title.size() <= length ? title : title.substr(0, length - 3) + "...";
+  }
+
+  // what is shared (a window, or the screen for 0), as it looks now
+  void draw_share_preview(std::uintptr_t handle, f32_t max_width) {
+    int budget = 1;
+    auto& thumb = refresh_thumb(handle, 480, 300, budget);
+    if (!thumb.loaded) {
+      return;
+    }
+    f32_t width = std::min(max_width, thumb.size.x);
+    gui::image(thumb.image, fan::vec2(width, width * thumb.size.y / thumb.size.x));
+  }
+
+  // The window picker: every window as a small picture, click one to share it, like the share pickers of chat apps
+  void render_capture_picker(fan::graphics::screen_capture_t& capture, render_thread_t* rt) {
+    if (capture_picker_requested) {
+      capture_picker_requested = false;
+      refresh_capture_windows();
+      capture_picker_opened_at = std::chrono::steady_clock::now();
+      // as big as fits in the window, centered, so nothing is out of view
+      fan::vec2 display = gui::get_io().DisplaySize;
+      fan::vec2 size(std::min(760.f, display.x - 40.f), std::min(520.f, display.y - 40.f));
+      gui::set_next_window_size(size);
+      gui::set_next_window_pos((display - size) * 0.5f);
+      gui::open_popup("Choose what to share");
+    }
+    if (!gui::begin_popup("Choose what to share")) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now - capture_picker_opened_at > std::chrono::milliseconds(1500)) {
+      refresh_capture_windows(); // new windows show up, closed ones go
+      capture_picker_opened_at = now;
+    }
+    std::uintptr_t current = capture.target_window.load();
+    const fan::vec2 cell(210.f, 118.f);
+    f32_t spacing = gui::get_style().ItemSpacing.x;
+    int columns = std::max(1, (int)((gui::get_content_region_avail().x + spacing) / (cell.x + spacing)));
+    int budget = 2;
+    bool changed = false;
+    int index = 0;
+
+    auto place = [&] {
+      if (index % columns != 0) {
+        gui::same_line();
+      }
+      ++index;
+    };
+
+    place();
+    gui::begin_group();
+    if (gui::button("Whole screen##pick_screen", cell)) {
+      capture.target_window = 0;
+      changed = true;
+    }
+    gui::text(current == 0 ? "> Whole screen" : "Whole screen");
+    gui::dummy(fan::vec2(cell.x, 0.f));
+    gui::end_group();
+
+    for (const auto& window : capture_windows) {
+      place();
+      gui::push_id((int)(window.handle & 0x7fffffff));
+      gui::begin_group();
+      auto& thumb = refresh_thumb(window.handle, 320, 2500, budget);
+      bool clicked;
+      if (thumb.loaded) {
+        f32_t scale = std::min(cell.x / thumb.size.x, cell.y / thumb.size.y);
+        clicked = gui::image_button("##pick", thumb.image, fan::vec2(thumb.size.x * scale, thumb.size.y * scale));
+      }
+      else {
+        clicked = gui::button("...##pick", cell);
+      }
+      if (clicked) {
+        capture_window_title = window.title;
+        capture.target_window = window.handle;
+        changed = true;
+      }
+      gui::text(std::string(current == window.handle ? "> " : "") + fit_title(window.title, cell.x - 6.f));
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip(window.title);
+      }
+      gui::end_group();
+      gui::pop_id();
+    }
+    if (changed) {
+      // viewers need a new keyframe, the picture changed size and content
+      rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
+      gui::close_current_popup();
+    }
+    gui::end_popup();
+  }
+
+  void render_capture_source() {
+    auto* rt = get_render_thread();
+    if (!rt) {
+      return;
+    }
+    auto& capture = rt->screen_encoder.mdscr;
+    std::uintptr_t current = capture.target_window.load();
+    if (current == 0) {
+      capture_window_title.clear();
+    }
+    std::string label = current == 0 ? std::string("Whole screen") : shorten_title(capture_window_title, 30);
+    settings_row("Source", [&] {
+      if (gui::button(label + "##capture_source", fan::vec2(-1.f, 0.f))) {
+        capture_picker_requested = true;
+      }
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip("Pick the screen or a window to share");
+      }
+    });
+    render_capture_picker(capture, rt);
+    settings_switch("Preview", &preview_own_share, "A small live picture of what you share");
+    if (preview_own_share) {
+      draw_share_preview(current, gui::get_content_region_avail().x);
+    }
+  }
+
   // The host's pointer goes to the viewers apart from the picture. Windows hands out the picture without it, and
   // a pointer the host's system doesn't show (a game hides it) must not show for the viewers either.
   // Linux hosts have the portal draw it into the picture, so they send nothing
@@ -3306,9 +3501,9 @@ struct ecps_gui_t {
   // The top right of the stream area: the Stats tick and whose screen is watched. It fades out like the toolbar and
   // comes back when the mouse goes near the top edge, or while there is no picture
   void render_stream_top_overlay() {
-    // with nobody sharing, or one sharer (which is watched by itself), there is nothing to choose
+    // with nobody sharing there is nobody to pick
     auto options = streamer_options();
-    if (options.size() < 2) {
+    if (options.empty()) {
       top_overlay_alpha = 0.f;
       return;
     }
@@ -3360,6 +3555,64 @@ struct ecps_gui_t {
   std::uint32_t watch_source = 0;
   std::unordered_map<std::uint32_t, bool> stream_state_sent;
   std::chrono::steady_clock::time_point stream_state_sent_at;
+
+  // ---- building blocks of the settings panel ---------------------------------------------------------------
+
+  // a section title: small, coloured, with a thin line under it
+  static void settings_section(const char* title) {
+    gui::dummy(fan::vec2(0, 4.f));
+    gui::text(fan::color(0.55f, 0.68f, 1.f, 1.f), title);
+    fan::vec2 at = gui::get_cursor_screen_pos() - fan::vec2(0, 4.f);
+    gui::get_window_draw_list()->AddLine(at, at + fan::vec2(gui::get_content_region_avail().x, 0), 0x40ffffffu, 1.f);
+    gui::dummy(fan::vec2(0, 1.f));
+  }
+
+  // One setting: its name at the left, the control filling the rest of the row. A narrow panel puts the name above
+  static void settings_row(const char* label, auto&& control) {
+    f32_t width = gui::get_content_region_avail().x;
+    f32_t label_width = gui::calc_text_size("Resolution").x + 18.f;
+    f32_t start = gui::get_cursor_pos_x();
+    gui::push_id(label);
+    if (width - label_width < 140.f) {
+      gui::text(fan::color(0.75f, 0.75f, 0.8f, 1.f), label);
+    }
+    else {
+      gui::align_text_to_frame_padding();
+      gui::text(fan::color(0.75f, 0.75f, 0.8f, 1.f), label);
+      gui::same_line(start + label_width);
+    }
+    gui::push_item_width(-1);
+    control();
+    gui::pop_item_width();
+    gui::pop_id();
+  }
+
+  // an on/off switch with its name at the left, the whole row is clickable
+  static bool settings_switch(const char* label, bool* value, const char* tooltip = nullptr) {
+    f32_t height = gui::get_frame_height();
+    f32_t width = gui::get_content_region_avail().x;
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::push_id(label);
+    bool clicked = gui::invisible_button("##switch", fan::vec2(width, height));
+    gui::pop_id();
+    bool hovered = gui::is_item_hovered();
+    if (clicked) {
+      *value = !*value;
+    }
+    if (hovered && tooltip) {
+      gui::set_tooltip(tooltip);
+    }
+    auto* list = gui::get_window_draw_list();
+    list->AddText(at + fan::vec2(0, (height - gui::get_font_size()) * 0.5f), hovered ? 0xffffffffu : 0xffe2e2e2u, label);
+    f32_t track_height = height * 0.66f;
+    f32_t track_width = track_height * 1.85f;
+    fan::vec2 track = at + fan::vec2(width - track_width - 2.f, (height - track_height) * 0.5f);
+    std::uint32_t track_color = *value ? (hovered ? 0xfff8b058u : 0xfff0a040u) : (hovered ? 0xff6a6a6au : 0xff4c4c4cu);
+    list->AddRectFilled(track, track + fan::vec2(track_width, track_height), track_color, track_height * 0.5f);
+    f32_t knob_x = *value ? track_width - track_height * 0.5f : track_height * 0.5f;
+    list->AddCircleFilled(track + fan::vec2(knob_x, track_height * 0.5f), track_height * 0.5f - 2.5f, 0xffffffffu);
+    return clicked;
+  }
 
   // ---- the interface that hides ------------------------------------------------------------------------------
 
@@ -3484,6 +3737,42 @@ struct ecps_gui_t {
     }
     selected_channel_id = ecps_backend.channel_info.front().channel_id;
   }
+
+  // When the channel ticked "Join automatically" has someone sharing, its stream is shown without a click: that
+  // channel is selected, its sharer is watched and the Stream View opens (from the Channels tab only, another tab
+  // is where you chose to be). Once per time they start sharing, so leaving the Stream View stays possible
+  void update_auto_show() {
+    if (auto_join_host.empty()) {
+      return;
+    }
+    std::uint32_t me = (std::uint32_t)ecps_backend.session_id.i;
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (ecps_backend.is_hosting_channel(channel.channel_id) || channel_name_of(channel.channel_id) != auto_join_host) {
+        continue;
+      }
+      std::uint32_t key = (std::uint32_t)channel.channel_id.i;
+      std::vector<std::uint32_t> others;
+      for (std::uint32_t session : ecps_backend.streamers_of(channel.channel_id)) {
+        if (session != me) {
+          others.push_back(session);
+        }
+      }
+      if (others.empty()) {
+        auto_shown.erase(key); // the next time they share, it shows again
+        continue;
+      }
+      if (!auto_shown.insert(key).second) {
+        continue;
+      }
+      selected_channel_id = channel.channel_id;
+      set_watch(channel.channel_id, others.front());
+      if (window_handler.current_tab == 0) {
+        window_handler.main_tab = 1;
+      }
+    }
+  }
+
+  std::unordered_set<std::uint32_t> auto_shown;
 
   // grey text that breaks at the edge of its panel, a long hint must not run out of it
   static void text_wrapped_disabled(const std::string& text) {
@@ -3762,12 +4051,31 @@ struct ecps_gui_t {
       width = std::max(width, gui::calc_text_size(line.text).x);
     }
     f32_t line_height = gui::get_text_line_height_with_spacing();
-    gui::set_cursor_pos(fan::vec2(12, 12 + stream_top_offset()));
+    // The box can be dragged anywhere inside the stream area. Until it is moved it sits at the top left
+    fan::vec2 box_size(width + 16.f, lines.size() * line_height + 10.f);
+    fan::vec2 area_size = gui::get_window_size();
+    fan::vec2 pos = stats_moved ? stats_pos : fan::vec2(6.f, 6.f + stream_top_offset());
+    pos.x = std::max(0.f, std::min(pos.x, area_size.x - box_size.x));
+    pos.y = std::max(0.f, std::min(pos.y, area_size.y - box_size.y));
+    gui::set_cursor_pos(pos);
+    gui::invisible_button("##stats_drag", box_size);
+    if (gui::is_item_active()) {
+      auto delta = gui::get_io().MouseDelta;
+      pos.x = std::max(0.f, std::min(pos.x + delta.x, area_size.x - box_size.x));
+      pos.y = std::max(0.f, std::min(pos.y + delta.y, area_size.y - box_size.y));
+      stats_moved = true;
+    }
+    if (stats_moved) {
+      stats_pos = pos;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Drag to move");
+    }
+    gui::set_cursor_pos(pos);
     fan::vec2 at = gui::get_cursor_screen_pos();
-    gui::get_window_draw_list()->AddRectFilled(at - fan::vec2(8, 6), at + fan::vec2(width + 8, lines.size() * line_height + 4),
-      0xb4000000u, 6.f);
+    gui::get_window_draw_list()->AddRectFilled(at, at + box_size, 0xb4000000u, 6.f);
     for (std::size_t i = 0; i < lines.size(); ++i) {
-      gui::set_cursor_pos(fan::vec2(12, 12 + stream_top_offset() + i * line_height));
+      gui::set_cursor_pos(pos + fan::vec2(8.f, 6.f + i * line_height));
       gui::text(lines[i].color, lines[i].text);
     }
   }
@@ -4173,6 +4481,7 @@ struct ecps_gui_t {
     update_selected_channel();
     update_stream_state();
     update_watch();
+    update_auto_show();
     update_debug_sample();
     update_auto_join();
     update_midi_forward();
@@ -4258,6 +4567,8 @@ struct ecps_gui_t {
   std::unordered_map<std::uint32_t, std::uint8_t> sent_channel_flags;
   std::chrono::steady_clock::time_point flags_sent_at;
   bool show_stream_stats = false;
+  bool stats_moved = false;
+  fan::vec2 stats_pos = fan::vec2(6.f, 6.f);
   f32_t top_overlay_alpha = 1.f;
   std::chrono::steady_clock::time_point top_overlay_visible_until;
   bool top_bar_compact = false;

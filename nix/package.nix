@@ -133,6 +133,9 @@ clangStdenv.mkDerivation {
     # ask the screen capture portal to draw the mouse pointer into the picture while it is showing. When an
     # application hides it (a game does) the portal leaves it out, so viewers see what the user sees
     patch -p1 -d $inc/WITCH < ${./witch-cursor.patch}
+
+    # let the portal offer windows as well as screens, it asks which one to share
+    patch -p1 -d $inc/WITCH < ${./witch-window.patch}
     runHook postPatch
   '';
 
