@@ -1,0 +1,23 @@
+--- a/MD/SCR/backend/wayland/wayland.h	2026-11-14 14:36:55.910235400 +0200
++++ b/MD/SCR/backend/wayland/wayland.h	2026-11-14 14:37:04.863391600 +0200
+@@ -472,6 +472,20 @@
+     return -1;
+   }
+ 
++  // the portal draws the mouse pointer into the picture while it is showing, and leaves it out when an
++  // application hides it (a game does), so viewers see what the user sees
++  const char* cursor_mode_key = "cursor_mode";
++  uint32_t cursor_mode_val = 2; // embedded
++  if (!dbus_message_iter_open_container(&options, DBUS_TYPE_DICT_ENTRY, NULL, &option) ||
++    !dbus_message_iter_append_basic(&option, DBUS_TYPE_STRING, &cursor_mode_key) ||
++    !dbus_message_iter_open_container(&option, DBUS_TYPE_VARIANT, "u", &variant) ||
++    !dbus_message_iter_append_basic(&variant, DBUS_TYPE_UINT32, &cursor_mode_val) ||
++    !dbus_message_iter_close_container(&option, &variant) ||
++    !dbus_message_iter_close_container(&options, &option)) {
++    cleanup_resources(reply, conn, msg, &error);
++    return -1;
++  }
++
+   const char* multiple_key = "multiple";
+   dbus_bool_t multiple_val = FALSE;
+   if (!dbus_message_iter_open_container(&options, DBUS_TYPE_DICT_ENTRY, NULL, &option) ||

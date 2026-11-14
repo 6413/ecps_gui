@@ -527,6 +527,16 @@ struct render_thread_t {
 
   fan::vec2ui host_mouse_pos;
 
+  // The host's mouse pointer as the host reports it: where it is on the captured screen (0..1) and whether it is
+  // showing at all. A game that hides the pointer hides it here too. Not set when the host is a Linux one,
+  // there the picture itself has the pointer in it
+  struct host_cursor_t {
+    std::atomic<f32_t> x {0.f};
+    std::atomic<f32_t> y {0.f};
+    std::atomic<bool> visible {false};
+    std::atomic<std::int64_t> updated_ms {0};
+  }host_cursor;
+
   void render(auto l) {
     if (engine.process_frame([this, l] { ecps_gui.render(); l(); })) {
       should_stop.store(true);
@@ -736,6 +746,28 @@ ecps_backend_t::ecps_backend_t() {
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
     if (rt) {
       backend.update_host_mouse_coordinate(msg->ChannelID, msg->pos);
+    }
+    co_return;
+  };
+
+  __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewCursor) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewCursor_t>();
+    if (msg.status != 0) {
+      co_return;
+    }
+    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+    if (!rt) {
+      co_return;
+    }
+    for (const auto& channel : backend.channel_info) {
+      if (channel.channel_id.i == msg->ChannelID.i && channel.is_viewing) {
+        rt->host_cursor.x.store(msg->X / 65535.f);
+        rt->host_cursor.y.store(msg->Y / 65535.f);
+        rt->host_cursor.visible.store(msg->Visible != 0);
+        rt->host_cursor.updated_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count());
+        break;
+      }
     }
     co_return;
   };

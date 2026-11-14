@@ -322,6 +322,16 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     uint8_t Data2;
   );
 
+  // the host's mouse pointer. X and Y run 0..65535 across the captured screen. Visible is 0 while the host's
+  // system shows no pointer (a game hides it), the viewers hide theirs then too
+  __dme(Channel_ScreenShare_Share_InformationToViewCursor,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_ChannelSessionID_t ChannelSessionID;
+    uint16_t X;
+    uint16_t Y;
+    uint8_t Visible;
+  );
+
   // remote logs: Peer is the other client, the server only relays between two sessions of a channel.
   // C2S and S2C layouts stay identical like the file messages
   __dme(Channel_Log_Request,
@@ -514,6 +524,13 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     uint8_t Status;
     uint8_t Data1;
     uint8_t Data2;
+  );
+
+  __dme(Channel_ScreenShare_View_InformationToViewCursor,
+    Protocol_ChannelID_t ChannelID;
+    uint16_t X;
+    uint16_t Y;
+    uint8_t Visible;
   );
 
   // remote logs: Peer is the other client, the server only relays between two sessions of a channel.

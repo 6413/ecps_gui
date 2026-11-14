@@ -129,6 +129,10 @@ clangStdenv.mkDerivation {
     cp ${thirdParty.VulkanMemoryAllocator}/include/vk_mem_alloc.h $inc/VulkanMemoryAllocator/include/
     cp ${thirdParty.VulkanUtilityLibraries}/include/vulkan/*.h $inc/vulkan/
     chmod -R u+w fan
+
+    # ask the screen capture portal to draw the mouse pointer into the picture while it is showing. When an
+    # application hides it (a game does) the portal leaves it out, so viewers see what the user sees
+    patch -p1 -d $inc/WITCH < ${./witch-cursor.patch}
     runHook postPatch
   '';
 

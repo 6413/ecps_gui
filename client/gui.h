@@ -1314,6 +1314,7 @@ struct ecps_gui_t {
         fan::vec2 stream_area = gui::get_content_region_avail();
         This->network_frame_helper.setup_network_frame(stream_area);
         This->render_fps_counter(stream_width);
+        This->draw_host_cursor();
 
         if (rt->network_frame.get_image() == engine.default_texture) {
           This->render_stream_empty_hint(stream_area);
@@ -1381,6 +1382,7 @@ struct ecps_gui_t {
         fan::vec2 stream_area = gui::get_content_region_avail();
         This->network_frame_helper.setup_network_frame(stream_area);
         This->render_fps_counter(stream_area.x);
+        This->draw_host_cursor();
 
         if (rt->network_frame.get_image() == engine.default_texture) {
           This->render_stream_empty_hint(stream_area);
@@ -1673,6 +1675,7 @@ struct ecps_gui_t {
 
       This->network_frame_helper.setup_network_frame(stream_area);
       This->render_fps_counter(stream_area.x);
+      This->draw_host_cursor();
 
       gui::pop_style_var(5);
 
@@ -2545,6 +2548,110 @@ struct ecps_gui_t {
     gui::end_child();
   }
 
+  // The pointer of the computer that shares, drawn over the picture. The capture doesn't contain it (on Windows),
+  // the host sends where it is and whether it is showing, so a pointer the host hides is hidden here too
+  void draw_host_cursor() {
+    auto* rt = get_render_thread();
+    if (!rt || !rt->host_cursor.visible.load() || rt->network_frame.get_image() == engine.default_texture) {
+      return;
+    }
+    // the host repeats itself every second while it streams, silence means it stopped
+    std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now_ms - rt->host_cursor.updated_ms.load() > 3000) {
+      return;
+    }
+    fan::vec2 frame_size = rt->network_frame.get_size() * 2;
+    fan::vec2 frame_min = fan::vec2(rt->network_frame.get_position()) - frame_size / 2;
+    if (frame_size.x <= 0 || frame_size.y <= 0) {
+      return;
+    }
+    fan::vec2 at = frame_min + fan::vec2(rt->host_cursor.x.load() * frame_size.x, rt->host_cursor.y.load() * frame_size.y);
+
+    // an arrow, white with a dark edge so it shows on any picture
+    f32_t scale = std::max(1.f, gui::get_frame_height() / 22.f);
+    auto point = [&](f32_t x, f32_t y) { return fan::vec2(at.x + x * scale, at.y + y * scale); };
+    auto* list = gui::get_foreground_draw_list();
+    std::uint32_t white = 0xffffffffu;
+    std::uint32_t dark = 0xff000000u;
+    list->AddTriangleFilled(point(0, 0), point(0, 17), point(12, 12), white);
+    list->AddQuadFilled(point(4, 12), point(8, 20), point(11, 18), point(8, 11), white);
+    list->AddTriangle(point(0, 0), point(0, 17), point(12, 12), dark, 1.5f);
+    list->AddQuad(point(4, 12), point(8, 20), point(11, 18), point(8, 11), dark, 1.5f);
+  }
+
+#if defined(_WIN32)
+  // The host's pointer goes to the viewers apart from the picture. Windows hands out the picture without it, and
+  // a pointer the host's system doesn't show (a game hides it) must not show for the viewers either.
+  // Linux hosts have the portal draw it into the picture, so they send nothing
+  void update_host_cursor() {
+    auto* rt = get_render_thread();
+    if (!rt || !ecps_backend.is_streaming_to_any_channel()) {
+      cursor_last_visible = -1;
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now - cursor_checked_at < std::chrono::milliseconds(8)) {
+      return;
+    }
+    cursor_checked_at = now;
+
+    CURSORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetCursorInfo(&info)) {
+      return;
+    }
+    auto& geometry = rt->screen_encoder.mdscr.Geometry;
+    if (geometry.Resolution.x <= 0 || geometry.Resolution.y <= 0) {
+      return;
+    }
+    fan::vec2i origin = rt->screen_encoder.mdscr.desktop_origin;
+    f32_t nx = (f32_t)(info.ptScreenPos.x - origin.x) / (f32_t)geometry.Resolution.x;
+    f32_t ny = (f32_t)(info.ptScreenPos.y - origin.y) / (f32_t)geometry.Resolution.y;
+    // showing for the system, and on the screen that is being shared
+    bool visible = (info.flags & CURSOR_SHOWING) != 0 && info.hCursor != nullptr &&
+      nx >= 0.f && nx <= 1.f && ny >= 0.f && ny <= 1.f;
+    std::uint16_t x = (std::uint16_t)(std::clamp(nx, 0.f, 1.f) * 65535.f);
+    std::uint16_t y = (std::uint16_t)(std::clamp(ny, 0.f, 1.f) * 65535.f);
+
+    bool changed = (int)visible != cursor_last_visible || (visible && (x != cursor_last_x || y != cursor_last_y));
+    bool repeat = now - cursor_sent_at > std::chrono::seconds(1);
+    if (!changed && !repeat) {
+      return;
+    }
+    cursor_last_visible = visible;
+    cursor_last_x = x;
+    cursor_last_y = y;
+    cursor_sent_at = now;
+
+    backend_queue([x, y, visible]() -> fan::event::task_t {
+      try {
+        for (const auto& channel : ecps_backend.channel_info) {
+          if (channel.is_streaming && ecps_backend.is_hosting_channel(channel.channel_id)) {
+            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor_t rest;
+            rest.ChannelID = channel.channel_id;
+            rest.ChannelSessionID = channel.session_id;
+            rest.X = x;
+            rest.Y = y;
+            rest.Visible = visible ? 1 : 0;
+            co_await ecps_backend.tcp_write(
+              ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor, &rest, sizeof(rest));
+          }
+        }
+      }
+      catch (...) {}
+    });
+  }
+
+  int cursor_last_visible = -1;
+  std::uint16_t cursor_last_x = 0;
+  std::uint16_t cursor_last_y = 0;
+  std::chrono::steady_clock::time_point cursor_checked_at;
+  std::chrono::steady_clock::time_point cursor_sent_at;
+#else
+  void update_host_cursor() {}
+#endif
+
   // grey text that breaks at the edge of its panel, a long hint must not run out of it
   static void text_wrapped_disabled(const std::string& text) {
     gui::push_text_wrap_pos(0.f);
@@ -3032,6 +3139,7 @@ struct ecps_gui_t {
     }
     forward_input();
     update_channel_flags();
+    update_host_cursor();
     update_midi_forward();
     remote_logs.tick([this](const std::function<fan::event::task_t()>& task) {
       backend_queue(task);
