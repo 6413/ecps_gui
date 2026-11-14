@@ -485,6 +485,7 @@ struct ecps_gui_t {
       gui::set_next_window_size(window_size);
       gui::set_next_window_bg_alpha(0.99);
       if (gui::begin("Channel Browser", &p_open,
+        gui::window_flags_no_bring_to_front_on_focus |
         gui::window_flags_no_docking |
         gui::window_flags_no_saved_settings |
         gui::window_flags_no_move |
@@ -538,6 +539,12 @@ struct ecps_gui_t {
             current_tab = 1;
 
             render_stream_view_content();
+            gui::end_tab_item();
+          }
+
+          if (gui::begin_tab_item("Debug", nullptr, 0)) {
+            current_tab = 2;
+            This->render_debug_tab();
             gui::end_tab_item();
           }
 
@@ -1275,8 +1282,8 @@ struct ecps_gui_t {
     void process_stream_settings() {
 
       fan::vec2 avail_size = gui::get_content_region_avail();
-      f32_t button_height = gui::get_frame_height() + gui::get_style().ItemSpacing.y;
-      f32_t content_height = avail_size.y - button_height - gui::get_style().ItemSpacing.y;
+      // the toolbar floats over the picture now, the stream gets the whole height
+      f32_t content_height = avail_size.y - gui::get_style().ItemSpacing.y;
       f32_t left_window_padding = 8.0f;
       f32_t right_window_padding = 12.0f;
       f32_t splitter_spacing = 12.0f;
@@ -1308,6 +1315,10 @@ struct ecps_gui_t {
         fan::vec2 stream_area = gui::get_content_region_avail();
         This->network_frame_helper.setup_network_frame(stream_area);
         This->render_fps_counter(stream_width);
+
+        if (rt->network_frame.get_image() == engine.default_texture) {
+          This->render_stream_empty_hint(stream_area);
+        }
 
 #if ecps_debug_prints >= 3
         static int debug_counter = 0;
@@ -1348,8 +1359,8 @@ struct ecps_gui_t {
 
     void process_no_stream_settings() {
       fan::vec2 avail_size = gui::get_content_region_avail();
-      f32_t button_height = gui::get_frame_height() + gui::get_style().ItemSpacing.y;
-      f32_t content_height = avail_size.y - button_height - gui::get_style().ItemSpacing.y;
+      // the toolbar floats over the picture now, the stream gets the whole height
+      f32_t content_height = avail_size.y - gui::get_style().ItemSpacing.y;
       f32_t side_padding = 12.0f;
 
       gui::dummy(fan::vec2(side_padding, 0));
@@ -1372,7 +1383,7 @@ struct ecps_gui_t {
         This->render_fps_counter(stream_area.x);
 
         if (rt->network_frame.get_image() == engine.default_texture) {
-          gui::set_cursor_pos(stream_area / 2 - fan::vec2(100, 20));
+          This->render_stream_empty_hint(stream_area);
         }
       }
 
@@ -1385,8 +1396,8 @@ struct ecps_gui_t {
 
       fan::vec2 avail_size = gui::get_content_region_avail();
 
-      f32_t button_height = gui::get_frame_height() + gui::get_style().ItemSpacing.y;
-      f32_t content_height = avail_size.y - button_height - gui::get_style().ItemSpacing.y;
+      // the toolbar floats over the picture now, the stream gets the whole height
+      f32_t content_height = avail_size.y - gui::get_style().ItemSpacing.y;
 
       if (avail_size.x > 0 && content_height > 0) {
         if (This->stream_settings.show_in_stream_view) {
@@ -1403,33 +1414,7 @@ struct ecps_gui_t {
         (avail_size.x - This->stream_settings.settings_panel_width - 40.0f) :
         avail_size.x;
 
-      // Use helper for stream button with proper positioning
-      f32_t button_width = 200;
-      f32_t center_pos = (main_content_width - button_width) / 2;
-      gui::set_cursor_pos_x(center_pos);
-      stream_button_renderer_t::render_stream_toggle_button(This->selected_channel_id, fan::vec2(button_width, 0));
-
-      gui::same_line();
-
-      f32_t frame_height = gui::get_frame_height();
-      gui::set_cursor_pos_x(main_content_width - (frame_height * 2) - 10);
-
-      // Use helper for icon buttons
-      f32_t settings_icon_size = gui::get_text_line_height();
-      f32_t settings_equal_padding = gui::get_style().FramePadding.y;
-      if (icon_button_helper_t::render_transparent_icon_button("#btn_settings", This->icon_settings, 
-          fan::vec2(settings_icon_size, settings_icon_size), fan::vec2(settings_equal_padding, settings_equal_padding))) {
-        This->stream_settings.show_in_stream_view = !This->stream_settings.show_in_stream_view;
-      }
-
-      gui::same_line(main_content_width - frame_height);
-
-      f32_t equal_padding = gui::get_style().FramePadding.y;
-      if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen", This->icon_fullscreen, 
-          fan::vec2(settings_icon_size, settings_icon_size), fan::vec2(equal_padding, equal_padding))) {
-        This->is_fullscreen_stream = true;
-        engine.window.set_borderless();
-      }
+      This->render_stream_toolbar(main_content_width);
     }
 
     int main_tab = 0;
@@ -1769,36 +1754,61 @@ struct ecps_gui_t {
     gui::pop_font();
   }
 
-  void send_input_control_flag() {
-    for (const auto& channel : ecps_backend.channel_info) {
-      if (channel.is_streaming) {
-        input_control_channel = channel.channel_id;
-        break;
-      }
+  // what the host tells the channel it allows: mouse and keyboard while streaming, MIDI whenever
+  std::uint8_t wanted_channel_flags() const {
+    std::uint8_t flags = 0;
+    if (stream_settings.input_control != 0) {
+      flags |= ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::InputControl;
     }
-    backend_queue([input_control = stream_settings.input_control != 0, channel_id = input_control_channel]() -> fan::event::task_t {
-      if (!input_control) {
-        host_input.close();
-      }
-      try {
-        for (const auto& channel : ecps_backend.channel_info) {
-          if (channel.channel_id.i == channel_id.i) {
-            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t rest;
-            rest.ChannelID = channel.channel_id;
-            rest.ChannelSessionID = channel.session_id;
-            rest.Flag = input_control ? ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::InputControl : 0;
+    if (allow_midi) {
+      flags |= ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl;
+    }
+    return flags;
+  }
 
-            co_await ecps_backend.tcp_write(
-              ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag,
-              &rest,
-              sizeof(rest)
-            );
-            break;
-          }
-        }
+  // sends the flags of every channel we host when they changed, and again every 10 s in case the server lost them
+  void update_channel_flags() {
+    auto now = std::chrono::steady_clock::now();
+    bool refresh = now - flags_sent_at > std::chrono::seconds(10);
+    std::uint8_t wanted = wanted_channel_flags();
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (!ecps_backend.is_hosting_channel(channel.channel_id)) {
+        continue;
       }
-      catch (...) {}
-    });
+      auto sent = sent_channel_flags.find((std::uint32_t)channel.channel_id.i);
+      if (!refresh && sent != sent_channel_flags.end() && sent->second == wanted) {
+        continue;
+      }
+      sent_channel_flags[(std::uint32_t)channel.channel_id.i] = wanted;
+      backend_queue([channel_id = channel.channel_id, session_id = channel.session_id, wanted]() -> fan::event::task_t {
+        try {
+          ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t rest;
+          rest.ChannelID = channel_id;
+          rest.ChannelSessionID = session_id;
+          rest.Flag = wanted;
+          co_await ecps_backend.tcp_write(
+            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag,
+            &rest,
+            sizeof(rest)
+          );
+        }
+        catch (...) {}
+      });
+    }
+    if (refresh) {
+      flags_sent_at = now;
+    }
+  }
+
+  void send_input_control_flag() {
+    if (stream_settings.input_control == 0) {
+      backend_queue([]() -> fan::event::task_t {
+        host_input.close();
+        co_return;
+      });
+    }
+    // forgetting what was sent makes the next frame send it
+    sent_channel_flags.clear();
   }
 
   // ---- secure file transfer ----
@@ -2234,7 +2244,21 @@ struct ecps_gui_t {
     rest.Status = status;
     rest.Data1 = data1;
     rest.Data2 = data2;
-    queue_host_input(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, rest);
+    backend_queue([rest]() -> fan::event::task_t {
+      try {
+        for (const auto& channel : ecps_backend.channel_info) {
+          // any channel we are in, but don't host, whose host lets MIDI in. No stream needed
+          if (!ecps_backend.is_hosting_channel(channel.channel_id) &&
+            (channel.flag & ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl)) {
+            auto packet = rest;
+            packet.ChannelID = channel.channel_id;
+            packet.ChannelSessionID = channel.session_id;
+            co_await ecps_backend.tcp_write(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, &packet, sizeof(packet));
+          }
+        }
+      }
+      catch (...) {}
+    });
   }
 
   // the keys of our own keyboard, for the piano in the MIDI tab
@@ -2306,6 +2330,221 @@ struct ecps_gui_t {
       fan::vec2 max(center + white_width * 0.3f, origin.y + height * 0.62f);
       list->AddRectFilled(min, max, color_of(note, true));
     }
+  }
+
+  // The bottom toolbar of the stream view (start/stop, settings, fullscreen). It floats over the picture in its own
+  // window and fades out unless the mouse is near the bottom or there is no picture, so the stream gets the whole window
+  void render_stream_toolbar(f32_t content_width) {
+    auto& io = gui::get_io();
+    fan::vec2 area_pos = gui::get_window_pos();
+    fan::vec2 area_size = gui::get_window_size();
+    f32_t frame_height = gui::get_frame_height();
+    f32_t zone = frame_height * 3.f;
+
+    bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
+      io.MousePos.y >= area_pos.y + area_size.y - zone && io.MousePos.y <= area_pos.y + area_size.y;
+    auto* rt = get_render_thread();
+    bool has_picture = rt && rt->network_frame.get_image() != engine.default_texture;
+    auto now = std::chrono::steady_clock::now();
+    if (mouse_near || !has_picture) {
+      toolbar_visible_until = now + std::chrono::milliseconds(1500);
+    }
+    f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
+    toolbar_alpha += (target - toolbar_alpha) * std::min(1.f, io.DeltaTime * 14.f);
+    if (target == 0.f && toolbar_alpha < 0.02f) {
+      toolbar_alpha = 0.f;
+      return; // not drawn, so nothing under it can be clicked by accident
+    }
+
+    f32_t bar_height = frame_height + 16.f;
+    gui::push_style_var(gui::style_var_alpha, std::max(toolbar_alpha, 0.02f));
+    gui::push_style_var(gui::style_var_window_padding, fan::vec2(0, 8));
+    gui::set_next_window_pos(fan::vec2(area_pos.x + 12.f, area_pos.y + area_size.y - bar_height - 10.f));
+    gui::set_next_window_size(fan::vec2(content_width, bar_height));
+    if (gui::begin("##stream_toolbar", nullptr,
+      gui::window_flags_no_title_bar | gui::window_flags_no_resize | gui::window_flags_no_move |
+      gui::window_flags_no_scrollbar | gui::window_flags_no_scroll_with_mouse | gui::window_flags_no_background |
+      gui::window_flags_no_saved_settings | gui::window_flags_no_docking | gui::window_flags_no_nav |
+      gui::window_flags_no_focus_on_appearing)) {
+      f32_t button_width = 200.f;
+      gui::set_cursor_pos(fan::vec2((content_width - button_width) / 2, 8.f));
+      stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
+
+      gui::same_line();
+      gui::set_cursor_pos_x(content_width - (frame_height * 2) - 10);
+
+      f32_t icon_size = gui::get_text_line_height();
+      f32_t padding = gui::get_style().FramePadding.y;
+      if (icon_button_helper_t::render_transparent_icon_button("#btn_settings", icon_settings,
+        fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
+        stream_settings.show_in_stream_view = !stream_settings.show_in_stream_view;
+      }
+
+      gui::same_line(content_width - frame_height);
+      if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen", icon_fullscreen,
+        fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
+        is_fullscreen_stream = true;
+        engine.window.set_borderless();
+      }
+    }
+    gui::end();
+    gui::pop_style_var(2);
+  }
+
+  // what the stream view says while there is no picture
+  void render_stream_empty_hint(fan::vec2 area) {
+    std::string title;
+    std::string detail;
+    if (ecps_backend.is_streaming_to_any_channel()) {
+      title = "Starting the stream...";
+      detail = "The first picture takes a moment";
+    }
+    else if (ecps_backend.is_hosting_any_channel()) {
+      title = "You are not sharing your screen";
+      detail = "Move the mouse to the bottom edge and press Start Stream";
+    }
+    else if (!ecps_backend.channel_info.empty()) {
+      title = "Waiting for the host's stream";
+      detail = "It appears here when the host starts sharing";
+    }
+    else {
+      title = "Not in a channel";
+      detail = "Pick or create one in the Channels tab";
+    }
+    fan::vec2 title_size = gui::calc_text_size(title);
+    fan::vec2 detail_size = gui::calc_text_size(detail);
+    gui::set_cursor_pos(fan::vec2((area.x - title_size.x) / 2, area.y / 2 - title_size.y));
+    gui::text(title);
+    gui::set_cursor_pos_x((area.x - detail_size.x) / 2);
+    gui::text_disabled(detail);
+  }
+
+  // Numbers about the stream and the program. Drawn only while this tab is open, read from counters the stream
+  // threads already keep, and the ones that need two samples are worked out once a second. No locks the stream uses
+  struct debug_sample_t {
+    std::chrono::steady_clock::time_point at{};
+    std::uint64_t view_packets = 0, view_bytes = 0, share_packets = 0, share_bytes = 0, decoded = 0, assembled = 0;
+    f32_t view_kbps = 0, view_pps = 0, share_kbps = 0, share_pps = 0, decoded_fps = 0, assembled_fps = 0;
+    std::size_t voices = 0;
+  }debug_sample;
+
+  void render_debug_tab() {
+    // the stream view draws the picture, any other tab has to hide it
+    if (auto* rt = get_render_thread(); rt) {
+      rt->network_frame.set_size(0);
+    }
+    engine.viewport_set(engine.orthographic_render_view.viewport, 0, engine.window.get_size());
+
+    auto now = std::chrono::steady_clock::now();
+    f32_t seconds = std::chrono::duration<f32_t>(now - debug_sample.at).count();
+    if (seconds >= 1.f) {
+      std::uint64_t view_packets = ecps_backend.view_udp_packets.load();
+      std::uint64_t view_bytes = ecps_backend.view_udp_bytes.load();
+      std::uint64_t share_packets = ecps_backend.stream_udp_packets.load();
+      std::uint64_t share_bytes = ecps_backend.stream_udp_bytes.load();
+      std::uint64_t decoded = ecps_backend.view_frames_decoded.load();
+      std::uint64_t assembled = ecps_backend.view_frames_assembled.load();
+      if (debug_sample.at != std::chrono::steady_clock::time_point{}) {
+        debug_sample.view_pps = (view_packets - debug_sample.view_packets) / seconds;
+        debug_sample.view_kbps = (view_bytes - debug_sample.view_bytes) * 8.f / 1000.f / seconds;
+        debug_sample.share_pps = (share_packets - debug_sample.share_packets) / seconds;
+        debug_sample.share_kbps = (share_bytes - debug_sample.share_bytes) * 8.f / 1000.f / seconds;
+        debug_sample.decoded_fps = (decoded - debug_sample.decoded) / seconds;
+        debug_sample.assembled_fps = (assembled - debug_sample.assembled) / seconds;
+      }
+      debug_sample.view_packets = view_packets;
+      debug_sample.view_bytes = view_bytes;
+      debug_sample.share_packets = share_packets;
+      debug_sample.share_bytes = share_bytes;
+      debug_sample.decoded = decoded;
+      debug_sample.assembled = assembled;
+      debug_sample.voices = midi_host.synth.active_voices();
+      debug_sample.at = now;
+    }
+
+    auto number = [](double value, int decimals) {
+      char text[40];
+      std::snprintf(text, sizeof(text), "%.*f", decimals, value);
+      return std::string(text);
+    };
+    auto row = [](const char* label, const std::string& value) {
+      gui::text_disabled(label);
+      gui::same_line(230);
+      gui::text(value);
+    };
+    auto size_text = [](auto x, auto y) {
+      return std::to_string((long long)x) + " x " + std::to_string((long long)y);
+    };
+
+    if (!gui::begin_child("##debug_panel", fan::vec2(0, 0), true)) {
+      gui::end_child();
+      return;
+    }
+    auto* rt = get_render_thread();
+    auto& io = gui::get_io();
+
+    section_title("Program");
+    row("Version", std::string(ecps_version) + (ecps_update_marker[0] ? std::string(" [") + ecps_update_marker + "]" : std::string()));
+    row("Build", updater.build_short().empty() ? std::string("unknown commit") : updater.build_short());
+    row("Server", ecps_backend.ip + ":" + std::to_string(ecps_backend.port));
+    row("Ping to server", number(ecps_backend.ping_ms, 1) + " ms");
+    row("Session id", std::to_string((long long)ecps_backend.session_id.i));
+    row("Window", size_text(engine.window.get_size().x, engine.window.get_size().y));
+    row("UI frame rate", number(io.Framerate, 0) + " fps");
+
+    if (rt) {
+      section_title("Capture and encoder (this computer shares)");
+      auto& geometry = rt->screen_encoder.mdscr.Geometry;
+      row("Screen captured at", size_text(geometry.Resolution.x, geometry.Resolution.y) +
+        (geometry.Resolution.y > geometry.Resolution.x ? "  (portrait)" : "  (landscape)"));
+      row("Encoded as", size_text(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " @ " +
+        std::to_string((long long)rt->screen_encoder.config_.frame_rate) + " fps");
+      row("Bitrate", number(rt->screen_encoder.config_.bitrate / 1e6, 1) + " Mbit/s");
+      row("Encoder", rt->screen_encoder.name);
+      row("Capture time", number(stage_times.capture.ms.load(), 2) + " ms");
+      row("Encode time", number(stage_times.encode.ms.load(), 2) + " ms");
+      row("Sending", number(debug_sample.share_kbps, 0) + " kbit/s, " + number(debug_sample.share_pps, 0) + " packets/s (" +
+        std::to_string((unsigned long long)debug_sample.share_packets) + " total)");
+
+      section_title("Decoder (this computer watches)");
+      row("Picture", size_text(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y));
+      row("Decode time", number(stage_times.decode.ms.load(), 2) + " ms");
+      row("Receiving", number(debug_sample.view_kbps, 0) + " kbit/s, " + number(debug_sample.view_pps, 0) + " packets/s (" +
+        std::to_string((unsigned long long)debug_sample.view_packets) + " total)");
+      row("Frames put together", number(debug_sample.assembled_fps, 1) + " /s (" + std::to_string((unsigned long long)debug_sample.assembled) + " total)");
+      row("Frames decoded", number(debug_sample.decoded_fps, 1) + " /s (" + std::to_string((unsigned long long)debug_sample.decoded) + " total)");
+      row("Decode failures", std::to_string((unsigned long long)ecps_backend.view_decode_failed.load()));
+      auto& stats = ecps_backend.view.m_stats;
+      row("Frames dropped", std::to_string((unsigned long long)stats.Frame_Drop) + " of " + std::to_string((unsigned long long)stats.Frame_Total));
+      row("Packets lost", std::to_string((unsigned long long)(stats.Packet_HeadDrop + stats.Packet_BodyDrop)) + " of " +
+        std::to_string((unsigned long long)stats.Packet_Total) + ", repaired frames " + std::to_string((unsigned long long)stats.Frame_Corrected));
+    }
+
+    section_title("Channels");
+    if (ecps_backend.channel_info.empty()) {
+      text_wrapped_disabled("Not in any channel");
+    }
+    for (const auto& channel : ecps_backend.channel_info) {
+      std::string line = "Channel " + std::to_string((long long)channel.channel_id.i) +
+        (ecps_backend.is_hosting_channel(channel.channel_id) ? "  hosting" : "  member") +
+        (channel.is_streaming ? ", streaming" : "") + (channel.is_viewing ? ", watching" : "") +
+        std::string(", host allows:") +
+        ((channel.flag & ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::InputControl) ? " mouse+keyboard" : "") +
+        ((channel.flag & ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl) ? " MIDI" : "") +
+        ((channel.flag & (ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::InputControl |
+          ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl)) ? "" : " nothing");
+      gui::text_wrapped(line);
+    }
+
+    section_title("MIDI");
+    row("Keyboard", midi_io.is_open() ? "connected" : "not connected");
+    row("Keyboards found", std::to_string((unsigned long long)midi_io.devices().size()));
+    row("Playing notes here", std::to_string((unsigned long long)debug_sample.voices));
+    row("Sending to host", midi_to_host.load() ? "yes" : "no");
+    row("Sending to viewers", midi_to_viewers.load() ? "yes" : "no");
+    row("Viewers may play here", allow_midi ? "yes" : "no");
+
+    gui::end_child();
   }
 
   // grey text that breaks at the edge of its panel, a long hint must not run out of it
@@ -2531,49 +2770,91 @@ struct ecps_gui_t {
     gui::end_child();
   }
 
-  void render_midi_tab() {
-    gui::spacing();
-    bool viewing = ecps_backend.is_viewing_any_channel();
-    bool streaming = ecps_backend.is_streaming_to_any_channel();
+  // any channel we are in but don't host
+  bool is_in_other_channel() const {
+    return std::any_of(ecps_backend.channel_info.begin(), ecps_backend.channel_info.end(), [](const auto& channel) {
+      return !ecps_backend.is_hosting_channel(channel.channel_id);
+    });
+  }
 
-    // devices WinMM sees, refreshed now and then, the keyboard has to be here, not on the other side
+  // a host we are connected to lets MIDI in, no stream needed
+  bool can_midi_host() const {
+    return std::any_of(ecps_backend.channel_info.begin(), ecps_backend.channel_info.end(), [](const auto& channel) {
+      return !ecps_backend.is_hosting_channel(channel.channel_id) &&
+        (channel.flag & ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl);
+    });
+  }
+
+  static void section_title(const char* title) {
+    gui::spacing();
+    gui::text(fan::color(0.6f, 0.8f, 1.f, 1.f), title);
+    gui::separator();
+  }
+
+  void render_midi_tab() {
+    // the keyboards are listed and opened on a worker thread, a busy driver must not stop the window
     auto now = std::chrono::steady_clock::now();
-    if (now >= midi_devices_listed + std::chrono::seconds(2)) {
-      midi_devices_listed = now;
-      midi_devices = fan::audio::midi_input_t::list_devices();
+    if (now >= midi_scan_at) {
+      midi_scan_at = now + std::chrono::seconds(3);
+      midi_io.request_scan();
     }
-    if (midi_devices.empty()) {
-      text_wrapped_disabled("No MIDI input device on this computer");
+
+    section_title("This computer");
+    auto devices = midi_io.devices();
+    if (!midi_io.has_scanned()) {
+      text_wrapped_disabled("Looking for MIDI keyboards...");
+    }
+    else if (devices.empty()) {
+      text_wrapped_disabled("No MIDI keyboard found on this computer");
+    }
+    for (const auto& name : devices) {
+      gui::text_wrapped(name);
+    }
+    if (midi_to_host.load() || midi_to_viewers.load()) {
+      text_wrapped_disabled(midi_io.is_open() ? "Keyboard connected" : midi_io.is_busy() ? "Connecting to the keyboard..." : "Keyboard not connected");
     }
     else {
-      for (const auto& name : midi_devices) {
-        gui::text_wrapped(name);
-      }
-      text_wrapped_disabled(midi_in.is_open() ? "Input open" : "Input opens when you send");
+      text_wrapped_disabled("The keyboard is opened when you send");
     }
 
-    gui::separator();
-    gui::checkbox("Send MIDI to host", &send_midi);
-    if (send_midi && viewing && !can_control_host()) {
-      text_wrapped_disabled("The host has to allow input control first");
+    section_title("Hear MIDI on this computer");
+    gui::checkbox("Play MIDI from the host", &play_host_midi);
+    if (gui::checkbox("Let viewers play MIDI here", &allow_midi)) {
+      sent_channel_flags.clear();
     }
-    gui::checkbox("Send MIDI to viewers", &send_midi_viewers);
-    if (send_midi_viewers && !streaming) {
-      text_wrapped_disabled("Start the stream to send");
-    }
-    gui::checkbox("Play host MIDI", &play_host_midi);
-    if (gui::slider("MIDI volume", &midi_volume, 0.f, 2.f, gui::slider_flags_always_clamp)) {
+    text_wrapped_disabled("Other users' keyboards play through this computer's speakers. No stream needed.");
+    if (gui::slider("Volume", &midi_volume, 0.f, 2.f, gui::slider_flags_always_clamp)) {
       midi_host.player.set_volume(midi_volume);
     }
 
-    gui::separator();
+    section_title("Send my keyboard");
+    gui::checkbox("To the host", &send_midi);
+    if (send_midi) {
+      if (!is_in_other_channel()) {
+        text_wrapped_disabled("Join another user's channel first");
+      }
+      else if (!can_midi_host()) {
+        text_wrapped_disabled("Waiting for the host to tick \"Let viewers play MIDI here\"");
+      }
+      else {
+        text_wrapped_disabled("Sending to the host");
+      }
+    }
+    gui::checkbox("To everyone in my channel", &send_midi_viewers);
+    if (send_midi_viewers) {
+      text_wrapped_disabled(ecps_backend.is_hosting_any_channel()
+        ? "Sending to the viewers in your channel"
+        : "You don't have a channel of your own yet");
+    }
+
+    section_title("Piano");
     gui::checkbox("Show piano", &show_midi_piano);
     if (show_midi_piano) {
       render_midi_piano();
     }
   }
 
-  // the host's keyboard goes to every viewer of the channels it streams to
+  // the host's keyboard goes to everyone in the channels it hosts, streaming or not
   void send_viewers_midi(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
     ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi_t rest;
     rest.Status = status;
@@ -2582,7 +2863,7 @@ struct ecps_gui_t {
     backend_queue([rest]() -> fan::event::task_t {
       try {
         for (const auto& channel : ecps_backend.channel_info) {
-          if (channel.is_streaming) {
+          if (ecps_backend.is_hosting_channel(channel.channel_id)) {
             auto packet = rest;
             packet.ChannelID = channel.channel_id;
             packet.ChannelSessionID = channel.session_id;
@@ -2594,31 +2875,28 @@ struct ecps_gui_t {
     });
   }
 
-  // one keyboard feeds both directions: to the host while we may control it, to the viewers while we stream.
+  // one keyboard feeds both directions: to the host while it allows MIDI, to the viewers of our channel.
   // when a direction ends nothing may keep ringing on the other side
   void update_midi_forward() {
-    bool to_host = send_midi && can_control_host();
-    bool to_viewers = send_midi_viewers && ecps_backend.is_streaming_to_any_channel();
+    bool to_host = send_midi && can_midi_host();
+    bool to_viewers = send_midi_viewers && ecps_backend.is_hosting_any_channel();
     bool was_to_host = midi_to_host.exchange(to_host);
     bool was_to_viewers = midi_to_viewers.exchange(to_viewers);
-    bool want = to_host || to_viewers;
-    if (want && !midi_in.is_open()) {
-      auto now = std::chrono::steady_clock::now();
-      if (now >= midi_retry) {
-        midi_retry = now + std::chrono::seconds(2);
-        midi_in.open([this](std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
-          track_local_note(status, data1, data2);
-          if (midi_to_host.load()) {
-            send_host_midi(status, data1, data2);
-          }
-          if (midi_to_viewers.load()) {
-            send_viewers_midi(status, data1, data2);
-          }
-        });
-      }
+    if (!midi_io_started) {
+      midi_io_started = true;
+      midi_io.start([this](std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+        track_local_note(status, data1, data2);
+        if (midi_to_host.load()) {
+          send_host_midi(status, data1, data2);
+        }
+        if (midi_to_viewers.load()) {
+          send_viewers_midi(status, data1, data2);
+        }
+      });
     }
-    else if (!want && midi_in.is_open()) {
-      midi_in.close();
+    bool want = to_host || to_viewers;
+    midi_io.set_wanted(want);
+    if (!want) {
       for (auto& key : local_down) {
         key = false;
       }
@@ -2753,6 +3031,7 @@ struct ecps_gui_t {
       send_input_control_flag();
     }
     forward_input();
+    update_channel_flags();
     update_midi_forward();
     remote_logs.tick([this](const std::function<fan::event::task_t()>& task) {
       backend_queue(task);
@@ -2825,12 +3104,17 @@ struct ecps_gui_t {
   std::uint64_t logs_seen_revision = 0;
   f32_t midi_volume = 1.f;
   std::array<std::atomic<bool>, 128> local_down{};
-  std::vector<std::string> midi_devices;
-  std::chrono::steady_clock::time_point midi_devices_listed;
   std::atomic<bool> midi_to_host{false};
   std::atomic<bool> midi_to_viewers{false};
-  fan::audio::midi_input_t midi_in;
-  std::chrono::steady_clock::time_point midi_retry;
+  midi_worker_t midi_io;
+  bool midi_io_started = false;
+  std::chrono::steady_clock::time_point midi_scan_at;
+  // the host lets viewers play MIDI on this computer, off until switched on
+  bool allow_midi = false;
+  std::unordered_map<std::uint32_t, std::uint8_t> sent_channel_flags;
+  std::chrono::steady_clock::time_point flags_sent_at;
+  f32_t toolbar_alpha = 1.f;
+  std::chrono::steady_clock::time_point toolbar_visible_until;
 
 #undef This
 #undef engine

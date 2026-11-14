@@ -345,7 +345,7 @@ case Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi:{
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
-  if(!ScreenShare_CanControlHost(ChannelID, SessionID)){
+  if(!ScreenShare_CanSendMidiToHost(ChannelID, SessionID)){
     goto StateDone_gt;
   }
   // only channel voice messages, no sysex or system realtime from a viewer

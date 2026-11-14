@@ -125,6 +125,8 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
   struct{ \
     NET_addr_t Address; \
     fan::network::crypto::secure_channel_t Crypto; \
+    uint64_t RecoveryWindowAt; \
+    uint32_t RecoverySent; \
   }UDP;
 #define BLL_set_IsNodeRecycled 1
 #include <BLL/BLL.h>
@@ -155,6 +157,8 @@ struct Channel_ScreenShare_Data_t{
   uint8_t Flag = 0;
   Protocol_SessionID_t HostSessionID;
   std::unordered_map<uint16_t, std::vector<std::vector<uint8_t>>> SentPackets;
+  // payload bytes held in SentPackets
+  size_t SentBytes = 0;
   std::array<ScreenShare_FrameTracker_t, 8> Frames;
 };
 

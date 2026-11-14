@@ -55,6 +55,7 @@ using namespace fan::graphics;
 #include <fan/graphics/types.h>
 #include "midi/midi_synth.h"
 #include "midi/midi_input.h"
+#include "midi/midi_worker.h"
 #include "midi/midi_sac_bank.h"
 
 #if defined(_WIN32)
@@ -191,6 +192,26 @@ render_thread_t* get_render_thread() {
 std::mutex render_thread_mutex;
 std::condition_variable render_thread_cv;
 std::atomic<bool> render_thread_ready {false};
+
+// the encoder and decoder threads are detached and use the render thread's state and the globals.
+// They must be gone before either is destroyed, so everything that ends the program stops them first
+std::atomic<bool> app_stopping {false};
+std::atomic<int> worker_threads_active {0};
+
+struct worker_thread_scope_t {
+  ~worker_thread_scope_t() {
+    worker_threads_active.fetch_sub(1);
+  }
+};
+
+static void stop_worker_threads() {
+  app_stopping.store(true);
+  // a worker stuck in a driver call must not keep the program from closing
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (worker_threads_active.load() > 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
 
 #include "backend.h"
 
@@ -508,6 +529,8 @@ struct render_thread_t {
 
   void render(auto l) {
     if (engine.process_frame([this, l] { ecps_gui.render(); l(); })) {
+      should_stop.store(true);
+      stop_worker_threads();
       std::exit(0);
     }
   }
@@ -760,10 +783,8 @@ ecps_backend_t::ecps_backend_t() {
       co_return;
     }
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    bool allowed = rt && rt->ecps_gui.stream_settings.input_control != 0 &&
-      std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
-        return channel.is_streaming && channel.channel_id.i == msg->ChannelID.i;
-      });
+    // the host's own setting decides, and only for a channel it hosts. No stream needed
+    bool allowed = rt && rt->ecps_gui.allow_midi && backend.is_hosting_channel(msg->ChannelID);
     if (!allowed) {
       midi_host.silence();
       co_return;
@@ -781,10 +802,9 @@ ecps_backend_t::ecps_backend_t() {
       co_return;
     }
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    bool allowed = rt && rt->ecps_gui.play_host_midi &&
-      std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
-        return channel.is_viewing && channel.channel_id.i == msg->ChannelID.i;
-      });
+    // being in the channel is enough, the host doesn't have to be streaming
+    bool allowed = rt && rt->ecps_gui.play_host_midi && backend.is_channel_joined(msg->ChannelID) &&
+      !backend.is_hosting_channel(msg->ChannelID);
     if (!allowed) {
       midi_host.silence();
       co_return;
@@ -1162,10 +1182,9 @@ int main() {
     render_thread_cv.notify_all();
     render_thread_promise.set_value();
 
-    while (!render_thread_instance.screen_decoder.is_initialized() ||
-      render_thread_instance.should_stop.load()) {
+    while (!render_thread_instance.screen_decoder.is_initialized() &&
+      !render_thread_instance.should_stop.load()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      continue;
     }
     while (!render_thread_instance.engine.should_close() && !render_thread_instance.should_stop.load()) {
       {
@@ -1235,18 +1254,13 @@ int main() {
 
         static int current_sampler = fan::graphics::image_filter_e::linear;
 
-        auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-        if (!rt) return;
-
-        std::vector<fan::graphics::image_t> img_list;
-        img_list.emplace_back(rt->network_frame.get_image());
-        auto images = rt->network_frame.get_images();
-        img_list.insert(img_list.end(), images.begin(), images.end());
       });
 
       std::this_thread::yield();
     }
 
+    // the workers hold a pointer to render_thread_instance, it may only go away after they did
+    stop_worker_threads();
     render_thread_ptr.store(nullptr, std::memory_order_release);
     {
       std::lock_guard<std::mutex> lock(render_thread_mutex);
@@ -1257,9 +1271,15 @@ int main() {
   render_thread_future.wait();
 
 
+  // counted before the thread exists, so the render thread can't miss a worker that is about to start
+  worker_threads_active.fetch_add(1);
   fan::event::thread_create([] {
+    worker_thread_scope_t worker_scope;
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
     while (!rt || !rt->screen_encoder.encoder_.is_initialized()) {
+      if (app_stopping.load()) {
+        return;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       rt = render_thread_ptr.load(std::memory_order_acquire);
     }
@@ -1290,9 +1310,9 @@ int main() {
     };
 
     bool was_streaming = false;
-    while (!rt->should_stop.load()) {
+    while (!app_stopping.load()) {
       rt = render_thread_ptr.load(std::memory_order_acquire);
-      if (!rt) break;
+      if (!rt || rt->should_stop.load()) break;
 
       if (ecps_backend.is_streaming_to_any_channel()) {
         was_streaming = true;
@@ -1423,16 +1443,21 @@ int main() {
           }(rt->screen_encoder);
         }
         first_frame = true;
-        const int fps = rt ? rt->screen_encoder.config_.frame_rate : 30;
+        const int fps = std::max<int>(rt->screen_encoder.config_.frame_rate, 1);
         const auto sleep_time = std::chrono::microseconds(1000000 / fps);
         std::this_thread::sleep_for(sleep_time);
       }
     }
   });
 
+  worker_threads_active.fetch_add(1);
   fan::event::thread_create([] {
+    worker_thread_scope_t worker_scope;
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
     while (!rt || !rt->screen_decoder.is_initialized()) {
+      if (app_stopping.load()) {
+        return;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       rt = render_thread_ptr.load(std::memory_order_acquire);
     }
@@ -1442,9 +1467,9 @@ int main() {
     std::vector<uint8_t> frame;
     auto view_report_time = std::chrono::steady_clock::now();
     uint64_t view_reported_packets = 0;
-    while (!rt->should_stop.load()) {
+    while (!app_stopping.load()) {
       rt = render_thread_ptr.load(std::memory_order_acquire);
-      if (!rt) break;
+      if (!rt || rt->should_stop.load()) break;
 
     #if ecps_debug_prints >= 1
       // while something is being received, one line every few seconds says how far the frames get
@@ -1479,8 +1504,9 @@ int main() {
       std::vector<std::function<fan::event::task_t()>> local_tasks;
 
       {
-        std::unique_lock<std::timed_mutex> task_lock(render_mutex, std::defer_lock);
-        if (task_lock.try_lock_for(std::chrono::milliseconds(5)) && !rt->ecps_gui.task_queue.empty()) {
+        // backend_queue() pushes under task_queue_mutex, from the gui and the network thread
+        std::lock_guard<std::mutex> task_lock(rt->ecps_gui.task_queue_mutex);
+        if (!rt->ecps_gui.task_queue.empty()) {
           size_t batch_size = std::min(rt->ecps_gui.task_queue.size(), MAX_BATCH_SIZE);
           local_tasks.reserve(batch_size);
 
@@ -1646,6 +1672,12 @@ int main() {
     rt_final->should_stop.store(true);
     rt_final->frame_cv.notify_all();
     rt_final->task_cv.notify_all();
+  }
+  // static destructors run in exit, nothing may still be using the globals by then
+  stop_worker_threads();
+  auto render_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (render_thread_ready.load() && std::chrono::steady_clock::now() < render_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 
   std::exit(0);

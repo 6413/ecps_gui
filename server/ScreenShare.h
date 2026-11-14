@@ -79,17 +79,40 @@ void StorePacketForRecovery(Protocol_ChannelID_t channel_id, uint16_t sequence,
   auto Channel = &g_pile->ChannelList[channel_id];
   auto ChannelData = (Channel_ScreenShare_Data_t*)Channel->Buffer;
   
-  if (ChannelData->SentPackets[sequence].size() <= current) {
-    ChannelData->SentPackets[sequence].resize(current + 1);
+  // sequence and current are the host's numbers. Unchecked, 4096 packets for each kept sequence
+  // would have the server hold hundreds of megabytes for one channel
+  constexpr size_t MaxStoredBytes = 32 * 1024 * 1024;
+
+  auto& tracker = ChannelData->Frames[sequence % ChannelData->Frames.size()];
+  if (tracker.Sequence == sequence && tracker.Expected && current >= tracker.Expected) {
+    return;
   }
-  
-  ChannelData->SentPackets[sequence][current].assign(
-    static_cast<const uint8_t*>(data),
-    static_cast<const uint8_t*>(data) + size
-  );
-  
+
+  auto& packets = ChannelData->SentPackets[sequence];
+  if (packets.size() <= current) {
+    packets.resize(current + 1);
+  }
+
+  auto& slot = packets[current];
+  if (ChannelData->SentBytes - slot.size() + size <= MaxStoredBytes) {
+    ChannelData->SentBytes -= slot.size();
+    slot.assign(
+      static_cast<const uint8_t*>(data),
+      static_cast<const uint8_t*>(data) + size
+    );
+    ChannelData->SentBytes += size;
+  }
+
   if (ChannelData->SentPackets.size() > 50) {
-    std::erase_if(ChannelData->SentPackets, [sequence](const auto& p) { return ((sequence - p.first) & 0xfff) > 32; });
+    std::erase_if(ChannelData->SentPackets, [sequence, ChannelData](const auto& p) {
+      if (((sequence - p.first) & 0xfff) <= 32) {
+        return false;
+      }
+      for (const auto& packet : p.second) {
+        ChannelData->SentBytes -= packet.size();
+      }
+      return true;
+    });
   }
 }
 
@@ -110,13 +133,25 @@ void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t
   if(Session->UDP.Address.ip == 0){
     return;
   }
+  // one small request can ask for a megabyte of resends, and they are sent from inside the event loop.
+  // A real viewer asks for a few packets of a few frames, this is far above that
+  constexpr uint32_t MaxResendsPerSecond = 2000;
+  uint64_t now = EV_nowi(&g_pile->listener);
+  if (now - Session->UDP.RecoveryWindowAt >= 1000000000ULL) {
+    Session->UDP.RecoveryWindowAt = now;
+    Session->UDP.RecoverySent = 0;
+  }
   ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t cd;
   cd.ChannelID = channel_id;
   for (uint16_t i = 0; i < missing_count; ++i) {
+    if (Session->UDP.RecoverySent >= MaxResendsPerSecond) {
+      break;
+    }
     uint16_t packet_index = missing_indices[i];
     if (packet_index < packets.size() && !packets[packet_index].empty()) {
       UDP_send(requester, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData,
               cd, packets[packet_index].data(), packets[packet_index].size());
+      ++Session->UDP.RecoverySent;
     }
   }
 }
@@ -186,6 +221,33 @@ ScreenShare_SendFlagTo(
     0,
     Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewSetFlag,
     rest);
+}
+
+/* MIDI has its own flag: no stream needed, and the viewer still can't touch the mouse or keyboard */
+bool
+ScreenShare_CanSendMidiToHost(
+  ChannelList_NodeReference_t ChannelID,
+  Protocol_SessionID_t SessionID
+){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+
+  if(!(ChannelData->Flag & ProtocolChannel::ScreenShare::ChannelFlag::MidiControl)){
+    return false;
+  }
+  if(ChannelData->HostSessionID == SessionID){
+    return false;
+  }
+
+  auto nr = Channel->SessionList.GetNodeFirst();
+  ChannelSessionList_Node_t *n;
+  for(; nr != Channel->SessionList.dst; nr = n->NextNodeReference){
+    n = Channel->SessionList.GetNodeByReference(nr);
+    if(n->data.SessionID == SessionID){
+      return true;
+    }
+  }
+  return false;
 }
 
 /* the flag alone isnt enough, anyone logged in can name any channel */

@@ -102,6 +102,9 @@ struct ProtocolChannel {
       using _t = uint8_t;
       inline static constexpr _t InputControl = 0x01;
       inline static constexpr _t ResetIDR = 0x01 << 1;
+      // the host lets viewers play MIDI on its machine. Own flag, so it works without a stream and without
+      // letting the viewer drive the mouse and keyboard
+      inline static constexpr _t MidiControl = 0x01 << 2;
     };
     struct StreamHeadFlag {
       using _t = uint8_t;

@@ -32,6 +32,8 @@ Protocol_SessionID_t OpenFromTCPPeer(NET_TCP_peer_t *peer){
 
   Session->UDP.Address.ip = 0;
   Session->UDP.Crypto = {};
+  Session->UDP.RecoveryWindowAt = 0;
+  Session->UDP.RecoverySent = 0;
 
   return SessionID;
 }

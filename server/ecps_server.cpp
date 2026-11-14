@@ -432,36 +432,41 @@ void track_server_packet(Protocol_SessionID_t host_session_id,
   }
 }
 
-void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
+// reads and handles one datagram, false when the socket has nothing more
+static bool udp_read_one() {
   uint8_t buffer[0x800];
   NET_addr_t dstaddr;
   IO_ssize_t size = NET_recvfrom(&g_pile->udp, buffer, sizeof(buffer), &dstaddr);
   if (size < 0) {
-    return;
+    return false;
   }
   ++g_udp_stats.received;
   g_udp_stats.report();
   if (size == sizeof(buffer)) {
     fan::print_throttled("udp packet too big, dropping\r\n");
-    return;
+    return true;
   }
 
   if ((uintptr_t)size < sizeof(ProtocolUDP::BasePacket_t)) {
+    // nothing says whether an empty read is an empty datagram or an empty socket, the event fires again if there is more
+    if (size == 0) {
+      return false;
+    }
     WriteInformation("invalid packet came\n");
-    return;
+    return true;
   }
 
   auto BasePacket = (ProtocolUDP::BasePacket_t*)buffer;
   auto SessionID = BasePacket->SessionID;
   if (Session::IsInvalid(SessionID) == true) {
     ++g_udp_stats.bad_session;
-    return;
+    return true;
   }
   auto Session = &g_pile->SessionList[SessionID];
   size = Session->UDP.Crypto.open(buffer, sizeof(ProtocolUDP::BasePacket_t), size, BasePacket->Nonce);
   if (!size) {
     ++g_udp_stats.bad_crypto;
-    return;
+    return true;
   }
 
   switch (BasePacket->Command) {
@@ -481,7 +486,7 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
     }
     if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
       ++g_udp_stats.bad_channel;
-      return;
+      return true;
     }
     if (ScreenShare_IsSessionHost(SessionID, RestPacket->ChannelID) == false) {
       ++g_udp_stats.not_host;
@@ -495,16 +500,23 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
           "but the host of that channel is session", (uint64_t)ChannelData->HostSessionID.i);
       }
     #endif
-      return;
+      return true;
     }
-    ++g_udp_stats.stream_accepted;
 
     auto StreamData = (uint8_t*)&RestPacket[1];
     IO_size_t StreamSize = size - (StreamData - buffer);
 
+    // the header is read below, a shorter packet would have it come from whatever was in the buffer before
+    if (StreamSize < sizeof(ScreenShare_StreamHeader_Body_t)) {
+      break;
+    }
     auto Body = (ScreenShare_StreamHeader_Body_t*)StreamData;
     uint16_t current = Body->GetCurrent();
     uint16_t sequence = Body->GetSequence();
+    if (current == 0 && StreamSize < sizeof(ScreenShare_StreamHeader_Head_t)) {
+      break;
+    }
+    ++g_udp_stats.stream_accepted;
 
     uint16_t possible = 0;
     if (current == 0) {
@@ -564,6 +576,13 @@ void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
     break;
   }
   }
+  return true;
+}
+
+void evio_udp_cb(EV_t* listener, EV_event_t* evio_udp, uint32_t flag) {
+  // a stream is hundreds of packets a second, one loop iteration per packet would be most of the work.
+  // The limit lets tcp and the timers run between bursts
+  for (uint32_t i = 0; i < 64 && udp_read_one(); ++i) {}
 }
 
 int main(int argc, char** argv) {

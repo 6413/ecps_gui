@@ -886,6 +886,22 @@ struct ecps_backend_t {
     return false;
   }
 
+  // channels this client hosts: it created them, or the session list names it the host
+  bool is_hosting_channel(Protocol_ChannelID_t channel_id) const {
+    for (const auto& channel : channel_info) {
+      if (channel.channel_id.i == channel_id.i) {
+        return channel.is_own || is_current_user_host_of_channel(channel_id);
+      }
+    }
+    return false;
+  }
+
+  bool is_hosting_any_channel() const {
+    return std::any_of(channel_info.begin(), channel_info.end(), [this](const channel_info_t& channel) {
+      return is_hosting_channel(channel.channel_id);
+    });
+  }
+
   fan::event::task_t task_tcp_read;
 
   std::string ip;
