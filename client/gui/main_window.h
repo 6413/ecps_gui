@@ -118,7 +118,6 @@
         gui::dummy(fan::vec2(left_window_padding, 0));
         gui::same_line(0, 0);
 
-        gui::set_next_window_bg_alpha(0);
         gui::begin_child("##channel_list_panel", fan::vec2(channel_list_width, avail_size.y), true);
 
         gui::spacing();
@@ -136,7 +135,6 @@
         gui::spacing();
         gui::spacing();
 
-        gui::set_next_window_bg_alpha(0.99);
         gui::table_flags_t table_flags = gui::table_flags_row_bg
           | gui::table_flags_borders_inner
           | gui::table_flags_borders_outer
@@ -378,7 +376,6 @@
               gui::spacing();
               gui::spacing();
 
-              gui::set_next_window_bg_alpha(0.99);
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
               f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 11.f : 6.f) : 0.f;
               if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
@@ -854,6 +851,13 @@
 
         if (rt->network_frame.get_image() == engine.default_texture) {
           This->render_stream_empty_hint(stream_area);
+        }
+        else {
+          fan::vec2 half = stream_area_calculator_t::calculate_fitted_size(stream_area, rt->screen_decoder.decoded_size);
+          fan::vec2 center = gui::get_window_pos() + stream_area * 0.5f;
+          This->picture_min = center - half;
+          This->picture_max = center + half;
+          This->picture_shown = true;
         }
 #if ecps_debug_prints >= 3
         static int debug_counter = 0;

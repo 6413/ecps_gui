@@ -182,7 +182,7 @@
     };
     // a dark strip with a thin blue line under it
     fan::vec2 top = area_pos + fan::vec2(0, y_offset > 0 ? 0 : 0);
-    list->AddRectFilled(top, top + fan::vec2(width, bar_height), faded(0xf4020101u));
+    list->AddRectFilled(top, top + fan::vec2(width, bar_height), faded(0xc80c0402u));
     list->AddLine(top + fan::vec2(0, bar_height), top + fan::vec2(width, bar_height), faded(0x70ff5919u), 1.f);
 
     f32_t row_y = (bar_height - frame_height) * 0.5f + y_offset;

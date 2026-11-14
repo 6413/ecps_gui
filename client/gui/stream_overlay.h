@@ -268,9 +268,17 @@
     list->PushClipRect(frame_min, frame_min + frame_size, true);
     std::uint32_t white = 0xffffffffu;
     std::uint32_t dark = 0xff000000u;
-    list->AddTriangleFilled(point(0, 0), point(0, 17), point(12, 12), white);
-    list->AddQuadFilled(point(4, 12), point(8, 20), point(11, 18), point(8, 11), white);
-    list->AddTriangle(point(0, 0), point(0, 17), point(12, 12), dark, 1.5f);
-    list->AddQuad(point(4, 12), point(8, 20), point(11, 18), point(8, 11), dark, 1.5f);
+    // one arrow shape with one outline around it, so no edge runs across the inside
+    const fan::vec2 shape[] = {
+      point(0, 0), point(0, 17), point(4, 13), point(7.5f, 20.5f), point(10.5f, 19.f), point(7.f, 12.f), point(12, 12),
+    };
+    for (const auto& p : shape) {
+      list->PathLineTo(p);
+    }
+    list->PathFillConcave(white);
+    for (const auto& p : shape) {
+      list->PathLineTo(p);
+    }
+    list->PathStroke(dark, 1 /* closed */, 1.5f);
     list->PopClipRect();
   }

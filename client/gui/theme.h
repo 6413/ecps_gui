@@ -1,5 +1,94 @@
 // Part of ecps_gui_t, included inside the struct by gui.h: the colours and the settings panel building blocks.
 
+  // ---- the backdrop ----------------------------------------------------------------------------------------
+  // A deep blue behind everything, with large soft glows that drift and swell slowly; the panels are see-through
+  // so it shows through them like glass. Nothing of it is drawn over the stream picture
+
+  fan::graphics::image_t glow_image;
+  std::vector<std::uint8_t> glow_pixels;
+  std::chrono::steady_clock::time_point backdrop_started = std::chrono::steady_clock::now();
+  // where the stream picture was drawn last frame, the glows leave it alone
+  bool picture_shown = false;
+  fan::vec2 picture_min, picture_max;
+
+  void setup_backdrop() {
+    // the window's background colour shows as a dark gray. Whether the clear colour is taken as linear or as it
+    // looks depends on the renderer, the old value tells which
+    fan::color current = gui::get_color(gui::col_window_bg);
+    bool linear = current.r < 0.05f;
+    auto shade = [linear](f32_t r, f32_t g, f32_t b) {
+      return linear ? fan::color(std::pow(r, 2.2f), std::pow(g, 2.2f), std::pow(b, 2.2f), 1.f) : fan::color(r, g, b, 1.f);
+    };
+    engine.set_clear_color(shade(0.05f, 0.07f, 0.14f));
+
+    // one soft round spot, white, its alpha falling off smoothly to the edge; tinted when drawn
+    const int n = 128;
+    glow_pixels.assign((std::size_t)n * n * 4, 255);
+    for (int y = 0; y < n; ++y) {
+      for (int x = 0; x < n; ++x) {
+        f32_t dx = (x + 0.5f) / n * 2.f - 1.f;
+        f32_t dy = (y + 0.5f) / n * 2.f - 1.f;
+        f32_t a = std::clamp(1.f - std::sqrt(dx * dx + dy * dy), 0.f, 1.f);
+        a = a * a * (3.f - 2.f * a);
+        glow_pixels[((std::size_t)y * n + x) * 4 + 3] = (std::uint8_t)std::lround(a * 255.f);
+      }
+    }
+    glow_image = engine.image_load(fan::image::info_t{glow_pixels.data(), fan::vec2i(n, n), 4}, {
+      .min_filter = fan::graphics::image_filter_e::linear,
+      .mag_filter = fan::graphics::image_filter_e::linear,
+    });
+  }
+
+  // drawn into the full-window background window, before the main window
+  void render_backdrop() {
+    if (!glow_image.valid()) {
+      return;
+    }
+    fan::vec2 display = gui::get_io().DisplaySize;
+    fan::vec2 origin = gui::get_window_pos();
+    f32_t t = std::chrono::duration<f32_t>(std::chrono::steady_clock::now() - backdrop_started).count();
+    struct glow_t {
+      f32_t x, y, radius, speed, phase;
+      fan::color color;
+    };
+    static const glow_t glows[] = {
+      {0.16f, 0.20f, 0.55f, 0.050f, 0.0f, fan::color(0.04f, 0.22f, 1.00f, 0.26f)},  // blue
+      {0.84f, 0.28f, 0.50f, 0.040f, 2.1f, fan::color(0.30f, 0.06f, 0.95f, 0.20f)},  // violet
+      {0.62f, 0.86f, 0.60f, 0.035f, 4.2f, fan::color(0.00f, 0.45f, 0.80f, 0.18f)},  // teal
+      {0.12f, 0.92f, 0.45f, 0.045f, 1.3f, fan::color(0.10f, 0.12f, 0.85f, 0.16f)},  // deep blue
+    };
+    auto draw_glows = [&] {
+      for (const auto& glow : glows) {
+        f32_t a = t * glow.speed * 6.2831853f + glow.phase;
+        fan::vec2 center(display.x * (glow.x + 0.09f * std::sin(a)), display.y * (glow.y + 0.09f * std::cos(a * 0.8f)));
+        f32_t radius = std::max(display.x, display.y) * glow.radius * (1.f + 0.1f * std::sin(a * 1.3f));
+        gui::set_cursor_screen_pos(origin + center - fan::vec2(radius, radius));
+        gui::image(glow_image, fan::vec2(radius * 2.f, radius * 2.f), fan::vec2(0, 0), fan::vec2(1, 1), glow.color);
+      }
+    };
+    if (!picture_shown) {
+      draw_glows();
+    }
+    else {
+      // around the picture only: above, below, left and right of it
+      fan::vec2 bands[4][2] = {
+        {origin, fan::vec2(origin.x + display.x, picture_min.y)},
+        {fan::vec2(origin.x, picture_max.y), origin + display},
+        {fan::vec2(origin.x, picture_min.y), fan::vec2(picture_min.x, picture_max.y)},
+        {fan::vec2(picture_max.x, picture_min.y), fan::vec2(origin.x + display.x, picture_max.y)},
+      };
+      for (auto& band : bands) {
+        if (band[1].x - band[0].x < 1.f || band[1].y - band[0].y < 1.f) {
+          continue;
+        }
+        gui::push_clip_rect(band[0], band[1], false);
+        draw_glows();
+        gui::pop_clip_rect();
+      }
+    }
+    gui::set_cursor_screen_pos(origin);
+  }
+
   // ---- the theme -------------------------------------------------------------------------------------------
   // Pushed around the main window, so every panel, popup and control in it shares it. Dark fields and buttons,
   // blue where something is chosen or used. (The gui is drawn in linear colour and shown through sRGB: small
@@ -18,8 +107,8 @@
       gui::push_style_var(index, value);
       ++theme_vars_pushed;
     };
-    fan::color field(0.016f, 0.018f, 0.026f, 1.f);
-    fan::color field_hover(0.035f, 0.045f, 0.08f, 1.f);
+    fan::color field(0.012f, 0.018f, 0.04f, 0.72f);
+    fan::color field_hover(0.03f, 0.045f, 0.1f, 0.8f);
     fan::color blue_dim(0.045f, 0.08f, 0.2f, 1.f);
     fan::color blue(0.06f, 0.13f, 0.38f, 1.f);
     fan::color blue_bright(0.1f, 0.35f, 1.f, 1.f);
@@ -28,7 +117,7 @@
     color(gui::col_frame_bg, field);
     color(gui::col_frame_bg_hovered, field_hover);
     color(gui::col_frame_bg_active, blue_dim);
-    color(gui::col_button, fan::color(0.022f, 0.025f, 0.036f, 1.f));
+    color(gui::col_button, fan::color(0.025f, 0.035f, 0.08f, 0.75f));
     color(gui::col_button_hovered, blue_dim);
     color(gui::col_button_active, blue);
     color(gui::col_header, blue_dim);
@@ -37,23 +126,24 @@
     color(gui::col_check_mark, blue_bright);
     color(gui::col_slider_grab, blue_bright);
     color(gui::col_slider_grab_active, fan::color(0.2f, 0.5f, 1.f, 1.f));
-    color(gui::col_tab, fan::color(0.012f, 0.013f, 0.019f, 1.f));
+    color(gui::col_tab, fan::color(0.012f, 0.018f, 0.04f, 0.6f));
     color(gui::col_tab_hovered, blue_dim);
     color(gui::col_tab_selected, blue);
     color(gui::col_tab_selected_overline, blue_bright);
-    color(gui::col_tab_dimmed, fan::color(0.012f, 0.013f, 0.019f, 1.f));
+    color(gui::col_tab_dimmed, fan::color(0.012f, 0.018f, 0.04f, 0.6f));
     color(gui::col_tab_dimmed_selected, blue_dim);
-    color(gui::col_border, line);
+    color(gui::col_border, fan::color(0.35f, 0.55f, 1.f, 0.22f));
+    color(gui::col_child_bg, fan::color(0.5f, 0.68f, 1.f, 0.045f));
     color(gui::col_separator, line);
     color(gui::col_separator_hovered, blue);
     color(gui::col_separator_active, blue_bright);
-    color(gui::col_popup_bg, fan::color(0.006f, 0.006f, 0.009f, 0.98f));
-    color(gui::col_table_header_bg, fan::color(0.012f, 0.014f, 0.021f, 1.f));
+    color(gui::col_popup_bg, fan::color(0.006f, 0.009f, 0.022f, 0.94f));
+    color(gui::col_table_header_bg, fan::color(0.015f, 0.025f, 0.06f, 0.7f));
     color(gui::col_table_border_strong, line);
     color(gui::col_table_border_light, fan::color(0.016f, 0.018f, 0.026f, 1.f));
     color(gui::col_table_row_bg_alt, fan::color(1.f, 1.f, 1.f, 0.025f));
     color(gui::col_scrollbar_bg, fan::color(0.f, 0.f, 0.f, 0.f));
-    color(gui::col_scrollbar_grab, fan::color(0.03f, 0.034f, 0.05f, 1.f));
+    color(gui::col_scrollbar_grab, fan::color(0.05f, 0.08f, 0.18f, 0.8f));
     color(gui::col_scrollbar_grab_hovered, blue_dim);
     color(gui::col_scrollbar_grab_active, blue);
     color(gui::col_text_selected_bg, fan::color(0.1f, 0.35f, 1.f, 0.35f));

@@ -17,7 +17,7 @@ struct ecps_gui_t {
 
   ecps_gui_t() {
 
-    engine.set_clear_color(gui::get_color(gui::col_window_bg));
+    setup_backdrop();
     // lines are smoothed by their own geometry: the textured way needs the font atlas sampled with filtering,
     // and without it every drawn line and icon came out jagged
     gui::get_style().AntiAliasedLinesUseTex = false;
@@ -176,7 +176,11 @@ struct ecps_gui_t {
       gui::window_flags_no_resize |
       gui::window_flags_no_title_bar |
       gui::window_flags_no_bring_to_front_on_focus |
-      gui::window_flags_no_inputs);
+      gui::window_flags_no_inputs |
+      gui::window_flags_no_scrollbar |
+      gui::window_flags_no_scroll_with_mouse);
+    render_backdrop();
+    picture_shown = false; // the stream view sets it again when it draws the picture
 
     if (window_handler.p_open) {
       window_handler.render();
