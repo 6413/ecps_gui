@@ -2923,7 +2923,7 @@ struct ecps_gui_t {
     try {
       fan::json state = fan::json::parse(data);
       // a leftover from long ago is not what the user just did
-      long long age = (long long)std::time(nullptr) - state.value("saved_at", 0LL);
+      std::int64_t age = (std::int64_t)std::time(nullptr) - state.value("saved_at", (std::int64_t)0);
       if (age < 0 || age > 600) {
         return;
       }
