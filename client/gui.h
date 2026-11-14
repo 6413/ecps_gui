@@ -485,7 +485,6 @@ struct ecps_gui_t {
       gui::set_next_window_size(window_size);
       gui::set_next_window_bg_alpha(0.99);
       if (gui::begin("Channel Browser", &p_open,
-        gui::window_flags_no_bring_to_front_on_focus |
         gui::window_flags_no_docking |
         gui::window_flags_no_saved_settings |
         gui::window_flags_no_move |
@@ -1336,6 +1335,7 @@ struct ecps_gui_t {
 #endif
       }
 
+      This->render_stream_toolbar();
       gui::end_child();
 
       gui::same_line(0, splitter_spacing);
@@ -1387,6 +1387,7 @@ struct ecps_gui_t {
         }
       }
 
+      This->render_stream_toolbar();
       gui::end_child();
     }
 
@@ -1414,7 +1415,6 @@ struct ecps_gui_t {
         (avail_size.x - This->stream_settings.settings_panel_width - 40.0f) :
         avail_size.x;
 
-      This->render_stream_toolbar(main_content_width);
     }
 
     int main_tab = 0;
@@ -2332,9 +2332,10 @@ struct ecps_gui_t {
     }
   }
 
-  // The bottom toolbar of the stream view (start/stop, settings, fullscreen). It floats over the picture in its own
-  // window and fades out unless the mouse is near the bottom or there is no picture, so the stream gets the whole window
-  void render_stream_toolbar(f32_t content_width) {
+  // The bottom toolbar of the stream view (start/stop, settings, fullscreen). It is drawn at the bottom of the
+  // stream area, over the picture, and fades out unless the mouse is near the bottom or there is no picture, so
+  // the stream gets the whole height. Call it inside the stream child, no window or focus tricks of its own
+  void render_stream_toolbar() {
     auto& io = gui::get_io();
     fan::vec2 area_pos = gui::get_window_pos();
     fan::vec2 area_size = gui::get_window_size();
@@ -2356,39 +2357,29 @@ struct ecps_gui_t {
       return; // not drawn, so nothing under it can be clicked by accident
     }
 
-    f32_t bar_height = frame_height + 16.f;
     gui::push_style_var(gui::style_var_alpha, std::max(toolbar_alpha, 0.02f));
-    gui::push_style_var(gui::style_var_window_padding, fan::vec2(0, 8));
-    gui::set_next_window_pos(fan::vec2(area_pos.x + 12.f, area_pos.y + area_size.y - bar_height - 10.f));
-    gui::set_next_window_size(fan::vec2(content_width, bar_height));
-    if (gui::begin("##stream_toolbar", nullptr,
-      gui::window_flags_no_title_bar | gui::window_flags_no_resize | gui::window_flags_no_move |
-      gui::window_flags_no_scrollbar | gui::window_flags_no_scroll_with_mouse | gui::window_flags_no_background |
-      gui::window_flags_no_saved_settings | gui::window_flags_no_docking | gui::window_flags_no_nav |
-      gui::window_flags_no_focus_on_appearing)) {
-      f32_t button_width = 200.f;
-      gui::set_cursor_pos(fan::vec2((content_width - button_width) / 2, 8.f));
-      stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
+    f32_t y = area_size.y - frame_height - 14.f + gui::get_scroll_y();
+    f32_t button_width = 200.f;
+    gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
+    stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
-      gui::same_line();
-      gui::set_cursor_pos_x(content_width - (frame_height * 2) - 10);
+    gui::same_line();
+    gui::set_cursor_pos_x(area_size.x - (frame_height * 2) - 14.f);
 
-      f32_t icon_size = gui::get_text_line_height();
-      f32_t padding = gui::get_style().FramePadding.y;
-      if (icon_button_helper_t::render_transparent_icon_button("#btn_settings", icon_settings,
-        fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
-        stream_settings.show_in_stream_view = !stream_settings.show_in_stream_view;
-      }
-
-      gui::same_line(content_width - frame_height);
-      if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen", icon_fullscreen,
-        fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
-        is_fullscreen_stream = true;
-        engine.window.set_borderless();
-      }
+    f32_t icon_size = gui::get_text_line_height();
+    f32_t padding = gui::get_style().FramePadding.y;
+    if (icon_button_helper_t::render_transparent_icon_button("#btn_settings", icon_settings,
+      fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
+      stream_settings.show_in_stream_view = !stream_settings.show_in_stream_view;
     }
-    gui::end();
-    gui::pop_style_var(2);
+
+    gui::same_line(area_size.x - frame_height - 4.f);
+    if (icon_button_helper_t::render_transparent_icon_button("#btn_fullscreen", icon_fullscreen,
+      fan::vec2(icon_size, icon_size), fan::vec2(padding, padding))) {
+      is_fullscreen_stream = true;
+      engine.window.set_borderless();
+    }
+    gui::pop_style_var();
   }
 
   // what the stream view says while there is no picture
@@ -2472,8 +2463,14 @@ struct ecps_gui_t {
       gui::same_line(230);
       gui::text(value);
     };
+    // a size that was never set holds garbage, show that as "none yet" instead of a huge number
     auto size_text = [](auto x, auto y) {
-      return std::to_string((long long)x) + " x " + std::to_string((long long)y);
+      long long width = (long long)x;
+      long long height = (long long)y;
+      if (width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+        return std::string("none yet");
+      }
+      return std::to_string(width) + " x " + std::to_string(height);
     };
 
     if (!gui::begin_child("##debug_panel", fan::vec2(0, 0), true)) {
@@ -2496,7 +2493,8 @@ struct ecps_gui_t {
       section_title("Capture and encoder (this computer shares)");
       auto& geometry = rt->screen_encoder.mdscr.Geometry;
       row("Screen captured at", size_text(geometry.Resolution.x, geometry.Resolution.y) +
-        (geometry.Resolution.y > geometry.Resolution.x ? "  (portrait)" : "  (landscape)"));
+        (geometry.Resolution.x == 0 || geometry.Resolution.y == 0 ? "" :
+          geometry.Resolution.y > geometry.Resolution.x ? "  (portrait)" : "  (landscape)"));
       row("Encoded as", size_text(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " @ " +
         std::to_string((long long)rt->screen_encoder.config_.frame_rate) + " fps");
       row("Bitrate", number(rt->screen_encoder.config_.bitrate / 1e6, 1) + " Mbit/s");
@@ -2568,9 +2566,11 @@ struct ecps_gui_t {
       return;
     }
     last_display_sizes = now;
+  #if ecps_debug_prints >= 1
     fan::print("display: window", window_size.x, "x", window_size.y, "imgui display", io.DisplaySize.x, "x", io.DisplaySize.y,
       "framebuffer scale", io.DisplayFramebufferScale.x, "x", io.DisplayFramebufferScale.y,
       "main viewport", viewport->Size.x, "x", viewport->Size.y);
+  #endif
   }
   std::array<f32_t, 8> last_display_sizes{};
 
