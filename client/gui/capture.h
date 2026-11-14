@@ -161,17 +161,6 @@
     }
   }
 
-  // a title cut to fit width pixels, so a long one doesn't push its neighbours around
-  static std::string fit_title(std::string title, f32_t width) {
-    if (gui::calc_text_size(title).x <= width) {
-      return title;
-    }
-    while (title.size() > 1 && gui::calc_text_size(title + "...").x > width) {
-      title.pop_back();
-    }
-    return title + "...";
-  }
-
   // what is shared (a window, or the screen for 0), as it looks now
   void draw_share_preview(std::uintptr_t handle, f32_t max_width) {
     int budget = 1;

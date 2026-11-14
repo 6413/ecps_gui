@@ -12,6 +12,17 @@
     return table;
   }();
 
+  // a title cut to fit width pixels, so a long one doesn't push its neighbours around
+  static std::string fit_title(std::string title, f32_t width) {
+    if (gui::calc_text_size(title).x <= width) {
+      return title;
+    }
+    while (title.size() > 1 && gui::calc_text_size(title + "...").x > width) {
+      title.pop_back();
+    }
+    return title + "...";
+  }
+
   struct stream_button_renderer_t {
     // Sharing is one action for the whole program and always goes into your own channel, so it doesn't depend on
     // which channel is selected, or on being in somebody else's
