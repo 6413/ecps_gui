@@ -127,7 +127,9 @@ void TCP_WriteCommand(NET_TCP_peer_t *peer, uint32_t ID, Protocol_CI_t Command, 
     fan::network::crypto::secure_channel_t Crypto; \
     uint64_t RecoveryWindowAt; \
     uint32_t RecoverySent; \
-  }UDP;
+  }UDP; \
+  char Username[32]; \
+  uint64_t UsernameChangedAt;
 #define BLL_set_IsNodeRecycled 1
 #include <BLL/BLL.h>
 

@@ -710,6 +710,10 @@ struct ecps_backend_t {
     }
     session_id = {};
     udp_crypto = {};
+    {
+      std::lock_guard<std::mutex> lock(username_mutex);
+      my_username.clear();
+    }
     fail_active_file_transfers("connection to the server was lost");
     fan::print("disconnected from server:", reason);
   }
@@ -771,12 +775,34 @@ struct ecps_backend_t {
     }
     catch (...) {}
   }
+  // the name this client wants (from the config) and what the server last answered
+  std::string desired_username;
+  mutable std::mutex username_mutex;
+  std::string my_username;
+  std::string username_result_name;
+  std::atomic<std::uint8_t> username_result {0};
+  std::atomic<std::uint32_t> username_result_seq {0};
+
+  fan::event::task_t send_set_username(std::string name) {
+    try {
+      Protocol_C2S_t::SetUsername_t rest;
+      std::memset(&rest, 0, sizeof(rest));
+      std::strncpy(rest.Name, name.c_str(), sizeof(rest.Name) - 1);
+      co_await tcp_write(Protocol_C2S_t::SetUsername, &rest, sizeof(rest));
+    }
+    catch (...) {}
+  }
+
   fan::event::task_t login() {
     // while (1) {
     try {
       Protocol_C2S_t::Request_Login_t rest;
       rest.Type = Protocol::LoginType_t::Anonymous;
       co_await tcp_write(Protocol_C2S_t::Request_Login, &rest, sizeof(rest));
+      // every login, the first and the ones after a reconnect, asks for the saved name again
+      if (!desired_username.empty()) {
+        co_await send_set_username(desired_username);
+      }
       co_return;
     }
     catch (fan::exception_t e) {
@@ -999,6 +1025,13 @@ struct ecps_backend_t {
   }
 
   std::string get_current_username() const {
+    {
+      // what the server told us is newer than what the user lists say
+      std::lock_guard<std::mutex> lock(username_mutex);
+      if (!my_username.empty()) {
+        return my_username;
+      }
+    }
     for (const auto& [channel_id, sessions] : channel_sessions) {
       for (const auto& session : sessions) {
         if (session.session_id.i == this->session_id.i) {

@@ -147,6 +147,13 @@ struct Protocol {
   enum class LoginType_t : uint8_t {
     Anonymous
   };
+
+  enum class SetUsername_Result_t : uint8_t {
+    Ok,
+    Taken,
+    Invalid,
+    TooFast
+  };
 };
 
 struct ProtocolUDP {
@@ -330,6 +337,11 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     uint16_t X;
     uint16_t Y;
     uint8_t Visible;
+  );
+
+  // the name this client wants to be called. Empty goes back to the default one
+  __dme(SetUsername,
+    char Name[32];
   );
 
   // remote logs: Peer is the other client, the server only relays between two sessions of a channel.
@@ -531,6 +543,13 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     uint16_t X;
     uint16_t Y;
     uint8_t Visible;
+  );
+
+  // the answer to SetUsername, and also sent once after login with the name the server gave. Name is the
+  // name the session has now, whatever Result says
+  __dme(SetUsername_Result,
+    uint8_t Result;
+    char Name[32];
   );
 
   // remote logs: Peer is the other client, the server only relays between two sessions of a channel.

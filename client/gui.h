@@ -212,6 +212,17 @@ struct ecps_gui_t {
       config = fan::json::parse(data);
     }
 
+    if (config.is_object()) {
+      if (config.contains("username") && config["username"].is_string()) {
+        ecps_backend.desired_username = config["username"].get<std::string>();
+      }
+      if (config.contains("auto_join") && config["auto_join"].is_string()) {
+        auto_join_host = config["auto_join"].get<std::string>();
+      }
+    }
+    updater.collect_state = [this]() { return collect_resume_state(); };
+    load_resume_state();
+
     if (config.contains("audio")) {
       fan::json audio = config["audio"];
       stream_settings.share_audio = audio.value("share", stream_settings.share_audio);
@@ -498,8 +509,20 @@ struct ecps_gui_t {
 
         std::string current_user = "User: " + ecps_backend.get_current_username();
         fan::vec2 text_size = gui::calc_text_size(current_user);
-        gui::same_line(gui::get_window_size().x - text_size.x - 20);
+        std::string notice = This->username_notice_text();
+        f32_t notice_width = notice.empty() ? 0.f : gui::calc_text_size(notice).x + 24.f;
+        gui::same_line(gui::get_window_size().x - text_size.x - notice_width - 20);
+        if (!notice.empty()) {
+          gui::text(fan::color(1.f, 0.55f, 0.45f, 1.f), notice);
+          gui::same_line(0, 24.f);
+        }
         gui::text(fan::color(0.7f, 0.7f, 1.0f, 1.0f), current_user);
+        if (gui::is_item_hovered()) {
+          gui::set_tooltip("Click to change your name");
+        }
+        if (gui::is_item_clicked()) {
+          This->username_popup_requested = true;
+        }
 
         static bool first_open = true;
         if (first_open && p_open) {
@@ -541,7 +564,8 @@ struct ecps_gui_t {
             gui::end_tab_item();
           }
 
-          if (gui::begin_tab_item("Debug", nullptr, 0)) {
+          if (gui::begin_tab_item("Debug", nullptr, main_tab == 2 ? gui::tab_item_flags_set_selected : 0)) {
+            if (main_tab == 2) main_tab = -1;
             current_tab = 2;
             This->render_debug_tab();
             gui::end_tab_item();
@@ -812,6 +836,16 @@ struct ecps_gui_t {
             }
           }
           gui::text("Channel: " + channel_name);
+          if (!ecps_backend.is_hosting_channel(This->selected_channel_id) && !channel_name.empty()) {
+            gui::same_line(0, 24.f);
+            bool auto_join_on = This->auto_join_host == channel_name;
+            if (gui::checkbox("Join automatically", &auto_join_on)) {
+              This->set_auto_join(auto_join_on ? channel_name : std::string());
+            }
+            if (gui::is_item_hovered()) {
+              gui::set_tooltip("Joins this channel by itself whenever its host is online, also after a restart");
+            }
+          }
 
           gui::separator();
 
@@ -2652,6 +2686,290 @@ struct ecps_gui_t {
   void update_host_cursor() {}
 #endif
 
+  // ---- name -------------------------------------------------------------------------------------------------
+
+  // the same rule the server applies: 1 to 24 of letters, digits, space, _ . -, no space at either end
+  static bool username_is_valid(const std::string& name) {
+    if (name.empty() || name.size() > 24 || name.front() == ' ' || name.back() == ' ') {
+      return false;
+    }
+    for (char c : name) {
+      bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '_' || c == '.' || c == '-';
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  std::string username_notice_text() const {
+    if (!username_notice.empty() && std::chrono::steady_clock::now() < username_notice_until) {
+      return username_notice;
+    }
+    return {};
+  }
+
+  // looks at what the server answered about names. The answer to a change we asked for goes to the popup,
+  // an answer we didn't ask for that says no is the saved name not being free here
+  void update_username() {
+    std::uint32_t seq = ecps_backend.username_result_seq.load();
+    if (seq == username_seen_seq) {
+      return;
+    }
+    username_seen_seq = seq;
+    int result = ecps_backend.username_result.load();
+    std::string name;
+    {
+      std::lock_guard<std::mutex> lock(ecps_backend.username_mutex);
+      name = ecps_backend.username_result_name;
+    }
+    if (username_pending) {
+      username_pending = false;
+      if (result == 0) {
+        username_error.clear();
+        ecps_backend.desired_username = username_pending_default ? std::string() : name;
+        write_to_config("username", ecps_backend.desired_username);
+        username_close_popup = true;
+      }
+      else if (result == 1) {
+        username_error = "That name is taken, pick another one";
+      }
+      else if (result == 2) {
+        username_error = "Use 1 to 24 letters, digits, spaces, _ . or -";
+      }
+      else {
+        username_error = "Wait a second and try again";
+      }
+    }
+    else if (result == 1 && !ecps_backend.desired_username.empty()) {
+      username_notice = "\"" + ecps_backend.desired_username + "\" is taken here, you are " + name;
+      username_notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    }
+  }
+
+  void render_username_popup() {
+    if (username_popup_requested) {
+      username_popup_requested = false;
+      username_input = ecps_backend.get_current_username();
+      username_error.clear();
+      gui::set_next_window_pos(fan::vec2(engine.window.get_size().x, engine.window.get_size().y) / 2 - fan::vec2(190, 90));
+      gui::open_popup("Change name");
+    }
+    if (!gui::begin_popup("Change name")) {
+      return;
+    }
+    gui::text("Your name");
+    gui::push_item_width(320);
+    bool enter = gui::input_text("##username_input", &username_input, gui::input_text_flags_enter_returns_true);
+    gui::pop_item_width();
+    text_wrapped_disabled("1 to 24 letters, digits, spaces, _ . or -. Nobody else can use the same name at the same time.");
+    if (!username_error.empty()) {
+      gui::text(fan::color(1.f, 0.5f, 0.45f, 1.f), username_error);
+    }
+    bool can_save = !username_pending && username_is_valid(username_input);
+    gui::begin_disabled(!can_save);
+    if (gui::button("Save") || (enter && can_save)) {
+      username_pending = true;
+      username_pending_default = false;
+      username_error.clear();
+      backend_queue([name = username_input]() -> fan::event::task_t {
+        co_await ecps_backend.send_set_username(name);
+      });
+    }
+    gui::end_disabled();
+    gui::same_line();
+    if (gui::button("Use default name")) {
+      username_pending = true;
+      username_pending_default = true;
+      username_error.clear();
+      backend_queue([]() -> fan::event::task_t {
+        co_await ecps_backend.send_set_username(std::string());
+      });
+    }
+    gui::same_line();
+    if (gui::button("Cancel")) {
+      gui::close_current_popup();
+    }
+    if (username_close_popup) {
+      username_close_popup = false;
+      gui::close_current_popup();
+    }
+    gui::end_popup();
+  }
+
+  // ---- joining channels by themselves --------------------------------------------------------------------------
+
+  void set_auto_join(const std::string& host_name) {
+    auto_join_host = host_name;
+    write_to_config("auto_join", host_name);
+  }
+
+  // Channels are named after their host, and names are unique. A channel that is ticked "Join automatically",
+  // or that we were in before an update, is joined as soon as it exists, and looked for again until then
+  void update_auto_join() {
+    if (auto_join_host.empty() && resume_join.empty() && resume_select.empty()) {
+      return;
+    }
+    if (!ecps_backend.connected || ecps_backend.session_id.i == 0) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now < next_auto_join) {
+      return;
+    }
+    next_auto_join = now + std::chrono::seconds(2);
+    if (now >= next_auto_join_list) {
+      next_auto_join_list = now + std::chrono::seconds(6);
+      backend_queue([]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.request_channel_list();
+        }
+        catch (...) {}
+      });
+    }
+
+    std::vector<std::string> wanted = resume_join;
+    if (!auto_join_host.empty()) {
+      wanted.push_back(auto_join_host);
+    }
+    for (const auto& channel : ecps_backend.available_channels) {
+      if (std::find(wanted.begin(), wanted.end(), channel.name) == wanted.end()) {
+        continue;
+      }
+      if (channel.host_session_id.i == ecps_backend.session_id.i) {
+        continue; // our own channel
+      }
+      if (ecps_backend.is_channel_joined(channel.channel_id)) {
+        resume_join.erase(std::remove(resume_join.begin(), resume_join.end(), channel.name), resume_join.end());
+        continue;
+      }
+      auto tried = auto_join_tried.find(channel.name);
+      if (tried != auto_join_tried.end() && now - tried->second < std::chrono::seconds(6)) {
+        continue; // a join for it is on its way
+      }
+      auto_join_tried[channel.name] = now;
+      backend_queue([id = channel.channel_id]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.channel_join(id);
+          co_await ecps_backend.request_channel_list();
+          co_await ecps_backend.request_channel_session_list(id);
+        }
+        catch (...) {}
+      });
+    }
+
+    // the channel that was open before an update, once we are in it
+    if (!resume_select.empty()) {
+      for (const auto& channel : ecps_backend.available_channels) {
+        if (channel.name == resume_select && (ecps_backend.is_channel_joined(channel.channel_id) ||
+          channel.host_session_id.i == ecps_backend.session_id.i)) {
+          selected_channel_id = channel.channel_id;
+          resume_select.clear();
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- picking the session up again after an update ----------------------------------------------------------
+
+  std::string channel_name_of(ecps_backend_t::Protocol_ChannelID_t channel_id) const {
+    for (const auto& channel : ecps_backend.available_channels) {
+      if (channel.channel_id.i == channel_id.i) {
+        return channel.name;
+      }
+    }
+    return {};
+  }
+
+  // what the Update button hands to the new process. Not streaming: sharing the screen again is not something to
+  // start by itself, and neither is letting others read the logs
+  std::string collect_resume_state() {
+    fan::json state = fan::json::object();
+    state["saved_at"] = (long long)std::time(nullptr);
+    state["tab"] = window_handler.current_tab;
+    fan::json joined = fan::json::array();
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (ecps_backend.is_hosting_channel(channel.channel_id)) {
+        continue;
+      }
+      std::string name = channel_name_of(channel.channel_id);
+      if (!name.empty()) {
+        joined.push_back(name);
+      }
+    }
+    state["joined"] = joined;
+    state["selected"] = channel_name_of(selected_channel_id);
+    fan::json midi = fan::json::object();
+    midi["send_host"] = send_midi;
+    midi["send_viewers"] = send_midi_viewers;
+    midi["allow"] = allow_midi;
+    midi["play"] = play_host_midi;
+    midi["piano"] = show_midi_piano;
+    midi["volume"] = midi_volume;
+    state["midi"] = midi;
+    state["show_own_stream"] = show_own_stream;
+    return state.dump();
+  }
+
+  void load_resume_state() {
+    if (!fan::io::file::exists(updater_t::state_file)) {
+      return;
+    }
+    std::string data;
+    fan::io::file::read(std::string(updater_t::state_file), &data);
+    std::error_code ec;
+    std::filesystem::remove(updater_t::state_file, ec);
+    try {
+      fan::json state = fan::json::parse(data);
+      // a leftover from long ago is not what the user just did
+      long long age = (long long)std::time(nullptr) - state.value("saved_at", 0LL);
+      if (age < 0 || age > 600) {
+        return;
+      }
+      int tab = state.value("tab", 0);
+      if (tab >= 0 && tab <= 2) {
+        window_handler.main_tab = tab;
+      }
+      if (state.contains("joined") && state["joined"].is_array()) {
+        for (const auto& name : state["joined"]) {
+          if (name.is_string()) {
+            resume_join.push_back(name.get<std::string>());
+          }
+        }
+      }
+      resume_select = state.value("selected", std::string());
+      if (state.contains("midi") && state["midi"].is_object()) {
+        fan::json midi = state["midi"];
+        send_midi = midi.value("send_host", send_midi);
+        send_midi_viewers = midi.value("send_viewers", send_midi_viewers);
+        allow_midi = midi.value("allow", allow_midi);
+        play_host_midi = midi.value("play", play_host_midi);
+        show_midi_piano = midi.value("piano", show_midi_piano);
+        midi_volume = midi.value("volume", midi_volume);
+      }
+      show_own_stream = state.value("show_own_stream", show_own_stream);
+    }
+    catch (...) {}
+  }
+
+  std::string username_input;
+  bool username_popup_requested = false;
+  bool username_pending = false;
+  bool username_pending_default = false;
+  bool username_close_popup = false;
+  std::string username_error;
+  std::string username_notice;
+  std::chrono::steady_clock::time_point username_notice_until;
+  std::uint32_t username_seen_seq = 0;
+
+  std::string auto_join_host;
+  std::vector<std::string> resume_join;
+  std::string resume_select;
+  std::chrono::steady_clock::time_point next_auto_join;
+  std::chrono::steady_clock::time_point next_auto_join_list;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point> auto_join_tried;
+
   // grey text that breaks at the edge of its panel, a long hint must not run out of it
   static void text_wrapped_disabled(const std::string& text) {
     gui::push_text_wrap_pos(0.f);
@@ -3140,6 +3458,8 @@ struct ecps_gui_t {
     forward_input();
     update_channel_flags();
     update_host_cursor();
+    update_username();
+    update_auto_join();
     update_midi_forward();
     remote_logs.tick([this](const std::function<fan::event::task_t()>& task) {
       backend_queue(task);
@@ -3157,6 +3477,7 @@ struct ecps_gui_t {
     drop_down_server.render();
     render_file_offers();
     render_file_drop();
+    render_username_popup();
 
     gui::set_next_window_pos(0);
     gui::set_next_window_size(gui::get_io().DisplaySize);

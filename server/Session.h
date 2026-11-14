@@ -30,6 +30,9 @@ Protocol_SessionID_t OpenFromTCPPeer(NET_TCP_peer_t *peer){
   Session->TCP.peer = peer;
   new (&Session->TCP.Crypto) fan::network::crypto::secure_stream_t();
 
+  Session->UsernameChangedAt = 0;
+  Username_AssignDefault(SessionID, peer->sdstaddr.ip);
+
   Session->UDP.Address.ip = 0;
   Session->UDP.Crypto = {};
   Session->UDP.RecoveryWindowAt = 0;

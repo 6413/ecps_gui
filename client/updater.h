@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -41,6 +42,11 @@ struct updater_t {
   static constexpr const char* log_file = "ecps_update.log";
   // written just before the restart, the new process reads it to say it was updated and from what
   static constexpr const char* restarted_file = "ecps_update.restarted";
+  // where the session was before the update, written only when the restart comes from the Update button
+  static constexpr const char* state_file = "ecps_update.state";
+
+  // set by the UI: JSON of what the new process should pick up again (channels, tab, switches)
+  std::function<std::string()> collect_state;
 
   static constexpr bool can_install =
 #if defined(_WIN32)
@@ -248,6 +254,14 @@ struct updater_t {
       std::ofstream marker(restarted_file, std::ios::trunc);
       std::string was = build_short();
       marker << (was.empty() ? std::string("v") + ecps_version : was) << '\n';
+    }
+    // only here, so a normal close or a crash never brings the old session back
+    if (collect_state) {
+      std::string state = collect_state();
+      if (!state.empty()) {
+        std::ofstream out(state_file, std::ios::trunc);
+        out << state;
+      }
     }
     // the new process must not inherit our capture pipes, nobody would read them
     log_capture().restore();

@@ -133,10 +133,84 @@ Protocol_SessionID_t GetChannelHost(Protocol_ChannelID_t ChannelID) {
   }
 }
 
+// A session's name: the one it picked, or User_ and six hex digits made from its IP address. The digits are an
+// HKDF of the address with the server's private key as the salt: the same address gets the same name on this
+// server every time, and the name can't be turned back into the address (without the key there is nothing to try)
 const char* GetSessionUsername(Protocol_SessionID_t SessionID) {
-  static char username_buffer[32];
-  snprintf(username_buffer, sizeof(username_buffer), "User_%d", (unsigned short)SessionID);
-  return username_buffer;
+  /* a channel can have no host session, and ids of closed sessions are recycled */
+  if (g_pile->SessionList.inri(SessionID) ||
+    g_pile->SessionList.IsNRSentinel(SessionID) ||
+    g_pile->SessionList.IsNodeReferenceRecycled(SessionID)) {
+    return "";
+  }
+  return g_pile->SessionList[SessionID].Username;
+}
+
+bool Username_Equal(const char* a, const char* b) {
+  for (;; ++a, ++b) {
+    char x = *a, y = *b;
+    if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
+    if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
+    if (x != y) return false;
+    if (!x) return true;
+  }
+}
+
+/* names are compared without case, and the default names of other sessions count */
+bool Username_IsTaken(const char* Name, Protocol_SessionID_t Except) {
+  auto nr = g_pile->SessionList.GetNodeFirst();
+  while (nr != g_pile->SessionList.dst) {
+    auto n = g_pile->SessionList.GetNodeByReference(nr);
+    Protocol_SessionID_t Other(nr);
+    if (Other != Except && n->data.Username[0] && Username_Equal(n->data.Username, Name)) {
+      return true;
+    }
+    nr = n->NextNodeReference;
+  }
+  return false;
+}
+
+/* 1 to 24 of letters, digits, space, _ . -, no space at either end. The client checks the same */
+bool Username_IsValid(const char* Name) {
+  size_t length = strlen(Name);
+  if (length < 1 || length > 24 || Name[0] == ' ' || Name[length - 1] == ' ') {
+    return false;
+  }
+  for (size_t i = 0; i < length; ++i) {
+    char c = Name[i];
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '_' || c == '.' || c == '-';
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void Username_AssignDefault(Protocol_SessionID_t SessionID, uint32_t Ip) {
+  auto Session = &g_pile->SessionList[SessionID];
+  Session->Username[0] = 0;
+
+  uint8_t IpBytes[4];
+  __builtin_memcpy(IpBytes, &Ip, sizeof(IpBytes));
+  uint8_t Derived[3];
+  char Base[16];
+  if (fan::network::crypto::hkdf(
+    IpBytes, sizeof(IpBytes),
+    g_pile->StaticPrivate.data(), g_pile->StaticPrivate.size(),
+    "ecps default username v1", Derived, sizeof(Derived))) {
+    snprintf(Base, sizeof(Base), "User_%02x%02x%02x", Derived[0], Derived[1], Derived[2]);
+  }
+  else {
+    snprintf(Base, sizeof(Base), "User_%u", (unsigned)(unsigned short)SessionID);
+  }
+
+  /* two clients behind one address would get the same digits */
+  char Name[32];
+  snprintf(Name, sizeof(Name), "%s", Base);
+  for (int Copy = 2; Username_IsTaken(Name, SessionID) && Copy < 1000; ++Copy) {
+    snprintf(Name, sizeof(Name), "%s_%d", Base, Copy);
+  }
+  snprintf(Session->Username, sizeof(Session->Username), "%s", Name);
 }
 
 void Channel_SendSessionList(NET_TCP_peer_t *peer, uint32_t ID, Protocol_ChannelID_t ChannelID) {

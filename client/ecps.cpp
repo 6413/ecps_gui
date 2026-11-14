@@ -750,6 +750,24 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
+  __dme_get(Protocol_S2C, SetUsername_Result) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::SetUsername_Result_t>();
+    if (msg.status != 0) {
+      co_return;
+    }
+    std::string name((const char*)msg->Name, strnlen((const char*)msg->Name, sizeof(msg->Name)));
+    {
+      std::lock_guard<std::mutex> lock(backend.username_mutex);
+      backend.username_result_name = name;
+      if (!name.empty()) {
+        backend.my_username = name;
+      }
+    }
+    backend.username_result.store(msg->Result);
+    backend.username_result_seq.fetch_add(1);
+    co_return;
+  };
+
   __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewCursor) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewCursor_t>();
     if (msg.status != 0) {

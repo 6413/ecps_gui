@@ -64,6 +64,62 @@ case Protocol_C2S_t::Request_Login:{
     Protocol_S2C_t::Response_Login,
     rest);
 
+  {
+    /* the client has no other way to know the name it was given */
+    Protocol_S2C_t::SetUsername_Result_t NameInfo{};
+    NameInfo.Result = (uint8_t)Protocol::SetUsername_Result_t::Ok;
+    snprintf(NameInfo.Name, sizeof(NameInfo.Name), "%s", Session->Username);
+    TCP_WriteCommand(peer, 0, Protocol_S2C_t::SetUsername_Result, NameInfo);
+  }
+
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::SetUsername:{
+  auto Request = (Protocol_C2S_t::SetUsername_t *)RestPacket;
+  /* the end of a name from the wire is never trusted */
+  Request->Name[sizeof(Request->Name) - 1] = 0;
+
+  Protocol_S2C_t::SetUsername_Result_t Result{};
+  uint64_t Now = EV_nowi(&g_pile->listener);
+  bool Changed = false;
+
+  if(Session->UsernameChangedAt != 0 && Now - Session->UsernameChangedAt < 500000000ULL){
+    Result.Result = (uint8_t)Protocol::SetUsername_Result_t::TooFast;
+  }
+  else if(Request->Name[0] == 0){
+    Username_AssignDefault(SessionID, peer->sdstaddr.ip);
+    Result.Result = (uint8_t)Protocol::SetUsername_Result_t::Ok;
+    Changed = true;
+  }
+  else if(!Username_IsValid(Request->Name)){
+    Result.Result = (uint8_t)Protocol::SetUsername_Result_t::Invalid;
+  }
+  else if(Username_IsTaken(Request->Name, SessionID)){
+    Result.Result = (uint8_t)Protocol::SetUsername_Result_t::Taken;
+  }
+  else{
+    snprintf(Session->Username, sizeof(Session->Username), "%s", Request->Name);
+    Result.Result = (uint8_t)Protocol::SetUsername_Result_t::Ok;
+    Changed = true;
+  }
+
+  if(Changed){
+    Session->UsernameChangedAt = Now;
+  }
+  snprintf(Result.Name, sizeof(Result.Name), "%s", Session->Username);
+  TCP_WriteCommand(peer, BasePacket->ID, Protocol_S2C_t::SetUsername_Result, Result);
+
+  if(Changed){
+    /* everyone sees names in the user lists and as the channel names */
+    auto nr = Session->ChannelList.GetNodeFirst();
+    while(nr != Session->ChannelList.dst){
+      auto n = Session->ChannelList.GetNodeByReference(nr);
+      Channel_BroadcastSessionList(n->data.ChannelID);
+      nr = n->NextNodeReference;
+    }
+    Channel_BroadcastChannelList();
+  }
+
   goto StateDone_gt;
 }
 case Protocol_C2S_t::CreateChannel:{
