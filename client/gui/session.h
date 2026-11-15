@@ -131,10 +131,18 @@
       return;
     }
     auto now = std::chrono::steady_clock::now();
+    // a new connection: its channel list is asked for at once, "nothing to join" is told as soon as it is here
+    if ((std::uint32_t)ecps_backend.session_id.i != auto_join_session) {
+      auto_join_session = (std::uint32_t)ecps_backend.session_id.i;
+      auto_created = false;
+      next_auto_join = now;
+      next_auto_join_list = now;
+    }
     if (now < next_auto_join) {
       return;
     }
-    next_auto_join = now + std::chrono::seconds(2);
+    // looked at often until the first list is here, then every 2 s
+    next_auto_join = now + (ecps_backend.channel_list_received ? std::chrono::milliseconds(2000) : std::chrono::milliseconds(100));
     if (now >= next_auto_join_list) {
       next_auto_join_list = now + std::chrono::seconds(6);
       backend_queue([]() -> fan::event::task_t {
@@ -173,6 +181,29 @@
         }
         catch (...) {}
       });
+    }
+
+    // Nothing to join: our own channel is made instead, so the one we wait for finds us there and joins it
+    // (their "Join automatically" for our name does that). Once per connection, and only when we are in no channel
+    if (!auto_join_host.empty() && !auto_created && ecps_backend.channel_list_received &&
+      ecps_backend.channel_info.empty() && !ecps_backend.is_hosting_any_channel()) {
+      bool target_exists = std::any_of(ecps_backend.available_channels.begin(), ecps_backend.available_channels.end(),
+        [&](const auto& channel) { return channel.name == auto_join_host; });
+      if (!target_exists) {
+        auto_created = true;
+        backend_queue([this]() -> fan::event::task_t {
+          try {
+            auto channel_id = co_await ecps_backend.channel_create();
+            co_await ecps_backend.channel_join(channel_id, true);
+            co_await ecps_backend.request_channel_list();
+            co_await ecps_backend.request_channel_session_list(channel_id);
+            selected_channel_id = channel_id;
+          }
+          catch (...) {
+            fan::print("could not make a channel to wait in");
+          }
+        });
+      }
     }
 
     // the channel that was open before an update, once we are in it
@@ -284,6 +315,9 @@
   std::vector<std::string> resume_join;
   std::string resume_select;
   std::chrono::steady_clock::time_point next_auto_join;
+  // the channel made when there was nothing to join, once per connection
+  bool auto_created = false;
+  std::uint32_t auto_join_session = 0;
   std::chrono::steady_clock::time_point next_auto_join_list;
   std::unordered_map<std::string, std::chrono::steady_clock::time_point> auto_join_tried;
 

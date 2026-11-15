@@ -139,7 +139,6 @@ struct ecps_backend_t {
     uint16_t m_HighestCurrent = 0;
     uint64_t m_GapSince = 0;
     uint64_t m_LastRecoveryAt = 0;
-    bool m_AckSent = false;
     uint8_t m_RecoveryRetries = 0;
 
     static constexpr uint64_t recovery_delay_ns = 5000000;
@@ -152,7 +151,7 @@ struct ecps_backend_t {
       uint64_t Packet_HeadDrop;
       uint64_t Packet_BodyDrop;
       uint64_t Frame_Corrected;
-    } m_stats;
+    } m_stats{};
 
     uint64_t get_adaptive_timeout() {
       f32_t ping_ms = 0;
@@ -199,6 +198,7 @@ struct ecps_backend_t {
         uint64_t adaptive_timeout = get_adaptive_timeout();
 
         if (frame_age > adaptive_timeout) {
+          m_stats.Frame_Total++;
           m_stats.Frame_Drop++;
           SetNewSequence((m_Sequence + 1) % 0x1000);
           RequestKeyframe();
@@ -210,7 +210,6 @@ struct ecps_backend_t {
       // anything above it is still on its way and asking for it just doubles the traffic
       if (m_Possible == (uint16_t)-1 || m_ReceivedCount > m_HighestCurrent) {
         m_GapSince = 0;
-        m_AckSent = false;
         m_RecoveryRetries = 0;
         return;
       }
@@ -251,11 +250,6 @@ struct ecps_backend_t {
         return;
       }
 
-      struct recovery_request_t {
-        uint16_t sequence;
-        uint16_t missing_count;
-      };
-
       size_t request_size = sizeof(recovery_request_t) + m_MissingPackets.size() * sizeof(uint16_t);
       std::vector<uint8_t> request_data(request_size);
 
@@ -272,13 +266,11 @@ struct ecps_backend_t {
         recovery_callback(std::move(request_data));
       }
 
-      m_AckSent = true;
     }
 
     void SetNewSequence(uint16_t sequence) {
       m_Sequence = sequence;
       m_Possible = (uint16_t)-1;
-      m_AckSent = false;
       m_RecoveryRetries = 0;
       m_MissingPackets.clear();
       __builtin_memset(m_DataCheck.data(), 0, m_DataCheck.size());
@@ -289,13 +281,6 @@ struct ecps_backend_t {
       m_GapSince = 0;
     }
 
-    bool IsSequencePast(uint16_t PacketSequence) {
-      const int16_t SEQUENCE_WINDOW = 0x1000; // half of sequence space
-      int16_t diff = (int16_t)(PacketSequence - this->m_Sequence);
-
-      // consider past if difference is negative and within reasonable range
-      return diff < -SEQUENCE_WINDOW || (diff < 0 && diff > -SEQUENCE_WINDOW);
-    }
 
     void SetDataCheck(uint16_t Index) {
       uint8_t* byte = &this->m_DataCheck[Index / 8];
@@ -313,44 +298,45 @@ struct ecps_backend_t {
   struct share_t {
     uint64_t frame_index = 0;
 
-    std::unordered_map<uint16_t, std::vector<std::vector<uint8_t>>> m_SentPackets;
+    // the last frames as they were sent, one flat buffer per frame so storing a packet allocates nothing
+    struct sent_frame_t {
+      uint16_t sequence = (uint16_t)-1;
+      std::vector<uint8_t> data;
+      std::vector<std::pair<uint32_t, uint16_t>> packets; // offset, size
+    };
+    std::array<sent_frame_t, 32> m_SentFrames;
     std::function<void(const std::vector<uint8_t>&)> resend_packet_callback;
 
     void StorePacketForRecovery(uint16_t sequence, uint16_t current,
       const void* data, size_t size) {
-      if (m_SentPackets[sequence].size() <= current) {
-        m_SentPackets[sequence].resize(current + 1);
+      auto& frame = m_SentFrames[sequence % m_SentFrames.size()];
+      if (frame.sequence != sequence) {
+        frame.sequence = sequence;
+        frame.data.clear();
+        frame.packets.clear();
       }
-
-      m_SentPackets[sequence][current].assign(
-        static_cast<const uint8_t*>(data),
-        static_cast<const uint8_t*>(data) + size
-      );
-
-      if (m_SentPackets.size() > 50) {
-        std::erase_if(m_SentPackets, [sequence](const auto& p) { return ((sequence - p.first) & 0xfff) > 32; });
+      if (frame.packets.size() <= current) {
+        frame.packets.resize(current + 1);
       }
+      frame.packets[current] = {(uint32_t)frame.data.size(), (uint16_t)size};
+      frame.data.insert(frame.data.end(), (const uint8_t*)data, (const uint8_t*)data + size);
     }
 
     void ProcessRecoveryRequest(uint16_t sequence, const uint16_t* missing_indices,
       uint16_t missing_count) {
-      auto it = m_SentPackets.find(sequence);
-      if (it == m_SentPackets.end()) {
+      auto& frame = m_SentFrames[sequence % m_SentFrames.size()];
+      if (frame.sequence != sequence || !resend_packet_callback) {
         return;
       }
-
-      auto& packets = it->second;
-
       for (uint16_t i = 0; i < missing_count; ++i) {
         uint16_t packet_index = missing_indices[i];
-        if (packet_index < packets.size() && !packets[packet_index].empty()) {
-
-          if (resend_packet_callback) {
-            resend_packet_callback(packets[packet_index]);
-          }
+        if (packet_index < frame.packets.size() && frame.packets[packet_index].second) {
+          auto begin = frame.data.begin() + frame.packets[packet_index].first;
+          resend_packet_callback(std::vector<uint8_t>(begin, begin + frame.packets[packet_index].second));
         }
       }
     }
+
 
 
     struct m_NetworkFlow_t {
@@ -371,7 +357,6 @@ struct ecps_backend_t {
 #define BLL_set_CPP_CopyAtPointerChange 1
 #include <BLL/BLL.h>
       FrameList_t FrameList;
-      uint64_t WantedInterval = 5000000;
       int64_t Bucket; /* in bit, negative = debt */
       uint64_t BucketSize; /* in bit */
       uint64_t TimerLastCallAt;
@@ -419,37 +404,24 @@ struct ecps_backend_t {
     uintptr_t BufferSize = (uintptr_t)DataWillBeAt - (uintptr_t)buffer + DataSize;
     __builtin_memcpy(DataWillBeAt, Data, DataSize);
 
+    auto* channel = streaming_channel();
+    if (!channel) {
+      co_return 1;
+    }
     share.StorePacketForRecovery(share.frame_index & 0xfff, Current, buffer, BufferSize);
 
     ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t rest;
-    Protocol_ChannelID_t streaming_channel_id;
-    Protocol_ChannelSessionID_t streaming_session_id;
-    bool found_streaming = false;
-
-    for (const auto& channel : channel_info) {
-      if (channel.is_streaming) {
-        streaming_channel_id = channel.channel_id;
-        streaming_session_id = channel.session_id;
-        found_streaming = true;
-        break;
-      }
-    }
-
-    if (!found_streaming) {
-      co_return 1;
-    }
-
-    rest.ChannelID = streaming_channel_id;
-    rest.ChannelSessionID = streaming_session_id;
+    rest.ChannelID = channel->channel_id;
+    rest.ChannelSessionID = channel->session_id;
 
   #if ecps_debug_prints >= 1
     {
       // once per channel, to compare with what the server says about who hosts it
       static uint32_t reported_channel = (uint32_t)-1;
-      if (reported_channel != (uint32_t)streaming_channel_id.i) {
-        reported_channel = (uint32_t)streaming_channel_id.i;
-        fan::print("share: sending video as session", (uint64_t)session_id.i, "in channel", (uint64_t)streaming_channel_id.i,
-          "channel session", (uint64_t)streaming_session_id.i);
+      if (reported_channel != (uint32_t)rest.ChannelID.i) {
+        reported_channel = (uint32_t)rest.ChannelID.i;
+        fan::print("share: sending video as session", (uint64_t)session_id.i, "in channel", (uint64_t)rest.ChannelID.i,
+          "channel session", (uint64_t)rest.ChannelSessionID.i);
       }
     }
   #endif
@@ -467,14 +439,11 @@ struct ecps_backend_t {
   }
 
   fan::event::task_t write_audio(const std::vector<uint8_t>& packet) {
-    for (const auto& channel : channel_info) {
-      if (channel.is_streaming) {
-        ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData_t rest;
-        rest.ChannelID = channel.channel_id;
-        rest.ChannelSessionID = channel.session_id;
-        co_await udp_write(0, ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData, rest, packet.data(), packet.size());
-        co_return;
-      }
+    if (auto* channel = streaming_channel()) {
+      ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData_t rest;
+      rest.ChannelID = channel->channel_id;
+      rest.ChannelSessionID = channel->session_id;
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_ScreenShare_Host_AudioData, rest, packet.data(), packet.size());
     }
   }
 
@@ -634,6 +603,7 @@ struct ecps_backend_t {
             if (!view.GetDataCheck(current)) {
               view.SetDataCheck(current);
               ++view.m_ReceivedCount;
+              ++view.m_stats.Packet_Total;
             }
             view.m_HighestCurrent = std::max(view.m_HighestCurrent, current);
 
@@ -838,11 +808,7 @@ struct ecps_backend_t {
       rest.Source = source;
       co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_View_Watch, &rest, sizeof(rest));
       // a new picture starts with a keyframe, ask the new streamer for one
-      Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t keyframe;
-      std::memset(&keyframe, 0, sizeof(keyframe));
-      keyframe.ChannelID = channel_id;
-      keyframe.Flag = ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
-      co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_ViewToShare, &keyframe, sizeof(keyframe));
+      co_await send_idr_request(channel_id);
     }
     catch (...) {}
   }
@@ -896,43 +862,45 @@ struct ecps_backend_t {
       .channel_id = 0,
       .completed = false
     };
-    co_return co_await channel_create_awaiter(*this, request_id);
+    Protocol_ChannelID_t channel_id = co_await channel_create_awaiter(*this, request_id);
+    if (!is_channel_id_valid(channel_id)) {
+      throw std::runtime_error("the server refused to create the channel");
+    }
+    co_return channel_id;
   }
-  // add check if channel join is ok
+  // answers the coroutine waiting in channel_create
+  void finish_request(uint32_t request_id, Protocol_ChannelID_t channel_id) {
+    auto it = pending_requests.find(request_id);
+    if (it == pending_requests.end()) {
+      return;
+    }
+    it->second.channel_id = channel_id;
+    it->second.completed = true;
+    if (it->second.continuation) {
+      it->second.continuation.resume();
+    }
+  }
+  // the channel is listed as joined at once, a JoinChannel_Error from the server takes it out again
   fan::event::task_t channel_join(Protocol_ChannelID_t channel_id, bool is_own_channel = false) {
-    co_await tcp_write(Protocol_C2S_t::JoinChannel, &channel_id, sizeof(channel_id));
     channel_info_t ci;
+    ci.join_request_id = co_await tcp_write(Protocol_C2S_t::JoinChannel, &channel_id, sizeof(channel_id));
     ci.channel_id = channel_id;
     ci.joined_at.start();
     ci.is_own = is_own_channel;
     channel_info.emplace_back(ci);
-    {
-      ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t rest;
-      rest.ChannelID = channel_info.back().channel_id;
-      rest.Flag = ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
-      co_await tcp_write(
-        ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare,
-        &rest,
-        sizeof(rest)
-      );
-    }
+    co_await send_idr_request(channel_id);
     did_just_join = !is_own_channel;
   }
 
   // leaves a channel: the server is told, and everything kept about the channel here goes
   fan::event::task_t channel_quit(Protocol_ChannelID_t channel_id) {
-    Protocol_C2S_t::QuitChannel_t rest;
-    rest.ChannelID = channel_id;
-    bool joined = false;
-    for (const auto& channel : channel_info) {
-      if (channel.channel_id.i == channel_id.i) {
-        rest.ChannelSessionID = channel.session_id;
-        joined = true;
-      }
-    }
-    if (!joined) {
+    auto* channel = find_channel(channel_id);
+    if (!channel) {
       co_return;
     }
+    Protocol_C2S_t::QuitChannel_t rest;
+    rest.ChannelID = channel_id;
+    rest.ChannelSessionID = channel->session_id;
     forget_channel(channel_id);
     co_await tcp_write(Protocol_C2S_t::QuitChannel, &rest, sizeof(rest));
   }
@@ -949,42 +917,13 @@ struct ecps_backend_t {
     return channel_id.i != (uint16_t)-1 && channel_id.i != 0;
   }
   bool is_channel_available(Protocol_ChannelID_t channel_id) const {
-    if (!is_channel_id_valid(channel_id)) {
-      return false;
-    }
-    return std::any_of(available_channels.begin(), available_channels.end(),
+    return is_channel_id_valid(channel_id) && std::any_of(available_channels.begin(), available_channels.end(),
       [channel_id](const channel_list_info_t& channel) {
         return channel.channel_id.i == channel_id.i;
       });
   }
   bool is_channel_joined(Protocol_ChannelID_t channel_id) const {
-    if (!is_channel_id_valid(channel_id)) {
-      return false;
-    }
-
-    return std::any_of(channel_info.begin(), channel_info.end(),
-      [channel_id](const channel_info_t& joined_channel) {
-        return joined_channel.channel_id.i == channel_id.i;
-      });
-  }
-
-  bool cleanup_disconnected_channels() {
-    size_t original_size = channel_info.size();
-    channel_info.erase(
-      std::remove_if(channel_info.begin(), channel_info.end(),
-        [this](const auto& joined) {
-          if (joined.joined_at.elapsed() < 5e+9) {
-            return false;
-          }
-
-          return std::none_of(available_channels.begin(), available_channels.end(),
-            [&](const auto& available) {
-              return available.channel_id.i == joined.channel_id.i;
-            });
-        }),
-      channel_info.end()
-    );
-    return channel_info.size() < original_size;
+    return is_channel_id_valid(channel_id) && find_channel(channel_id);
   }
 
   bool is_current_user_host_of_channel(Protocol_ChannelID_t channel) const {
@@ -1053,66 +992,6 @@ struct ecps_backend_t {
   }
 
 
-  fan::event::task_t handle_channel_list(ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) {
-    auto data = reinterpret_cast<const uint8_t*>(&base) + sizeof(base);
-    auto channel_list = reinterpret_cast<const Protocol_S2C_t::ChannelList_t*>(data);
-
-    backend.available_channels.clear();
-    backend.available_channels.reserve(channel_list->ChannelCount);
-
-    auto channel_info_ptr = reinterpret_cast<const Protocol_S2C_t::ChannelInfo_t*>(data + sizeof(Protocol_S2C_t::ChannelList_t));
-
-    for (uint16_t i = 0; i < channel_list->ChannelCount; ++i) {
-      ecps_backend_t::channel_list_info_t info;
-      info.channel_id = channel_info_ptr[i].ChannelID;
-      info.type = channel_info_ptr[i].Type;
-      info.user_count = channel_info_ptr[i].UserCount;
-      info.name = std::string(channel_info_ptr[i].Name, strnlen(channel_info_ptr[i].Name, 63));
-      info.is_password_protected = channel_info_ptr[i].IsPasswordProtected != 0;
-      info.host_session_id = channel_info_ptr[i].HostSessionID;
-      backend.available_channels.push_back(info);
-    }
-
-    backend.channel_list_received = true;
-#if ecps_debug_prints >= 3
-    fan::print("Received channel list with {} channels", channel_list->ChannelCount);
-#endif
-
-    co_return;
-  }
-
-  fan::event::task_t handle_channel_session_list(ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) {
-    auto data = reinterpret_cast<const uint8_t*>(&base) + sizeof(base);
-    auto session_list = reinterpret_cast<const Protocol_S2C_t::ChannelSessionList_t*>(data);
-
-    Protocol_ChannelID_t channel_id = session_list->ChannelID;
-
-    backend.channel_sessions[channel_id].clear();
-    backend.channel_sessions[channel_id].reserve(session_list->SessionCount);
-
-    auto session_info_ptr = reinterpret_cast<const Protocol_S2C_t::SessionInfo_t*>(data + sizeof(Protocol_S2C_t::ChannelSessionList_t));
-
-    for (uint16_t i = 0; i < session_list->SessionCount; ++i) {
-      ecps_backend_t::session_info_t info;
-      info.session_id = session_info_ptr[i].SessionID;
-      info.channel_session_id = session_info_ptr[i].ChannelSessionID;
-      info.account_id = session_info_ptr[i].AccountID;
-      info.username = std::string((const char*)session_info_ptr[i].Username, strnlen((const char*)session_info_ptr[i].Username, 31));
-      info.is_host = session_info_ptr[i].IsHost != 0;
-      info.joined_at = session_info_ptr[i].JoinedAt;
-      backend.channel_sessions[channel_id].push_back(info);
-    }
-#if ecps_debug_prints >= 3
-    fan::print("Received session list for channel {} with {} sessions", (int)channel_id, session_list->SessionCount);
-#endif
-
-    co_return;
-  }
-
-
-  bool is_connected() {
-    return false;
-  }
 
   std::string get_current_username() const {
     {
@@ -1138,91 +1017,57 @@ struct ecps_backend_t {
   }
 
   void set_channel_streaming(Protocol_ChannelID_t channel_id, bool streaming) {
-    if (channel_id.i == (uint16_t)-1) {
-      return;
-    }
-    for (auto& channel : channel_info) {
-      if (channel.channel_id.i == channel_id.i) {
-        channel.is_streaming = streaming;
-        channel.stream_start_timer.start();
-        return;
-      }
+    if (auto* channel = find_channel(channel_id)) {
+      channel->is_streaming = streaming;
+      channel->stream_start_timer.start();
     }
   }
   void set_channel_viewing(Protocol_ChannelID_t channel_id, bool viewing) {
-    if (channel_id.i == (uint16_t)-1) {
-      return;
-    }
-    for (auto& channel : channel_info) {
-      if (channel.channel_id.i == channel_id.i) {
-        channel.is_viewing = viewing;
-        return;
-      }
+    if (auto* channel = find_channel(channel_id)) {
+      channel->is_viewing = viewing;
     }
   }
   bool is_channel_streaming(Protocol_ChannelID_t channel_id) const {
-    if (channel_id.i == (uint16_t)-1) {
-      return false;
-    }
-    for (const auto& channel : channel_info) {
-      if (channel.channel_id.i == channel_id.i) {
-        return channel.is_streaming;
-      }
-    }
-    return false;
+    auto* channel = find_channel(channel_id);
+    return channel && channel->is_streaming;
   }
   uint64_t get_channel_stream_time(Protocol_ChannelID_t channel_id) {
-    if (channel_id.i == (uint16_t)-1) {
-      return 0;
-    }
-    for (const auto& channel : channel_info) {
-      if (channel.channel_id.i == channel_id.i) {
-        return channel.stream_start_timer.elapsed();
-      }
-    }
-    return 0;
+    auto* channel = find_channel(channel_id);
+    return channel ? channel->stream_start_timer.elapsed() : 0;
   }
   bool is_channel_viewing(Protocol_ChannelID_t channel_id) const {
-    for (const auto& channel : channel_info) {
-      if (channel.channel_id.i == channel_id.i) {
-        return channel.is_viewing;
-      }
-    }
-    return false;
+    auto* channel = find_channel(channel_id);
+    return channel && channel->is_viewing;
   }
   bool is_streaming_to_any_channel() const {
-    return std::any_of(channel_info.begin(), channel_info.end(),
-      [](const channel_info_t& ch) { return ch.is_streaming; });
+    return streaming_channel() != nullptr;
   }
   bool is_viewing_any_channel() const {
     return std::any_of(channel_info.begin(), channel_info.end(),
       [](const channel_info_t& ch) { return ch.is_viewing; });
   }
+  fan::event::task_t send_idr_request(Protocol_ChannelID_t channel_id) {
+    Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel_id;
+    rest.Flag = ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
+    co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_ViewToShare, &rest, sizeof(rest));
+  }
+  // asks the streamer of every watched channel for a keyframe
   fan::event::task_t request_idr_reset() {
-    try {
-      for (const auto& channel : channel_info) {
-        if (channel.is_viewing) {
-          Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t rest;
-          rest.ChannelID = channel.channel_id;
-          rest.Flag = ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
-          co_await tcp_write(
-            Protocol_C2S_t::Channel_ScreenShare_ViewToShare,
-            &rest,
-            sizeof(rest)
-          );
-        }
+    // the list can change while a write is suspended
+    std::vector<Protocol_ChannelID_t> viewed;
+    for (const auto& channel : channel_info) {
+      if (channel.is_viewing) {
+        viewed.push_back(channel.channel_id);
       }
     }
-    catch (const std::exception& e) {
-      fan::print("Failed to send IDR reset: " + std::string(e.what()));
+    try {
+      for (auto channel_id : viewed) {
+        co_await send_idr_request(channel_id);
+      }
     }
-    catch (fan::exception_t e) {
-      fan::print("Failed to send IDR reset: " + std::string(e.reason));
-    }
-    catch (...) {
-      fan::print("Failed to send IDR reset: unknown error");
-    }
-    co_return;
+    catch (...) {}
   }
 
   void update_host_mouse_coordinate(Protocol_ChannelID_t channel_id, const fan::vec2ui& pos);
@@ -1252,10 +1097,32 @@ struct ecps_backend_t {
     fan::time::timer stream_start_timer;
     bool is_viewing = false;
     bool is_own = false;
+    uint32_t join_request_id = (uint32_t)-1;
     fan::time::timer joined_at;
     int flag = 0;
   };
   std::vector<channel_info_t> channel_info;
+
+  channel_info_t* find_channel(Protocol_ChannelID_t channel_id) {
+    for (auto& channel : channel_info) {
+      if (channel.channel_id.i == channel_id.i) {
+        return &channel;
+      }
+    }
+    return nullptr;
+  }
+  const channel_info_t* find_channel(Protocol_ChannelID_t channel_id) const {
+    return const_cast<ecps_backend_t*>(this)->find_channel(channel_id);
+  }
+  // the channel this client streams to, there is at most one
+  const channel_info_t* streaming_channel() const {
+    for (const auto& channel : channel_info) {
+      if (channel.is_streaming) {
+        return &channel;
+      }
+    }
+    return nullptr;
+  }
 
 
   std::vector<channel_list_info_t> available_channels;

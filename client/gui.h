@@ -50,6 +50,9 @@ struct ecps_gui_t {
         fan::json ui = config["ui"];
         top_bar_compact = ui.value("compact_bar", false);
         ui_autohide = ui.value("autohide", false);
+        preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
+        hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
+        preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
       }
       if (config.contains("stream") && config["stream"].is_object()) {
         fan::json stream = config["stream"];
@@ -139,6 +142,7 @@ struct ecps_gui_t {
 
   #include "gui/stream_overlay.h"
 
+  #include "gui/capture_preview.h"
   #include "gui/capture.h"
   #include "gui/capture_linux.h"
 

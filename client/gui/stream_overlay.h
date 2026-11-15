@@ -89,12 +89,22 @@
   // Numbers about the stream and the program. Drawn only while this tab is open, read from counters the stream
   // threads already keep, and the ones that need two samples are worked out once a second. No locks the stream uses
   struct debug_sample_t {
+    // one value a second, the newest is the one before head
+    struct history_t {
+      void push(f32_t value) {
+        values[head] = value;
+        head = (head + 1) % values.size();
+      }
+      std::array<f32_t, 90> values{};
+      std::size_t head = 0;
+    };
     std::chrono::steady_clock::time_point at{};
     std::uint64_t view_packets = 0, view_bytes = 0, share_packets = 0, share_bytes = 0, decoded = 0, assembled = 0;
     f32_t view_kbps = 0, view_pps = 0, share_kbps = 0, share_pps = 0, decoded_fps = 0, assembled_fps = 0;
     std::size_t voices = 0;
     std::uint64_t share_frames = 0;
     f32_t share_fps = 0;
+    history_t view_kbps_history, decoded_fps_history, share_kbps_history, share_fps_history, ping_history;
   }debug_sample;
 
   // The rates need two samples, so they are worked out once a second from counters the stream threads already
@@ -118,6 +128,11 @@
         debug_sample.decoded_fps = (decoded - debug_sample.decoded) / seconds;
         debug_sample.assembled_fps = (assembled - debug_sample.assembled) / seconds;
         debug_sample.share_fps = (shared - debug_sample.share_frames) / seconds;
+        debug_sample.view_kbps_history.push(debug_sample.view_kbps);
+        debug_sample.decoded_fps_history.push(debug_sample.decoded_fps);
+        debug_sample.share_kbps_history.push(debug_sample.share_kbps);
+        debug_sample.share_fps_history.push(debug_sample.share_fps);
+        debug_sample.ping_history.push(ecps_backend.ping_ms);
       }
       debug_sample.view_packets = view_packets;
       debug_sample.view_bytes = view_bytes;
@@ -162,6 +177,28 @@
       return std::to_string(width) + " x " + std::to_string(height);
     };
 
+    // the last 90 seconds as a line scaled to its own highest value, nothing is drawn for a value that stayed 0
+    auto graph = [&](const char* label, const debug_sample_t::history_t& history, const char* unit) {
+      f32_t peak = *std::max_element(history.values.begin(), history.values.end());
+      if (peak <= 0.f) {
+        return;
+      }
+      fan::vec2 size(std::max(gui::get_content_region_avail().x, 120.f), gui::get_frame_height() * 2.2f);
+      fan::vec2 min = gui::get_cursor_screen_pos();
+      auto* list = gui::get_window_draw_list();
+      list->AddRectFilled(min, min + size, fan::color(1, 1, 1, 0.05f).get_gui_color(), 4.f);
+      std::size_t count = history.values.size();
+      for (std::size_t i = 0; i < count; ++i) {
+        f32_t value = history.values[(history.head + i) % count];
+        list->PathLineTo(fan::vec2(min.x + size.x * i / (count - 1), min.y + size.y - 2.f - (size.y - 4.f) * value / peak));
+      }
+      list->PathStroke(fan::color(0.45f, 0.85f, 0.55f, 1.f).get_gui_color(), 0, 1.5f);
+      std::string text = std::string(label) + "  now " + number(history.values[(history.head + count - 1) % count], 0) +
+        ", peak " + number(peak, 0) + " " + unit;
+      list->AddText(min + fan::vec2(6.f, 3.f), fan::color(1, 1, 1, 0.6f).get_gui_color(), text.c_str());
+      gui::dummy(size);
+    };
+
     if (!gui::begin_child("##debug_panel", fan::vec2(0, 0), true)) {
       gui::end_child();
       return;
@@ -177,6 +214,7 @@
     row("Session id", std::to_string((long long)ecps_backend.session_id.i));
     row("Window", size_text(engine.window.get_size().x, engine.window.get_size().y));
     row("UI frame rate", number(io.Framerate, 0) + " fps");
+    graph("Ping", debug_sample.ping_history, "ms");
 
     if (rt) {
       section_title("Capture and encoder (this computer shares)");
@@ -192,6 +230,8 @@
       row("Encode time", number(stage_times.encode.ms.load(), 2) + " ms");
       row("Sending", number(debug_sample.share_kbps, 0) + " kbit/s, " + number(debug_sample.share_pps, 0) + " packets/s (" +
         std::to_string((unsigned long long)debug_sample.share_packets) + " total)");
+      graph("Sending", debug_sample.share_kbps_history, "kbit/s");
+      graph("Frames encoded", debug_sample.share_fps_history, "fps");
 
       section_title("Decoder (this computer watches)");
       row("Picture", size_text(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y));
@@ -200,6 +240,8 @@
         std::to_string((unsigned long long)debug_sample.view_packets) + " total)");
       row("Frames put together", number(debug_sample.assembled_fps, 1) + " /s (" + std::to_string((unsigned long long)debug_sample.assembled) + " total)");
       row("Frames decoded", number(debug_sample.decoded_fps, 1) + " /s (" + std::to_string((unsigned long long)debug_sample.decoded) + " total)");
+      graph("Receiving", debug_sample.view_kbps_history, "kbit/s");
+      graph("Frames decoded", debug_sample.decoded_fps_history, "fps");
       row("Decode failures", std::to_string((unsigned long long)ecps_backend.view_decode_failed.load()));
       auto& stats = ecps_backend.view.m_stats;
       row("Frames dropped", std::to_string((unsigned long long)stats.Frame_Drop) + " of " + std::to_string((unsigned long long)stats.Frame_Total));

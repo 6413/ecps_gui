@@ -64,7 +64,6 @@ using namespace fan::graphics;
 #pragma comment(lib, "winmm.lib")
 #endif
 
-std::timed_mutex render_mutex;
 
 // frames wait here for the decoder thread, decoding on the network thread would
 // leave incoming packets sitting in the socket while a frame is being decoded
@@ -105,7 +104,6 @@ static void lower_thread_priority() {
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
 }
-std::timed_mutex task_mutex;
 
 // the sender runs on a 1 ms event loop timer, which windows runs at 15.6 ms by default.
 // behind a fullscreen game windows would also throttle the process, so opt out of that
@@ -190,8 +188,6 @@ render_thread_t* get_render_thread() {
 
 #define render_thread get_render_thread()
 
-std::mutex render_thread_mutex;
-std::condition_variable render_thread_cv;
 std::atomic<bool> render_thread_ready {false};
 
 // the encoder and decoder threads are detached and use the render thread's state and the globals.
@@ -494,23 +490,7 @@ struct render_thread_t {
       fan::print("Failed to open modern decoder");
     }
     screen_decoder.reload_codec_cb = [this]() {
-      ecps_gui.backend_queue([=]() -> fan::event::task_t {
-        try {
-          for (const auto& channel : ecps_backend.channel_info) {
-            if (channel.is_viewing) {
-              ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t rest;
-              rest.ChannelID = channel.channel_id;
-              rest.Flag = ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
-              co_await ecps_backend.tcp_write(
-                ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare,
-                &rest,
-                sizeof(rest)
-              );
-            }
-          }
-        }
-        catch (...) {}
-      });
+      ecps_gui.request_idr_reset();
     };
   }
 
@@ -524,9 +504,6 @@ struct render_thread_t {
   fan::graphics::screen_encode_t screen_encoder;
   fan::graphics::screen_decode_t screen_decoder;
 
-  std::condition_variable frame_cv;
-  std::condition_variable task_cv;
-  std::atomic<bool> has_task_work {false};
   std::atomic<bool> should_stop {false};
 
   fan::graphics::universal_image_renderer_t network_frame {{
@@ -611,21 +588,58 @@ static bool stream_to_desktop(const fan::vec2si& position, std::int32_t& x, std:
   return true;
 }
 
+// every handler reads its own message first. A failed read means the connection is going down,
+// there is nothing in the message to act on then
+#define s2c(name) __dme_get(Protocol_S2C, name) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t
+#define s2c_read(name) \
+  auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::name##_t>(); \
+  if (msg.status != 0) { \
+    co_return; \
+  }
+// messages another part of the client handles whole
+#define s2c_forward(name, call) s2c(name) { \
+    s2c_read(name); \
+    call; \
+    co_return; \
+  }
+
+static void encoder_force_keyframe() {
+  if (auto* rt = get_render_thread()) {
+    rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
+  }
+}
+
+static bool is_midi_voice_message(std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+  return status >= 0x80 && status < 0xF0 && !(data1 & 0x80) && !(data2 & 0x80);
+}
+
+static void play_midi(bool allowed, std::uint8_t status, std::uint8_t data1, std::uint8_t data2) {
+  if (!allowed) {
+    midi_host.silence();
+  }
+  // the server checks too, but this is the player's own machine
+  else if (is_midi_voice_message(status, data1, data2)) {
+    midi_host.play(status, data1, data2);
+  }
+}
+
 ecps_backend_t::ecps_backend_t() {
-  __dme_get(Protocol_S2C, KeepAlive) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+  s2c(KeepAlive) {
     co_return;
   };
 
-  __dme_get(Protocol_S2C, KeyExchange) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
+  s2c(KeyExchange) {
     auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::KeyExchange_t>();
     fan::network::crypto::x25519_key_t server_ephemeral, server_static;
     fan::network::crypto::session_keys_t keys;
-    std::memcpy(server_ephemeral.data(), msg->ServerEphemeral, server_ephemeral.size());
-    std::memcpy(server_static.data(), msg->ServerStatic, server_static.size());
-    bool ok = msg.status == 0
-      && fan::network::crypto::client_handshake(backend.handshake_private, backend.handshake_public, server_ephemeral, server_static, Protocol::CryptoContext, keys)
-      && fan::network::crypto::confirm_equal(keys.confirm, msg->Confirm)
-      && backend.verify_server_key(server_static);
+    bool ok = msg.status == 0;
+    if (ok) {
+      std::memcpy(server_ephemeral.data(), msg->ServerEphemeral, server_ephemeral.size());
+      std::memcpy(server_static.data(), msg->ServerStatic, server_static.size());
+      ok = fan::network::crypto::client_handshake(backend.handshake_private, backend.handshake_public, server_ephemeral, server_static, Protocol::CryptoContext, keys)
+        && fan::network::crypto::confirm_equal(keys.confirm, msg->Confirm)
+        && backend.verify_server_key(server_static);
+    }
     fan::network::crypto::cleanse(backend.handshake_private.data(), backend.handshake_private.size());
     if (!ok) {
       backend.mark_disconnected("server key exchange failed");
@@ -637,65 +651,67 @@ ecps_backend_t::ecps_backend_t() {
     fan::network::crypto::cleanse(&keys, sizeof(keys));
   };
 
-  __dme_get(Protocol_S2C, Response_Login) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Response_Login_t>();
+  s2c(Response_Login) {
+    s2c_read(Response_Login);
     backend.session_id = msg->SessionID;
     co_await backend.udp_write(0, ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0);
   };
 
-  __dme_get(Protocol_S2C, CreateChannel_OK) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::CreateChannel_OK_t>();
-    auto it = backend.pending_requests.find(base.ID);
-    if (it != backend.pending_requests.end()) {
-      it->second.channel_id = msg->ChannelID;
-      it->second.completed = true;
-      if (it->second.continuation) {
-        it->second.continuation.resume();
-      }
-    }
+  s2c(CreateChannel_OK) {
+    s2c_read(CreateChannel_OK);
+    backend.finish_request(base.ID, msg->ChannelID);
+    co_return;
   };
 
-  __dme_get(Protocol_S2C, JoinChannel_OK) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::JoinChannel_OK_t>();
-    for (auto& channel : channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i) {
-        channel.session_id = msg->ChannelSessionID;
+  s2c(CreateChannel_Error) {
+    s2c_read(CreateChannel_Error);
+    fan::print("the server refused to create the channel:", Protocol::JoinChannel_Error_Reason_String[(std::uint8_t)msg->Reason % 2]);
+    backend.finish_request(base.ID, Protocol_ChannelID_t((uint16_t)-1));
+    co_return;
+  };
+
+  s2c(JoinChannel_OK) {
+    s2c_read(JoinChannel_OK);
+    if (auto* channel = backend.find_channel(msg->ChannelID)) {
+      channel->session_id = msg->ChannelSessionID;
+    }
+    encoder_force_keyframe();
+    co_return;
+  };
+
+  s2c(JoinChannel_Error) {
+    s2c_read(JoinChannel_Error);
+    // the channel was added when the join was sent, it has to go again
+    for (const auto& channel : backend.channel_info) {
+      if (channel.join_request_id == base.ID) {
+        fan::print("could not join channel", (uint64_t)channel.channel_id.i, ":", Protocol::JoinChannel_Error_Reason_String[(std::uint8_t)msg->Reason % 2]);
+        backend.did_just_join = false;
+        backend.forget_channel(channel.channel_id);
         break;
       }
     }
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    if (rt) {
-      rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
-    }
+    co_return;
   };
 
-  __dme_get(Protocol_S2C, JoinChannel_Error) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::JoinChannel_Error_t>();
+  s2c(Channel_ScreenShare_ViewToShare) {
+    s2c_read(Channel_ScreenShare_ViewToShare);
+    if (backend.is_channel_streaming(msg->ChannelID) && (msg->Flag & ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR)) {
+      encoder_force_keyframe();
+    }
+    co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_ViewToShare) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_ViewToShare_t>();
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    if (!rt || !ecps_backend.is_channel_streaming(msg->ChannelID)) {
-      co_return;
-    }
-    if (msg->Flag & ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR) {
-
-      auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-      if (rt) {
-        rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
-      }
-    }
-  };
-
-  __dme_get(Protocol_S2C, ChannelList) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::ChannelList_t>();
+  s2c(ChannelList) {
+    s2c_read(ChannelList);
     uint16_t channel_count = msg->ChannelCount;
     std::vector<ecps_backend_t::channel_list_info_t> channels;
     channels.reserve(channel_count);
 
     for (uint16_t i = 0; i < channel_count; ++i) {
       auto channel_info = co_await backend.tcp_client.read<Protocol_S2C_t::ChannelInfo_t>();
+      if (channel_info.status != 0) {
+        co_return;
+      }
       ecps_backend_t::channel_list_info_t info;
       info.channel_id = channel_info->ChannelID;
       info.type = channel_info->Type;
@@ -709,8 +725,8 @@ ecps_backend_t::ecps_backend_t() {
     backend.channel_list_received = true;
   };
 
-  __dme_get(Protocol_S2C, ChannelSessionList) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::ChannelSessionList_t>();
+  s2c(ChannelSessionList) {
+    s2c_read(ChannelSessionList);
     Protocol_ChannelID_t channel_id = msg->ChannelID;
     uint16_t session_count = msg->SessionCount;
     // keep the old list until the new one is fully read, the gui draws from it between reads
@@ -719,6 +735,9 @@ ecps_backend_t::ecps_backend_t() {
 
     for (uint16_t i = 0; i < session_count; ++i) {
       auto session_info = co_await backend.tcp_client.read<Protocol_S2C_t::SessionInfo_t>();
+      if (session_info.status != 0) {
+        co_return;
+      }
       ecps_backend_t::session_info_t info;
       info.session_id = session_info->SessionID;
       info.channel_session_id = session_info->ChannelSessionID;
@@ -738,33 +757,22 @@ ecps_backend_t::ecps_backend_t() {
   };
 
   // input
-  __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewSetFlag) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewSetFlag_t>();
-
-    for (auto& channel : backend.channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i) {
-        channel.flag = msg->Flag;
-        break;
-      }
+  s2c(Channel_ScreenShare_View_InformationToViewSetFlag) {
+    s2c_read(Channel_ScreenShare_View_InformationToViewSetFlag);
+    if (auto* channel = backend.find_channel(msg->ChannelID)) {
+      channel->flag = msg->Flag;
     }
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewMouseCoordinate) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMouseCoordinate_t>();
-
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    if (rt) {
-      backend.update_host_mouse_coordinate(msg->ChannelID, msg->pos);
-    }
+  s2c(Channel_ScreenShare_View_InformationToViewMouseCoordinate) {
+    s2c_read(Channel_ScreenShare_View_InformationToViewMouseCoordinate);
+    backend.update_host_mouse_coordinate(msg->ChannelID, msg->pos);
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_View_Streamers) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_Streamers_t>();
-    if (msg.status != 0) {
-      co_return;
-    }
+  s2c(Channel_ScreenShare_View_Streamers) {
+    s2c_read(Channel_ScreenShare_View_Streamers);
     std::vector<std::uint32_t> streamers;
     for (std::uint8_t i = 0; i < msg->Count && i < 8; ++i) {
       streamers.push_back((std::uint32_t)msg->Streamers[i].i);
@@ -774,11 +782,8 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
-  __dme_get(Protocol_S2C, SetUsername_Result) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::SetUsername_Result_t>();
-    if (msg.status != 0) {
-      co_return;
-    }
+  s2c(SetUsername_Result) {
+    s2c_read(SetUsername_Result);
     std::string name((const char*)msg->Name, strnlen((const char*)msg->Name, sizeof(msg->Name)));
     {
       std::lock_guard<std::mutex> lock(backend.username_mutex);
@@ -795,51 +800,41 @@ ecps_backend_t::ecps_backend_t() {
     if (!backend.server_new.exchange(true) && !backend.desired_username.empty() && backend.desired_username != name) {
       co_await backend.send_set_username(backend.desired_username);
     }
-    co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewCursor) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewCursor_t>();
-    if (msg.status != 0) {
-      co_return;
-    }
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    if (!rt) {
-      co_return;
-    }
-    for (const auto& channel : backend.channel_info) {
-      if (channel.channel_id.i == msg->ChannelID.i && channel.is_viewing) {
-        rt->host_cursor.x.store(msg->X / 65535.f);
-        rt->host_cursor.y.store(msg->Y / 65535.f);
-        rt->host_cursor.visible.store(msg->Visible != 0);
-        rt->host_cursor.updated_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now().time_since_epoch()).count());
-        break;
-      }
+  s2c(Channel_ScreenShare_View_InformationToViewCursor) {
+    s2c_read(Channel_ScreenShare_View_InformationToViewCursor);
+    auto* rt = get_render_thread();
+    if (rt && backend.is_channel_viewing(msg->ChannelID)) {
+      rt->host_cursor.x.store(msg->X / 65535.f);
+      rt->host_cursor.y.store(msg->Y / 65535.f);
+      rt->host_cursor.visible.store(msg->Visible != 0);
+      rt->host_cursor.updated_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
     }
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseCoordinate) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseCoordinate_t>();
+  s2c(Channel_ScreenShare_Share_ApplyToHostMouseCoordinate) {
+    s2c_read(Channel_ScreenShare_Share_ApplyToHostMouseCoordinate);
     std::int32_t x, y;
-    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID) && stream_to_desktop(msg->pos, x, y)) {
+    if (host_allows_input(backend, msg->ChannelID) && stream_to_desktop(msg->pos, x, y)) {
       host_input.move(x, y);
     }
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseMotion) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseMotion_t>();
-    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID)) {
+  s2c(Channel_ScreenShare_Share_ApplyToHostMouseMotion) {
+    s2c_read(Channel_ScreenShare_Share_ApplyToHostMouseMotion);
+    if (host_allows_input(backend, msg->ChannelID)) {
       host_input.move_relative(msg->Motion.x, msg->Motion.y);
     }
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMouseButton) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMouseButton_t>();
-    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID)) {
+  s2c(Channel_ScreenShare_Share_ApplyToHostMouseButton) {
+    s2c_read(Channel_ScreenShare_Share_ApplyToHostMouseButton);
+    if (host_allows_input(backend, msg->ChannelID)) {
       std::int32_t x, y;
       if (stream_to_desktop(msg->pos, x, y)) {
         host_input.move(x, y);
@@ -849,123 +844,57 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostKeyboard) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostKeyboard_t>();
-    if (msg.status == 0 && host_allows_input(backend, msg->ChannelID) && !host_input.key(msg->Scancode, msg->State)) {
+  s2c(Channel_ScreenShare_Share_ApplyToHostKeyboard) {
+    s2c_read(Channel_ScreenShare_Share_ApplyToHostKeyboard);
+    if (host_allows_input(backend, msg->ChannelID) && !host_input.key(msg->Scancode, msg->State)) {
       ecps_print_throttled("input control: can't press scancode {:#x}", msg->Scancode);
     }
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_Share_ApplyToHostMidi) = [this](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_Share_ApplyToHostMidi_t>();
-    if (msg.status != 0) {
-      co_return;
-    }
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+  s2c(Channel_ScreenShare_Share_ApplyToHostMidi) {
+    s2c_read(Channel_ScreenShare_Share_ApplyToHostMidi);
+    auto* rt = get_render_thread();
     // the host's own setting decides, and only for a channel it hosts. No stream needed
-    bool allowed = rt && rt->ecps_gui.allow_midi && backend.is_hosting_channel(msg->ChannelID);
-    if (!allowed) {
-      midi_host.silence();
-      co_return;
-    }
-    // the server checks too, but this is the host's own machine
-    if (msg->Status >= 0x80 && msg->Status < 0xF0 && !(msg->Data1 & 0x80) && !(msg->Data2 & 0x80)) {
-      midi_host.play(msg->Status, msg->Data1, msg->Data2);
-    }
+    play_midi(rt && rt->ecps_gui.allow_midi && backend.is_hosting_channel(msg->ChannelID), msg->Status, msg->Data1, msg->Data2);
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_ScreenShare_View_InformationToViewMidi) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_ScreenShare_View_InformationToViewMidi_t>();
-    if (msg.status != 0) {
-      co_return;
-    }
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+  s2c(Channel_ScreenShare_View_InformationToViewMidi) {
+    s2c_read(Channel_ScreenShare_View_InformationToViewMidi);
+    auto* rt = get_render_thread();
     // being in the channel is enough, the host doesn't have to be streaming
-    bool allowed = rt && rt->ecps_gui.play_host_midi && backend.is_channel_joined(msg->ChannelID) &&
-      !backend.is_hosting_channel(msg->ChannelID);
-    if (!allowed) {
-      midi_host.silence();
-      co_return;
-    }
-    if (msg->Status >= 0x80 && msg->Status < 0xF0 && !(msg->Data1 & 0x80) && !(msg->Data2 & 0x80)) {
-      midi_host.play(msg->Status, msg->Data1, msg->Data2);
-    }
+    play_midi(rt && rt->ecps_gui.play_host_midi && backend.is_channel_joined(msg->ChannelID) &&
+      !backend.is_hosting_channel(msg->ChannelID), msg->Status, msg->Data1, msg->Data2);
     co_return;
   };
 
-  __dme_get(Protocol_S2C, Channel_Log_Request) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_Log_Request_t>();
-    if (msg.status == 0) {
-      co_await remote_logs.on_request(msg.data);
-    }
+  s2c(Channel_Log_Request) {
+    s2c_read(Channel_Log_Request);
+    co_await remote_logs.on_request(msg.data);
   };
-
-  __dme_get(Protocol_S2C, Channel_Log_Status) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_Log_Status_t>();
-    if (msg.status == 0) {
-      remote_logs.on_status(msg.data);
-    }
-    co_return;
-  };
-
-  __dme_get(Protocol_S2C, Channel_Log_Data) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_Log_Data_t>();
-    if (msg.status == 0) {
-      remote_logs.on_data(msg.data);
-    }
-    co_return;
-  };
+  s2c_forward(Channel_Log_Status, remote_logs.on_status(msg.data));
+  s2c_forward(Channel_Log_Data, remote_logs.on_data(msg.data));
 
   // file transfer
-  __dme_get(Protocol_S2C, Channel_File_Offer) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Offer_t>();
-    if (msg.status == 0) {
-      co_await backend.on_file_offer(msg.data);
-    }
+  s2c(Channel_File_Offer) {
+    s2c_read(Channel_File_Offer);
+    co_await backend.on_file_offer(msg.data);
   };
+  s2c(Channel_File_Chunk) {
+    s2c_read(Channel_File_Chunk);
+    co_await backend.on_file_chunk(msg.data);
+  };
+  s2c_forward(Channel_File_Response, backend.on_file_response(msg.data));
+  s2c_forward(Channel_File_Ack, backend.on_file_ack(msg.data));
+  s2c_forward(Channel_File_Cancel, backend.on_file_cancel(msg.data));
 
-  __dme_get(Protocol_S2C, Channel_File_Response) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Response_t>();
-    if (msg.status == 0) {
-      backend.on_file_response(msg.data);
-    }
-    co_return;
-  };
-
-  __dme_get(Protocol_S2C, Channel_File_Chunk) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Chunk_t>();
-    if (msg.status == 0) {
-      co_await backend.on_file_chunk(msg.data);
-    }
-  };
-
-  __dme_get(Protocol_S2C, Channel_File_Ack) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Ack_t>();
-    if (msg.status == 0) {
-      backend.on_file_ack(msg.data);
-    }
-    co_return;
-  };
-
-  __dme_get(Protocol_S2C, KickedFromChannel) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    // a channel closed (its host left) or we were put out of it
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::KickedFromChannel_t>();
-    if (msg.status == 0) {
-      backend.forget_channel(msg->ChannelID);
-    }
-    co_return;
-  };
-
-  __dme_get(Protocol_S2C, Channel_File_Cancel) = [](ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) -> fan::event::task_t {
-    auto msg = co_await backend.tcp_client.read<Protocol_S2C_t::Channel_File_Cancel_t>();
-    if (msg.status == 0) {
-      backend.on_file_cancel(msg.data);
-    }
-    co_return;
-  };
+  // a channel closed (its host left) or we were put out of it
+  s2c_forward(KickedFromChannel, backend.forget_channel(msg->ChannelID));
 }
+#undef s2c
+#undef s2c_read
+#undef s2c_forward
 
 fan::event::task_t ecps_backend_t::default_s2c_cb(ecps_backend_t& backend, const tcp::ProtocolBasePacket_t& base) {
   co_await backend.tcp_client.read(backend.Protocol_S2C.NA(base.Command)->m_DSS);
@@ -1006,25 +935,8 @@ void ecps_backend_t::view_t::RequestKeyframe() {
   }
   last_request = now;
 
-  auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-  if (rt) {
-    rt->ecps_gui.backend_queue([]() -> fan::event::task_t {
-      try {
-        for (const auto& channel : ecps_backend.channel_info) {
-          if (channel.is_viewing) {
-            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare_t rest;
-            rest.ChannelID = channel.channel_id;
-            rest.Flag = ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR;
-            co_await ecps_backend.tcp_write(
-              ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_ViewToShare,
-              &rest,
-              sizeof(rest)
-            );
-          }
-        }
-      }
-      catch (...) {}
-    });
+  if (auto* rt = get_render_thread()) {
+    rt->ecps_gui.request_idr_reset();
   }
 }
 
@@ -1089,35 +1001,8 @@ void ecps_backend_t::view_t::WriteFramePacket() {
     FramePacketSize);
 #endif
 
-  auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-  if (!rt) {
-  #if ecps_debug_prints >= 1
-    fan::print_throttled("NETWORK: No render thread available");
-  #endif
-    this->m_stats.Frame_Drop++;
-    return;
-  }
-
-  std::vector<uint8_t> frame_data;
-
-  if (FramePacketSize == this->m_data.size()) {
-    frame_data.swap(this->m_data);
-    this->m_data.clear();
-    this->m_data.resize(0x400400);
-  #if ecps_debug_prints >= 3
-    printf("NETWORK: Zero-copy swap for frame %llu\n", frame_index);
-  #endif
-  }
-  else {
-    frame_data.resize(FramePacketSize);
-    std::memcpy(frame_data.data(), this->m_data.data(), FramePacketSize);
-  #if ecps_debug_prints >= 3
-    printf("NETWORK: Memcpy for frame %llu (%u bytes)\n", frame_index, FramePacketSize);
-  #endif
-  }
-
   ecps_backend.view_frames_assembled.fetch_add(1, std::memory_order_relaxed);
-  if (!decode_queue.push(std::move(frame_data))) {
+  if (!decode_queue.push(std::vector<uint8_t>(this->m_data.begin(), this->m_data.begin() + FramePacketSize))) {
     this->m_stats.Frame_Drop++;
     RequestKeyframe();
   }
@@ -1127,8 +1012,10 @@ void ecps_backend_t::view_t::WriteFramePacket() {
 
 void ecps_backend_t::view_t::FixFrameOnComplete() {
   // the first packet carries the packet count; without it the frame can't be sized
+  m_stats.Frame_Total++;
   if (m_Possible == (uint16_t)-1) {
     m_stats.Frame_Drop++;
+    m_stats.Packet_HeadDrop++;
   #if ecps_debug_prints >= 1
     ecps_print_throttled("NETWORK: Frame dropped - first packet missing (seq {})", m_Sequence);
   #endif
@@ -1138,22 +1025,20 @@ void ecps_backend_t::view_t::FixFrameOnComplete() {
 
   UpdateMissingPackets();
   if (m_MissingPackets.empty()) {
+    // whole only because lost packets were asked for again
+    m_stats.Frame_Corrected += m_RecoveryRetries != 0;
     WriteFramePacket();
     return;
   }
 
   m_stats.Frame_Drop++;
+  m_stats.Packet_BodyDrop += m_MissingPackets.size();
 #if ecps_debug_prints >= 1
   ecps_print_throttled("NETWORK: Frame dropped - missing {} of {} packets (seq {}), first missing: {}",
     m_MissingPackets.size(), m_Possible, m_Sequence, m_MissingPackets.front());
 #endif
   m_Possible = (uint16_t)-1;
   RequestKeyframe();
-
-  auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-  if (rt && m_MissingPackets.size() > m_Possible / 4) {
-    rt->screen_decoder.reload_codec_cb();
-  }
 }
 
 uint32_t dynamic_config_t::get_target_framerate() {
@@ -1170,12 +1055,13 @@ uint64_t dynamic_config_t::get_adaptive_bitrate() {
     return rt->ecps_gui.stream_settings.bitrate_mbps * 1000000;
   }
 
-  uint64_t fps = get_target_framerate();
-  if (fps >= 144) return 25000000;
-  else if (fps >= 120) return 20000000;
-  else if (fps >= 90) return 15000000;
-  else if (fps >= 60) return 12000000;
-  else return 8000000;
+  uint64_t bitrate = pick_by_fps(25000000, 20000000, 15000000, 12000000, 8000000);
+  // the table is for 1080p. More pixels need more bits, but less than in proportion: 1440p gets 1.33x, 4k 2x
+  if (rt) {
+    f64_t pixels = (f64_t)rt->screen_encoder.config_.width * rt->screen_encoder.config_.height;
+    bitrate = (uint64_t)(bitrate * std::clamp(std::sqrt(pixels / (1920.0 * 1080.0)), 1.0, 3.0));
+  }
+  return bitrate;
 }
 
 int main() {
@@ -1233,14 +1119,13 @@ int main() {
     if (rt) {
       rt->ecps_gui.backend_queue([packet_data]() -> fan::event::task_t {
         try {
-          ecps_backend_t::ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t rest;
-          for (const auto& channel : ecps_backend.channel_info) {
-            if (channel.is_streaming) {
-              rest.ChannelID = channel.channel_id;
-              rest.ChannelSessionID = channel.session_id;
-              break;
-            }
+          auto* channel = ecps_backend.streaming_channel();
+          if (!channel) {
+            co_return;
           }
+          ecps_backend_t::ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData_t rest;
+          rest.ChannelID = channel->channel_id;
+          rest.ChannelSessionID = channel->session_id;
 
           co_await ecps_backend.udp_write(
             0,
@@ -1265,11 +1150,7 @@ int main() {
     render_thread_t render_thread_instance;
 
     render_thread_ptr.store(&render_thread_instance, std::memory_order_release);
-    {
-      std::lock_guard<std::mutex> lock(render_thread_mutex);
-      render_thread_ready.store(true, std::memory_order_release);
-    }
-    render_thread_cv.notify_all();
+    render_thread_ready.store(true, std::memory_order_release);
     render_thread_promise.set_value();
 
     while (!render_thread_instance.screen_decoder.is_initialized() &&
@@ -1278,15 +1159,11 @@ int main() {
     }
     while (!render_thread_instance.engine.should_close() && !render_thread_instance.should_stop.load()) {
       {
-        std::lock_guard<std::timed_mutex> render_lock(render_mutex);
-        {
-          std::lock_guard<std::mutex> lock(render_thread_instance.screen_decoder.mutex);
-          for (auto& i : render_thread_instance.screen_decoder.graphics_queue) {
-            i();
-          }
-          render_thread_instance.screen_decoder.graphics_queue.clear();
+        std::lock_guard<std::mutex> lock(render_thread_instance.screen_decoder.mutex);
+        for (auto& i : render_thread_instance.screen_decoder.graphics_queue) {
+          i();
         }
-
+        render_thread_instance.screen_decoder.graphics_queue.clear();
       }
 
       // uploaded outside the lock, the decoder doesn't wait for the gpu
@@ -1327,24 +1204,7 @@ int main() {
         }
       }
 
-      render_thread_instance.render([] {
-        static const char* sampler_names[] = {
-          "Nearest", "Linear", "Nearest Mipmap Nearest",
-          "Linear Mipmap Nearest", "Nearest Mipmap Linear", "Linear Mipmap Linear"
-        };
-
-        static std::uintptr_t sampler_filters[] = {
-          fan::graphics::image_filter_e::nearest,
-          fan::graphics::image_filter_e::linear,
-          fan::graphics::image_filter_e::nearest_mipmap_nearest,
-          fan::graphics::image_filter_e::linear_mipmap_nearest,
-          fan::graphics::image_filter_e::nearest_mipmap_linear,
-          fan::graphics::image_filter_e::linear_mipmap_linear
-        };
-
-        static int current_sampler = fan::graphics::image_filter_e::linear;
-
-      });
+      render_thread_instance.render([] {});
 
       std::this_thread::yield();
     }
@@ -1352,10 +1212,7 @@ int main() {
     // the workers hold a pointer to render_thread_instance, it may only go away after they did
     stop_worker_threads();
     render_thread_ptr.store(nullptr, std::memory_order_release);
-    {
-      std::lock_guard<std::mutex> lock(render_thread_mutex);
-      render_thread_ready.store(false, std::memory_order_release);
-    }
+    render_thread_ready.store(false, std::memory_order_release);
   });
 
   render_thread_future.wait();
@@ -1436,6 +1293,14 @@ int main() {
         }
         ++stats.read_ok;
         stage_times.capture.add(rt->screen_encoder.capture_time_ns);
+      #if defined(_WIN32)
+        if (rt->ecps_gui.capture_preview_due()) {
+          auto& encoder = rt->screen_encoder;
+          const std::uint8_t* frame = encoder.screen_buffer ? encoder.screen_buffer : encoder.mdscr.map_for_cpu(true);
+          auto& geometry = encoder.mdscr.Geometry;
+          rt->ecps_gui.store_capture_preview_now(frame, geometry.Resolution.x, geometry.Resolution.y, geometry.LineSize);
+        }
+      #endif
       #if !defined(_WIN32)
         {
           auto& geometry = rt->screen_encoder.mdscr.Geometry;
@@ -1522,7 +1387,8 @@ int main() {
             }
 
             auto f = &flow.FrameList[flow.FrameList.NewNodeLast()];
-            f->vec.assign(encoded_data, encoded_data + encoded_size);
+            // current_packet_ is only read above, its buffer goes to the queue without a copy
+            f->vec = std::move(rt->screen_encoder.current_packet_.data);
             f->SentOffset = 0;
             f->keyframe = is_keyframe;
           }
@@ -1544,6 +1410,20 @@ int main() {
           close_capture(rt->screen_encoder);
         }
         first_frame = true;
+      #if defined(_WIN32)
+        if (rt->ecps_gui.capture_preview_wanted.load()) {
+          // not sharing, but the preview shows: frames are captured (with the HDR tone mapping) only for it, not
+          // encoded, so it shows what would go out
+          auto& encoder = rt->screen_encoder;
+          if (encoder.screen_read() && rt->ecps_gui.capture_preview_due()) {
+            const std::uint8_t* frame = encoder.screen_buffer ? encoder.screen_buffer : encoder.mdscr.map_for_cpu(true);
+            auto& geometry = encoder.mdscr.Geometry;
+            rt->ecps_gui.store_capture_preview_now(frame, geometry.Resolution.x, geometry.Resolution.y, geometry.LineSize);
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(std::max(5, 500 / std::clamp(rt->ecps_gui.preview_fps, 1, 60))));
+          continue;
+        }
+      #endif
       #if !defined(_WIN32)
         if (rt->ecps_gui.capture_reselect.exchange(false)) {
           close_capture(rt->screen_encoder);
@@ -1623,20 +1503,9 @@ int main() {
         std::lock_guard<std::mutex> task_lock(rt->ecps_gui.task_queue_mutex);
         if (!rt->ecps_gui.task_queue.empty()) {
           size_t batch_size = std::min(rt->ecps_gui.task_queue.size(), MAX_BATCH_SIZE);
-          local_tasks.reserve(batch_size);
-
-          for (size_t i = 0; i < batch_size; ++i) {
-            local_tasks.emplace_back(std::move(rt->ecps_gui.task_queue[i]));
-          }
-
-          rt->ecps_gui.task_queue.erase(
-            rt->ecps_gui.task_queue.begin(),
-            rt->ecps_gui.task_queue.begin() + batch_size
-          );
-
-          if (rt->ecps_gui.task_queue.empty()) {
-            rt->has_task_work.store(false);
-          }
+          auto first = rt->ecps_gui.task_queue.begin();
+          local_tasks.assign(std::make_move_iterator(first), std::make_move_iterator(first + batch_size));
+          rt->ecps_gui.task_queue.erase(first, first + batch_size);
         }
       }
 
@@ -1653,27 +1522,8 @@ int main() {
     }
   });
 
-  auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-  while (!rt) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    rt = render_thread_ptr.load(std::memory_order_acquire);
-  }
-
-  rt = render_thread_ptr.load(std::memory_order_acquire);
-  while (rt && rt->should_stop.load()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    rt = render_thread_ptr.load(std::memory_order_acquire);
-    continue;
-  }
-
   auto network_task = fan::event::every(1, []() -> fan::event::runv_t<bool> {
     co_await audio_share.send_pending();
-    /*if (ecps_backend.cleanup_disconnected_channels()) {
-      auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-      if (rt) {
-        rt->ecps_gui.window_handler.main_tab = 0;
-      }
-    }*/
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
     if (rt) {
       if (rt->ecps_gui.window_handler.auto_refresh) {
@@ -1785,8 +1635,6 @@ int main() {
   auto* rt_final = render_thread_ptr.load(std::memory_order_acquire);
   if (rt_final) {
     rt_final->should_stop.store(true);
-    rt_final->frame_cv.notify_all();
-    rt_final->task_cv.notify_all();
   }
   // static destructors run in exit, nothing may still be using the globals by then
   stop_worker_threads();

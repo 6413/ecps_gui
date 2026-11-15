@@ -46,7 +46,6 @@
   std::unordered_map<std::uintptr_t, capture_thumb_t> capture_thumbs;
   std::vector<std::uint8_t> thumb_pixels;
   bool capture_picker_requested = false;
-  bool preview_own_share = false;
   std::chrono::steady_clock::time_point capture_picker_opened_at;
 
   // thumb_pixels gets the picture as rgba, at most max_width wide. handle 0 is the screen
@@ -87,28 +86,57 @@
       HGDIOBJ old = SelectObject(dc, bitmap);
       if (handle == 0) {
         SetStretchBltMode(dc, HALFTONE);
+        SetBrushOrgEx(dc, 0, 0, nullptr);
         ok = StretchBlt(dc, 0, 0, bitmap_width, bitmap_height, screen_dc, 0, 0, width, height, SRCCOPY) != 0;
       }
       else {
         ok = PrintWindow(hwnd, dc, 2) != 0;
       }
+      const std::uint8_t* source = (const std::uint8_t*)bits;
+      int out_width = bitmap_width;
+      int out_height = bitmap_height;
+      HDC small_dc = nullptr;
+      HBITMAP small_bitmap = nullptr;
+      HGDIOBJ small_old = nullptr;
+      // a window comes at full size, it is shrunk the same smooth way the screen is (averaging, not skipping pixels)
+      if (ok && bitmap_width > max_width) {
+        out_width = max_width;
+        out_height = std::max(1, bitmap_height * out_width / bitmap_width);
+        BITMAPINFO small_info = info;
+        small_info.bmiHeader.biWidth = out_width;
+        small_info.bmiHeader.biHeight = -out_height;
+        void* small_bits = nullptr;
+        small_dc = CreateCompatibleDC(screen_dc);
+        small_bitmap = small_dc ? CreateDIBSection(small_dc, &small_info, DIB_RGB_COLORS, &small_bits, nullptr, 0) : nullptr;
+        ok = small_bitmap != nullptr;
+        if (ok) {
+          small_old = SelectObject(small_dc, small_bitmap);
+          SetStretchBltMode(small_dc, HALFTONE);
+          SetBrushOrgEx(small_dc, 0, 0, nullptr);
+          ok = StretchBlt(small_dc, 0, 0, out_width, out_height, dc, 0, 0, bitmap_width, bitmap_height, SRCCOPY) != 0;
+          source = (const std::uint8_t*)small_bits;
+        }
+      }
       if (ok) {
-        int step = handle == 0 ? 1 : std::max(1, bitmap_width / max_width);
-        int out_width = bitmap_width / step;
-        int out_height = bitmap_height / step;
         thumb_pixels.resize((std::size_t)out_width * out_height * 4);
-        const std::uint8_t* source = (const std::uint8_t*)bits;
-        for (int y = 0; y < out_height; ++y) {
-          for (int x = 0; x < out_width; ++x) {
-            const std::uint8_t* from = source + ((std::size_t)y * step * bitmap_width + (std::size_t)x * step) * 4;
-            std::uint8_t* to = &thumb_pixels[((std::size_t)y * out_width + x) * 4];
-            to[0] = srgb_to_linear[from[2]];
-            to[1] = srgb_to_linear[from[1]];
-            to[2] = srgb_to_linear[from[0]];
-            to[3] = 255;
-          }
+        for (std::size_t i = 0, count = (std::size_t)out_width * out_height; i < count; ++i) {
+          const std::uint8_t* from = source + i * 4;
+          std::uint8_t* to = &thumb_pixels[i * 4];
+          to[0] = srgb_to_linear[from[2]];
+          to[1] = srgb_to_linear[from[1]];
+          to[2] = srgb_to_linear[from[0]];
+          to[3] = 255;
         }
         size = fan::vec2i(out_width, out_height);
+      }
+      if (small_dc) {
+        if (small_old) {
+          SelectObject(small_dc, small_old);
+        }
+        if (small_bitmap) {
+          DeleteObject(small_bitmap);
+        }
+        DeleteDC(small_dc);
       }
       SelectObject(dc, old);
       DeleteObject(bitmap);
@@ -122,7 +150,10 @@
 
   // takes a new picture when the old one is older than interval_ms. budget counts the pictures left for this frame
   capture_thumb_t& refresh_thumb(std::uintptr_t handle, int max_width, int interval_ms, int& budget) {
-    auto& thumb = capture_thumbs[handle];
+    return refresh_thumb_into(capture_thumbs[handle], handle, max_width, interval_ms, budget);
+  }
+
+  capture_thumb_t& refresh_thumb_into(capture_thumb_t& thumb, std::uintptr_t handle, int max_width, int interval_ms, int& budget) {
     auto now = std::chrono::steady_clock::now();
     if (budget <= 0 || (thumb.loaded && now - thumb.at < std::chrono::milliseconds(interval_ms))) {
       return thumb;
@@ -133,10 +164,10 @@
     if (grab_window_rgba(handle, max_width, size)) {
       fan::image::info_t image_info {thumb_pixels.data(), size, 4};
       if (thumb.image.valid()) {
-        thumb.image.reload(image_info);
+        thumb.image.reload(image_info, smooth_image());
       }
       else {
-        thumb.image = engine.image_load(image_info);
+        thumb.image = engine.image_load(image_info, smooth_image());
       }
       thumb.size = fan::vec2((f32_t)size.x, (f32_t)size.y);
       thumb.loaded = true;
@@ -162,14 +193,23 @@
   }
 
   // what is shared (a window, or the screen for 0), as it looks now
-  void draw_share_preview(std::uintptr_t handle, f32_t max_width) {
-    int budget = 1;
-    auto& thumb = refresh_thumb(handle, 480, 300, budget);
-    if (!thumb.loaded) {
+  capture_thumb_t share_preview_thumb;
+  std::uintptr_t share_preview_handle = (std::uintptr_t)-1;
+
+  void draw_share_preview(std::uintptr_t handle, f32_t) {
+    if (capture_preview_recent() && draw_captured_preview()) {
       return;
     }
-    f32_t width = std::min(max_width, thumb.size.x);
-    gui::image(thumb.image, fan::vec2(width, width * thumb.size.y / thumb.size.x));
+    if (handle != share_preview_handle) {
+      share_preview_handle = handle;
+      share_preview_thumb.loaded = false; // another source, take a new picture now
+    }
+    int budget = 1;
+    auto& thumb = refresh_thumb_into(share_preview_thumb, handle, 1920,
+      1000 / std::clamp(preview_fps, 1, 60), budget);
+    if (thumb.loaded) {
+      draw_resizable_preview(thumb.image, thumb.size);
+    }
   }
 
   // The window picker: every window as a small picture, click one to share it, like the share pickers of chat apps
@@ -303,8 +343,23 @@
       }
     });
     render_capture_picker(capture, rt);
+    // an HDR screen is tone mapped for sharing, how bright that comes out is up to taste and differs per game
+    capture.hdr_exposure = hdr_exposure;
+    if (capture.hdr_active.load()) {
+      settings_row("HDR light", [&] {
+        gui::slider("##hdr_brightness", &hdr_exposure, 0.2f, 2.f, gui::slider_flags_always_clamp);
+        if (gui::is_item_hovered()) {
+          gui::set_tooltip("How bright the HDR screen looks to viewers");
+        }
+        if (gui::is_item_deactivated_after_edit()) {
+          save_ui_config();
+        }
+      });
+    }
     settings_switch("Preview", &preview_own_share, "See what you share");
+    capture_preview_wanted = preview_own_share;
     if (preview_own_share) {
+      render_preview_fps();
       draw_share_preview(current, gui::get_content_region_avail().x);
     }
   }

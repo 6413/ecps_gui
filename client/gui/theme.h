@@ -162,6 +162,52 @@
     gui::pop_style_var(theme_vars_pushed);
   }
 
+  // ---- the share preview's size ------------------------------------------------------------------------------
+  // a part of the panel's width, changed with the handle at the picture's lower right corner and kept in the config
+  f32_t preview_fraction = 1.f;
+  bool preview_resizing = false;
+
+  void draw_resizable_preview(fan::graphics::image_t image, fan::vec2 image_size) {
+    if (image_size.x <= 0 || image_size.y <= 0) {
+      return;
+    }
+    f32_t avail = std::max(gui::get_content_region_avail().x, 1.f);
+    f32_t width = std::max(80.f, avail * preview_fraction);
+    fan::vec2 size(width, width * image_size.y / image_size.x);
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::image(image, size);
+
+    f32_t grip = 16.f;
+    gui::set_cursor_screen_pos(at + size - fan::vec2(grip, grip));
+    gui::invisible_button("##preview_resize", fan::vec2(grip, grip));
+    bool hovered = gui::is_item_hovered();
+    bool active = gui::is_item_active();
+    if (hovered || active) {
+      gui::set_mouse_cursor(gui::mouse_cursor_resize_nwse);
+    }
+    if (hovered && !active) {
+      gui::set_tooltip("Drag to resize");
+    }
+    if (active) {
+      preview_fraction = std::clamp(preview_fraction + gui::get_io().MouseDelta.x / avail, 0.25f, 1.f);
+    }
+    else if (preview_resizing) {
+      save_ui_config();
+    }
+    preview_resizing = active;
+
+    // three short diagonal lines in the corner, on a dark patch so they show on any picture
+    auto* list = gui::get_window_draw_list();
+    fan::vec2 corner = at + size;
+    list->AddTriangleFilled(corner - fan::vec2(grip, 0), corner, corner - fan::vec2(0, grip), 0xa0000000u);
+    std::uint32_t ink = hovered || active ? accent_hover_u32 : 0xffd0d0d0u;
+    for (f32_t d : {4.f, 8.f, 12.f}) {
+      list->AddLine(corner - fan::vec2(d, 2.f), corner - fan::vec2(2.f, d), ink, 1.5f);
+    }
+    gui::set_cursor_screen_pos(fan::vec2(at.x, at.y + size.y + gui::get_style().ItemSpacing.y));
+    gui::dummy(fan::vec2(0, 0));
+  }
+
   // ---- building blocks of the settings panel ---------------------------------------------------------------
   // (the gui is drawn in linear colour and shown through sRGB: small numbers here look much lighter on screen)
 
