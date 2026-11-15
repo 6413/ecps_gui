@@ -10,6 +10,9 @@
   // where the stream picture was drawn last frame, the glows leave it alone
   bool picture_shown = false;
   fan::vec2 picture_min, picture_max;
+  // the stream view's area, black behind the picture
+  bool stream_area_shown = false;
+  fan::vec2 stream_area_min, stream_area_max;
 
   void setup_backdrop() {
     // the window's background colour shows as a dark gray. Whether the clear colour is taken as linear or as it
@@ -84,6 +87,24 @@
         gui::push_clip_rect(band[0], band[1], false);
         draw_glows();
         gui::pop_clip_rect();
+      }
+    }
+
+    // the stream view is black around the picture (the picture itself is drawn under the gui, it is left uncovered)
+    if (stream_area_shown) {
+      auto* list = gui::get_window_draw_list();
+      fan::vec2 a = stream_area_min;
+      fan::vec2 b = stream_area_max;
+      if (!picture_shown) {
+        list->AddRectFilled(a, b, 0xff000000u);
+      }
+      else {
+        fan::vec2 p0(std::clamp(picture_min.x, a.x, b.x), std::clamp(picture_min.y, a.y, b.y));
+        fan::vec2 p1(std::clamp(picture_max.x, a.x, b.x), std::clamp(picture_max.y, a.y, b.y));
+        list->AddRectFilled(a, fan::vec2(b.x, p0.y), 0xff000000u);
+        list->AddRectFilled(fan::vec2(a.x, p1.y), b, 0xff000000u);
+        list->AddRectFilled(fan::vec2(a.x, p0.y), fan::vec2(p0.x, p1.y), 0xff000000u);
+        list->AddRectFilled(fan::vec2(p1.x, p0.y), fan::vec2(b.x, p1.y), 0xff000000u);
       }
     }
     gui::set_cursor_screen_pos(origin);

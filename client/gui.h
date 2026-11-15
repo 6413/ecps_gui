@@ -53,6 +53,8 @@ struct ecps_gui_t {
         preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
         hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
         preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
+        encode_on_gpu = ui.value("encode_on_gpu", true);
+        decode_on_gpu = ui.value("decode_on_gpu", true);
       }
       if (config.contains("stream") && config["stream"].is_object()) {
         fan::json stream = config["stream"];
@@ -145,6 +147,7 @@ struct ecps_gui_t {
   #include "gui/capture_preview.h"
   #include "gui/capture.h"
   #include "gui/capture_linux.h"
+  #include "gui/video_choice.h"
 
   #include "gui/session.h"
 
@@ -157,6 +160,7 @@ struct ecps_gui_t {
   #include "gui/input.h"
 
   void render() {
+    apply_video_choice_once();
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
     if (is_fullscreen_stream) {
       render_fullscreen_stream();
@@ -185,6 +189,7 @@ struct ecps_gui_t {
       gui::window_flags_no_scroll_with_mouse);
     render_backdrop();
     picture_shown = false; // the stream view sets it again when it draws the picture
+    stream_area_shown = false;
 
     if (window_handler.p_open) {
       window_handler.render();

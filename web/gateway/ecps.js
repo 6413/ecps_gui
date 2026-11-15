@@ -41,8 +41,11 @@ export const S2C = {
   FileCancel: 22
 }
 // body size of every S2C command, in protocol order
-// (the file messages are Offer 178, Response 43, Chunk 4132, Ack 18, Cancel 10)
-const S2C_SIZE = [0, 80, 8, 7, 1, 7, 1, 3, 2, 4, 3, 10, 10, 10, 12, 5, 4, 4, 178, 43, 4132, 18, 10]
+// (the file messages are Offer 178, Response 43, Chunk 4132, Ack 18, Cancel 10). The ones after them are read
+// and skipped, a newer server sends them to every client: host MIDI 5, view MIDI 5, host cursor 7, the session's
+// name 33 (also sent once after login), the channel's streamers 35, and the log messages 7, 7 and 1041
+const S2C_SIZE = [0, 80, 8, 7, 1, 7, 1, 3, 2, 4, 3, 10, 10, 10, 12, 5, 4, 4, 178, 43, 4132, 18, 10,
+  5, 5, 7, 33, 35, 7, 7, 1041]
 
 const UDP_C2S = { KeepAlive: 0, HostStreamData: 1, HostAudioData: 3 }
 const UDP_S2C = { KeepAlive: 0, ViewStreamData: 1, ViewAudioData: 3 }

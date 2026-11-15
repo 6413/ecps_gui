@@ -62,7 +62,47 @@ using namespace fan::graphics;
 #if defined(_WIN32)
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
+#else
+#include <dlfcn.h>
 #endif
+
+// The graphics card encoders this computer can run, as "NVIDIA (h264_nvenc)": the encoder is in the bundled FFmpeg
+// and the driver library it needs loads. Opening a real encoder for each would take long at start
+static std::vector<std::string> find_gpu_encoders(const std::vector<std::string>& compiled) {
+  std::vector<std::string> usable;
+  auto has = [&](const char* name) { return std::find(compiled.begin(), compiled.end(), name) != compiled.end(); };
+#if defined(_WIN32)
+  auto loads = [](const wchar_t* dll) {
+    HMODULE module = LoadLibraryExW(dll, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (module) {
+      FreeLibrary(module);
+    }
+    return module != nullptr;
+  };
+  if (has("h264_nvenc") && loads(L"nvEncodeAPI64.dll")) {
+    usable.push_back("NVIDIA (h264_nvenc)");
+  }
+  if (has("h264_amf") && loads(L"amfrt64.dll")) {
+    usable.push_back("AMD (h264_amf)");
+  }
+#else
+  auto loads = [](const char* library) {
+    void* handle = dlopen(library, RTLD_LAZY | RTLD_LOCAL);
+    if (handle) {
+      dlclose(handle);
+    }
+    return handle != nullptr;
+  };
+  if (has("h264_nvenc") && loads("libnvidia-encode.so.1")) {
+    usable.push_back("NVIDIA (h264_nvenc)");
+  }
+  std::error_code error;
+  if (has("h264_vaapi") && std::filesystem::exists("/dev/dri/renderD128", error)) {
+    usable.push_back("VAAPI (h264_vaapi)");
+  }
+#endif
+  return usable;
+}
 
 
 // frames wait here for the decoder thread, decoding on the network thread would

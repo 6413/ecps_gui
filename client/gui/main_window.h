@@ -562,6 +562,9 @@
         This->render_play_audio_controls();
       }
 
+      // ---- on the graphics card or on the processor
+      This->render_video_choice();
+
       // ---- how it shows
       settings_section("DISPLAY");
       settings_switch("Stats over the picture", &This->show_stream_stats,
@@ -842,6 +845,9 @@
       gui::set_next_window_bg_alpha(0);
       gui::begin_child(id, size, false);
       gui::set_viewport(engine.orthographic_render_view);
+      This->stream_area_min = gui::get_window_pos();
+      This->stream_area_max = This->stream_area_min + size;
+      This->stream_area_shown = true;
 
       if (auto rt = get_render_thread(); rt) {
         fan::vec2 stream_area = gui::get_content_region_avail();

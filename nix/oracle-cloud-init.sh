@@ -65,6 +65,8 @@ systemctl restart ecps-server 2>/dev/null || true
 echo "done: \$(readlink -f /opt/ecps/server)"
 EOF
 chmod +x /usr/local/bin/ecps-server-update
+# sudo on Oracle Linux does not look in /usr/local/bin, a link where it does look
+ln -sf /usr/local/bin/ecps-server-update /usr/bin/ecps-server-update
 
 # ---- a user for the server, and its folder (ecps_server.key, the server's identity, is kept there)
 id ecps >/dev/null 2>&1 || useradd --system --home-dir /var/lib/ecps --create-home --shell /usr/sbin/nologin ecps

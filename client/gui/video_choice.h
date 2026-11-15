@@ -1,0 +1,136 @@
+// Part of ecps_gui_t, included inside the struct by gui.h: encode and decode on the GPU or on the CPU.
+  // ---- GPU or CPU ---------------------------------------------------------------------------------------------
+  // Two simple choices in the settings panel. GPU encoding picks the first video encoder of the graphics card that
+  // works (NVIDIA, AMD, or VAAPI on Linux), CPU encoding is x264. GPU decoding uses the card's video decoder when
+  // one opens, CPU decoding is libavcodec's own. Which GPU encoders this computer can run is found once: the
+  // encoder has to be in the bundled FFmpeg and its driver library has to load
+
+  bool encode_on_gpu = true;
+  bool decode_on_gpu = true;
+  bool video_choice_applied = false;
+  std::vector<std::string> gpu_encoder_list;
+  bool gpu_encoders_found = false;
+
+  const std::vector<std::string>& gpu_encoders() {
+    if (!gpu_encoders_found) {
+      gpu_encoders_found = true;
+      gpu_encoder_list = find_gpu_encoders(fan::graphics::screen_encode_t::get_encoders());
+    }
+    return gpu_encoder_list;
+  }
+
+  // the choices take effect: the encoder and the decoder open again with them
+  void apply_encode_choice() {
+    if (auto* rt = get_render_thread()) {
+      rt->screen_encoder.config_.software_only = !encode_on_gpu;
+      {
+        std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+        rt->screen_encoder.update_flags |= codec_update_e::codec;
+      }
+      rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
+    }
+  }
+
+  void apply_decode_choice() {
+    if (auto* rt = get_render_thread()) {
+      rt->screen_decoder.decoder_.allow_hardware_ = decode_on_gpu;
+      {
+        std::lock_guard<std::mutex> lock(rt->screen_decoder.mutex);
+        rt->screen_decoder.update_flags |= codec_update_e::codec;
+      }
+      request_idr_reset();
+    }
+  }
+
+  // the saved choices, before anything is encoded or decoded (both open their codec on first use)
+  void apply_video_choice_once() {
+    if (video_choice_applied) {
+      return;
+    }
+    if (auto* rt = get_render_thread()) {
+      rt->screen_encoder.config_.software_only = !encode_on_gpu;
+      rt->screen_decoder.decoder_.allow_hardware_ = decode_on_gpu;
+      video_choice_applied = true;
+    }
+  }
+
+  // two choices side by side, the chosen one blue. The first can be unusable: dimmed, with the reason on hover
+  static bool choice_pair(const char* id, bool* first, const char* first_label, const char* second_label,
+    bool first_usable, const char* first_unusable_reason) {
+    f32_t width = (gui::get_content_region_avail().x - 4.f) * 0.5f;
+    bool changed = false;
+    gui::push_id(id);
+    for (int i = 0; i < 2; ++i) {
+      bool selected = (i == 0) == *first;
+      bool usable = i == 1 || first_usable;
+      if (i == 1) {
+        gui::same_line(0, 4.f);
+      }
+      if (selected) {
+        gui::push_style_color(gui::col_button, fan::color(0.06f, 0.13f, 0.38f, 1.f));
+        gui::push_style_color(gui::col_button_hovered, fan::color(0.08f, 0.18f, 0.5f, 1.f));
+      }
+      gui::begin_disabled(!usable);
+      if (gui::button(i == 0 ? first_label : second_label, fan::vec2(width, 0)) && !selected) {
+        *first = i == 0;
+        changed = true;
+      }
+      gui::end_disabled();
+      if (!usable && gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
+        gui::set_tooltip(first_unusable_reason);
+      }
+      if (selected) {
+        gui::pop_style_color(2);
+      }
+    }
+    gui::pop_id();
+    return changed;
+  }
+
+  static std::string join_names(const std::vector<std::string>& names) {
+    std::string text;
+    for (const auto& name : names) {
+      text += (text.empty() ? "" : ", ") + name;
+    }
+    return text;
+  }
+
+  void render_video_choice() {
+    auto* rt = get_render_thread();
+    if (!rt) {
+      return;
+    }
+    settings_section("VIDEO");
+
+    // GPU stays choosable even when none was found: the check can miss a driver, and the encoder falls back to the
+    // CPU by itself when no GPU encoder opens. "In use" tells what it got
+    const auto& gpus = gpu_encoders();
+    bool gpu_encoding_found = !gpus.empty();
+    settings_row("Encode on", [&] {
+      if (choice_pair("##encode_on", &encode_on_gpu, "GPU", "CPU", true, "")) {
+        apply_encode_choice();
+        save_ui_config();
+      }
+    });
+    if (ecps_backend.is_streaming_to_any_channel()) {
+      text_wrapped_disabled("In use: " + rt->screen_encoder.encoder_.get_codec_name());
+    }
+    else {
+      text_wrapped_disabled(gpu_encoding_found ? "GPU: " + join_names(gpus) : std::string("GPU: none found, it will use the CPU (x264)"));
+    }
+
+    auto& decoder = rt->screen_decoder.decoder_;
+    bool gpu_decoding_usable = decoder.has_hardware_support();
+    settings_row("Decode on", [&] {
+      if (choice_pair("##decode_on", &decode_on_gpu, "GPU", "CPU", gpu_decoding_usable, "No GPU video decoder opened on this computer")) {
+        apply_decode_choice();
+        save_ui_config();
+      }
+    });
+    if (ecps_backend.is_viewing_any_channel()) {
+      text_wrapped_disabled("In use: " + std::string(decoder.using_hardware_ ? decoder.get_hardware_type_string() : "CPU"));
+    }
+    else {
+      text_wrapped_disabled(gpu_decoding_usable ? "GPU: available" : "GPU: none found, CPU is used");
+    }
+  }

@@ -9,6 +9,8 @@
     ui["preview_size"] = preview_fraction;
     ui["hdr_brightness"] = hdr_exposure;
     ui["preview_fps"] = preview_fps;
+    ui["encode_on_gpu"] = encode_on_gpu;
+    ui["decode_on_gpu"] = decode_on_gpu;
     write_to_config("ui", ui);
   }
 

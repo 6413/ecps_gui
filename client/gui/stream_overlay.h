@@ -17,7 +17,8 @@
     auto* rt = get_render_thread();
     bool has_picture = rt && rt->network_frame.get_image() != engine.default_texture;
     auto now = std::chrono::steady_clock::now();
-    if (mouse_near || !has_picture) {
+    // also while the settings panel is open: its gear is down there, the bar stays to close it again
+    if (mouse_near || !has_picture || stream_settings.show_in_stream_view) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
