@@ -176,6 +176,8 @@ struct Channel_ScreenShare_Data_t{
   /* sessions that say so themselves when they start and stop. The others (older clients) count as sharing
      while video comes from them */
   std::vector<uint32_t> Announced;
+  std::vector<uint32_t> Voice;
+  std::vector<uint32_t> VoiceAware;
 };
 
 struct pile_t{

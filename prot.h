@@ -177,6 +177,10 @@ struct ProtocolUDP {
       Protocol_ChannelID_t ChannelID;
       Protocol_ChannelSessionID_t ChannelSessionID;
     );
+    __dme(Channel_Voice_Data,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+    );
   }C2S;
   struct S2C_t : __dme_inherit(S2C_t) {
     __dme(KeepAlive);
@@ -188,6 +192,10 @@ struct ProtocolUDP {
     );
     __dme(Channel_ScreenShare_View_AudioData,
       Protocol_ChannelID_t ChannelID;
+    );
+    __dme(Channel_Voice_Data,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_SessionID_t SessionID;
     );
   }S2C;
 };
@@ -379,6 +387,11 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     uint8_t Stream; // 1 stdout, 2 stderr
     uint16_t Size;
     uint8_t Data[1024];
+  );
+  __dme(Channel_Voice_Join,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_ChannelSessionID_t ChannelSessionID;
+    uint8_t Joined;
   );
 }Protocol_C2S;
 
@@ -594,6 +607,11 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     uint8_t Stream; // 1 stdout, 2 stderr
     uint16_t Size;
     uint8_t Data[1024];
+  );
+  __dme(Channel_Voice_Members,
+    Protocol_ChannelID_t ChannelID;
+    uint8_t Count;
+    Protocol_SessionID_t Members[16];
   );
 }Protocol_S2C;
 

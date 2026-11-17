@@ -131,6 +131,74 @@ void ScreenShare_BroadcastStreamers(Protocol_ChannelID_t ChannelID){
   }
 }
 
+void ScreenShare_SendVoiceMembers(Protocol_ChannelID_t ChannelID, const Protocol_SessionID_t *Only = nullptr){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  Protocol_S2C_t::Channel_Voice_Members_t Message{};
+  Message.ChannelID = ChannelID;
+  for(uint32_t Member : ChannelData->Voice){
+    Message.Members[Message.Count++] = Protocol_SessionID_t((Protocol_SessionID_t::Type)Member);
+  }
+  if(Only != nullptr){
+    Session::WriteCommand(*Only, 0, Protocol_S2C_t::Channel_Voice_Members, Message);
+    return;
+  }
+  for(uint32_t Aware : ChannelData->VoiceAware){
+    Session::WriteCommand(Protocol_SessionID_t((Protocol_SessionID_t::Type)Aware), 0, Protocol_S2C_t::Channel_Voice_Members, Message);
+  }
+}
+
+void ScreenShare_SetVoice(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, bool Joined){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  uint32_t Id = (uint32_t)SessionID.i;
+  if(std::find(ChannelData->VoiceAware.begin(), ChannelData->VoiceAware.end(), Id) == ChannelData->VoiceAware.end()){
+    ChannelData->VoiceAware.push_back(Id);
+  }
+  auto It = std::find(ChannelData->Voice.begin(), ChannelData->Voice.end(), Id);
+  if(Joined && It == ChannelData->Voice.end() && ChannelData->Voice.size() < 16){
+    ChannelData->Voice.push_back(Id);
+  }
+  else if(!Joined && It != ChannelData->Voice.end()){
+    ChannelData->Voice.erase(It);
+  }
+  else{
+    ScreenShare_SendVoiceMembers(ChannelID, &SessionID);
+    return;
+  }
+  ScreenShare_SendVoiceMembers(ChannelID);
+}
+
+void ScreenShare_VoiceQuit(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  uint32_t Id = (uint32_t)SessionID.i;
+  std::erase(ChannelData->VoiceAware, Id);
+  if(std::erase(ChannelData->Voice, Id) != 0){
+    ScreenShare_SendVoiceMembers(ChannelID);
+  }
+}
+
+void ScreenShare_VoicePacket(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t Source, void *Data, IO_size_t DataSize){
+  if(DataSize < sizeof(ScreenShare_AudioHeader_t) + 1){
+    auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+    bool InVoice = std::find(ChannelData->Voice.begin(), ChannelData->Voice.end(), (uint32_t)Source.i) != ChannelData->Voice.end();
+    ScreenShare_SetVoice(ChannelID, Source, InVoice);
+    return;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  if(std::find(ChannelData->Voice.begin(), ChannelData->Voice.end(), (uint32_t)Source.i) == ChannelData->Voice.end()){
+    return;
+  }
+  ProtocolUDP::S2C_t::Channel_Voice_Data_t cd;
+  cd.ChannelID = ChannelID;
+  cd.SessionID = Source;
+  for(uint32_t Member : ChannelData->Voice){
+    Protocol_SessionID_t Target((Protocol_SessionID_t::Type)Member);
+    if(Target == Source || g_pile->SessionList[Target].UDP.Address.ip == 0){
+      continue;
+    }
+    UDP_send(Target, 0, ProtocolUDP::S2C_t::Channel_Voice_Data, cd, Data, DataSize);
+  }
+}
+
 /* Explicit is a session saying it started or stopped. Without it (video simply arriving) a session is added once
    and only a close or a stop from it takes it away again, so a few late packets can't bring back a stopped one */
 void ScreenShare_SetStreamer(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, bool Streaming, bool Explicit){
@@ -162,6 +230,7 @@ void ScreenShare_SetStreamer(Protocol_ChannelID_t ChannelID, Protocol_SessionID_
     ChannelData->Streams.erase(Id);
     if(!Explicit){
       std::erase(ChannelData->Announced, Id);
+      ScreenShare_VoiceQuit(ChannelID, SessionID);
     }
   }
   if(Changed){

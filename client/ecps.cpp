@@ -388,6 +388,256 @@ struct audio_share_t {
   std::chrono::steady_clock::time_point last_discord_check;
 }audio_share;
 
+struct voice_chat_t {
+  using header_t = ecps_backend_t::ScreenShare_AudioHeader_t;
+  using channel_id_t = ecps_backend_t::Protocol_ChannelID_t;
+
+  struct settings_t {
+    std::string device;
+    f32_t gain = 1.f;
+    f32_t threshold = 0.02f;
+    f32_t volume = 1.f;
+    std::string output_device;
+    bool echo_cancel = false;
+  };
+  struct speaker_t {
+    fan::audio::opus_decoder_t decoder;
+    std::uint16_t expected_sequence = 0;
+    bool receiving = false;
+    std::int64_t heard_at_ms = 0;
+  };
+
+  static std::int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+
+  void join(channel_id_t channel_id) {
+    wanted_channel.store(channel_id.i);
+    capture_failed = false;
+  }
+  void leave() {
+    wanted_channel.store(-1);
+  }
+  bool is_wanted(channel_id_t channel_id) const {
+    return wanted_channel.load() == (int)channel_id.i;
+  }
+  bool is_active() const {
+    return active_channel.load() != -1;
+  }
+
+  void update(const settings_t& settings) {
+    int wanted = wanted_channel.load();
+    if (wanted != -1 && !ecps_backend.is_channel_joined(channel_id_t((uint16_t)wanted))) {
+      leave();
+    }
+    bool want_capture = is_active() && !muted.load();
+    if (settings.device != device) {
+      capture_failed = false;
+    }
+    if (capture.is_running() && (!want_capture || settings.device != device)) {
+      capture.stop();
+    }
+    device = settings.device;
+    capture.set_gain(settings.gain);
+    threshold.store(settings.threshold, std::memory_order_relaxed);
+    if (want_capture && !capture.is_running() && !capture_failed) {
+      capture_failed = !encoder.open(voice_bitrate, true) ||
+        !capture.start([this](const f32_t* pcm, std::uint32_t) { encode(pcm); }, device);
+      if (capture_failed) {
+        fan::print("voice chat:", capture.get_error().empty() ? std::string("the encoder failed to start") : capture.get_error());
+      }
+    }
+
+    if (!capture.is_running()) {
+      level.store(0.f, std::memory_order_relaxed);
+    }
+    echo_cancel.store(settings.echo_cancel, std::memory_order_relaxed);
+
+    bool listening = is_active() && !deafened.load();
+    if (mixer_opening.valid()) {
+      if (mixer_opening.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        mixer_open = mixer_opening.get();
+        mixer_failed = !mixer_open;
+        if (mixer_failed) {
+          fan::print("voice chat: playback failed to start");
+        }
+      }
+    }
+    else if (mixer_open && (!listening || settings.output_device != output_device)) {
+      mixer.stop();
+      mixer_open = false;
+    }
+    else if (listening && !mixer_open && (!mixer_failed || settings.output_device != output_device)) {
+      output_device = settings.output_device;
+      mixer.played = [this](const f32_t* pcm, std::uint32_t frame_count) {
+        if (echo_cancel.load(std::memory_order_relaxed)) {
+          echo.push_reference(pcm, frame_count);
+        }
+      };
+      mixer_opening = std::async(std::launch::async, [this] { return mixer.start(output_device); });
+    }
+    mixer_failed = mixer_failed && listening;
+    mixer.set_volume(settings.volume);
+
+    std::lock_guard<std::mutex> lock(speakers_mutex);
+    auto members = listening ? ecps_backend.voice_members_of(channel_id_t((uint16_t)active_channel.load())) : std::vector<std::uint32_t>();
+    std::erase_if(speakers, [&](const auto& speaker) {
+      bool gone = std::find(members.begin(), members.end(), speaker.first) == members.end();
+      if (gone) {
+        mixer.remove(speaker.first);
+      }
+      return gone;
+    });
+  }
+
+  bool has_work() const {
+    return active_channel.load() != -1 || wanted_channel.load() != -1 ||
+      std::chrono::steady_clock::now() - ecps_backend.voice_probed_at >= std::chrono::seconds(2);
+  }
+
+  void encode(const f32_t* input) {
+    std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> pcm;
+    std::copy(input, input + pcm.size(), pcm.begin());
+    bool cancel = echo_cancel.load(std::memory_order_relaxed);
+    if (cancel && !echo_running) {
+      echo.reset();
+    }
+    echo_running = cancel;
+    if (cancel) {
+      echo.process(pcm.data(), fan::audio::stream_frame_size);
+    }
+    f32_t peak = 0.f;
+    for (f32_t sample : pcm) {
+      peak = std::max(peak, std::abs(sample));
+    }
+    level.store(peak, std::memory_order_relaxed);
+    std::int64_t now = now_ms();
+    if (peak >= threshold.load(std::memory_order_relaxed)) {
+      loud_at_ms.store(now, std::memory_order_relaxed);
+    }
+    if (now - loud_at_ms.load(std::memory_order_relaxed) > hold_ms) {
+      return;
+    }
+    std::vector<std::uint8_t> packet(sizeof(header_t) + fan::audio::stream_max_packet);
+    ((header_t*)packet.data())->Sequence = send_sequence++;
+    std::int32_t size = encoder.encode(pcm.data(), packet.data() + sizeof(header_t), fan::audio::stream_max_packet);
+    if (size <= 0) {
+      return;
+    }
+    packet.resize(sizeof(header_t) + size);
+    std::lock_guard<std::mutex> lock(outgoing_mutex);
+    if (outgoing.size() < max_outgoing) {
+      outgoing.push_back(std::move(packet));
+    }
+  }
+
+  fan::event::task_t sync() {
+    int wanted = wanted_channel.load();
+    int active = active_channel.load();
+    try {
+      if (active != -1 && !ecps_backend.voice_known(channel_id_t((uint16_t)active))) {
+        active_channel.store(active = -1);
+      }
+      if (active != -1 && active != wanted) {
+        active_channel.store(-1);
+        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)active), false);
+        active = -1;
+      }
+      if (wanted != -1 && active == -1 && ecps_backend.voice_known(channel_id_t((uint16_t)wanted))) {
+        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)wanted), true);
+        active_channel.store(active = wanted);
+      }
+      co_await ecps_backend.probe_voice();
+    }
+    catch (...) {}
+
+    std::vector<std::vector<std::uint8_t>> packets;
+    {
+      std::lock_guard<std::mutex> lock(outgoing_mutex);
+      packets.swap(outgoing);
+    }
+    for (const auto& packet : packets) {
+      if (active != -1) {
+        co_await ecps_backend.write_voice(channel_id_t((uint16_t)active), packet.data(), packet.size());
+      }
+    }
+  }
+
+  void on_packet(channel_id_t channel_id, std::uint32_t session, const std::uint8_t* data, std::uintptr_t size) {
+    if (active_channel.load() != (int)channel_id.i || deafened.load()) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(speakers_mutex);
+    auto& speaker = speakers[session];
+    if (!speaker) {
+      speaker = std::make_unique<speaker_t>();
+      speaker->decoder.open();
+    }
+    if (!speaker->decoder.state) {
+      return;
+    }
+    std::uint16_t sequence = ((const header_t*)data)->Sequence;
+    std::int16_t gap = (std::int16_t)(sequence - speaker->expected_sequence);
+    if (speaker->receiving && gap < 0 && gap > -max_late) {
+      return;
+    }
+    std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> pcm;
+    for (std::int16_t i = 0; speaker->receiving && i < std::min<std::int16_t>(gap, max_concealed); ++i) {
+      if (speaker->decoder.conceal(pcm.data()) > 0) {
+        mixer.push(session, pcm.data(), fan::audio::stream_frame_size);
+      }
+    }
+    speaker->receiving = true;
+    speaker->expected_sequence = sequence + 1;
+    std::int32_t frames = speaker->decoder.decode(data + sizeof(header_t), (std::int32_t)(size - sizeof(header_t)), pcm.data());
+    if (frames > 0) {
+      mixer.push(session, pcm.data(), frames);
+      speaker->heard_at_ms = now_ms();
+    }
+  }
+
+  bool is_talking(std::uint32_t session) {
+    std::int64_t now = now_ms();
+    if (session == (std::uint32_t)ecps_backend.session_id.i) {
+      return capture.is_running() && now - loud_at_ms.load(std::memory_order_relaxed) <= hold_ms;
+    }
+    std::lock_guard<std::mutex> lock(speakers_mutex);
+    auto it = speakers.find(session);
+    return it != speakers.end() && now - it->second->heard_at_ms <= hold_ms;
+  }
+
+  static constexpr std::int32_t voice_bitrate = 40000;
+  static constexpr std::int64_t hold_ms = 400;
+  static constexpr std::size_t max_outgoing = 25;
+  static constexpr std::int16_t max_concealed = 3;
+  static constexpr std::int16_t max_late = 50;
+
+  fan::audio::microphone_capture_t capture;
+  fan::audio::opus_encoder_t encoder;
+  fan::audio::echo_canceller_t echo;
+  fan::audio::live_mixer_t mixer;
+  std::future<bool> mixer_opening;
+  bool mixer_open = false;
+  bool mixer_failed = false;
+  std::string output_device;
+  std::atomic<bool> echo_cancel = false;
+  bool echo_running = false;
+  std::atomic<f32_t> level = 0.f;
+  std::mutex outgoing_mutex;
+  std::vector<std::vector<std::uint8_t>> outgoing;
+  std::uint16_t send_sequence = 0;
+  std::mutex speakers_mutex;
+  std::unordered_map<std::uint32_t, std::unique_ptr<speaker_t>> speakers;
+  std::atomic<int> wanted_channel = -1;
+  std::atomic<int> active_channel = -1;
+  std::atomic<bool> muted = false;
+  std::atomic<bool> deafened = false;
+  std::atomic<f32_t> threshold = 0.02f;
+  std::atomic<std::int64_t> loud_at_ms = 0;
+  std::string device;
+  bool capture_failed = false;
+}voice_chat;
+
 // MIDI a viewer plays is synthesized here, so the host needs no MIDI device or loopback driver.
 // The pump thread only runs while there is sound, a note-off that never arrives dies out by itself.
 struct midi_host_t {
@@ -587,7 +837,7 @@ static fan::vec2i capture_origin(render_thread_t* rt) {
 // the host's own setting decides, the server can't turn control on by itself
 static bool host_allows_input(ecps_backend_t& backend, auto channel_id) {
   auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-  bool allowed = rt && rt->ecps_gui.stream_settings.input_control != 0 &&
+  bool allowed = rt && rt->ecps_gui.stream_settings.input_control != 0 && !rt->ecps_gui.stream_settings.share_camera &&
     std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& channel) {
       return channel.is_streaming && channel.channel_id.i == channel_id.i;
     });
@@ -714,6 +964,7 @@ ecps_backend_t::ecps_backend_t() {
     s2c_read(JoinChannel_OK);
     if (auto* channel = backend.find_channel(msg->ChannelID)) {
       channel->session_id = msg->ChannelSessionID;
+      channel->join_confirmed = true;
     }
     encoder_force_keyframe();
     co_return;
@@ -808,6 +1059,20 @@ ecps_backend_t::ecps_backend_t() {
   s2c(Channel_ScreenShare_View_InformationToViewMouseCoordinate) {
     s2c_read(Channel_ScreenShare_View_InformationToViewMouseCoordinate);
     backend.update_host_mouse_coordinate(msg->ChannelID, msg->pos);
+    co_return;
+  };
+
+  s2c(Channel_Voice_Members) {
+    s2c_read(Channel_Voice_Members);
+    if (!backend.is_channel_joined(msg->ChannelID)) {
+      co_return;
+    }
+    std::vector<std::uint32_t> members;
+    for (std::uint8_t i = 0; i < msg->Count && i < 16; ++i) {
+      members.push_back((std::uint32_t)msg->Members[i].i);
+    }
+    std::lock_guard<std::mutex> lock(backend.voice_mutex);
+    backend.voice_members[(std::uint32_t)msg->ChannelID.i] = std::move(members);
     co_return;
   };
 
@@ -1115,6 +1380,9 @@ int main() {
   };
   ecps_backend.audio_cb = [](const uint8_t* data, uintptr_t size) {
     audio_share.on_packet(data, size);
+  };
+  ecps_backend.voice_cb = [](ecps_backend_t::Protocol_ChannelID_t channel_id, std::uint32_t session, const uint8_t* data, uintptr_t size) {
+    voice_chat.on_packet(channel_id, session, data, size);
   };
   ecps_backend.login_fail_cb = [](fan::exception_t e) {
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
@@ -1445,7 +1713,7 @@ int main() {
           // A source chosen with "Choose..." is kept, it is what the next share uses
           was_streaming = false;
         #if !defined(_WIN32)
-          if (!rt->ecps_gui.capture_armed.load())
+          if (!rt->ecps_gui.capture_armed.load() || rt->screen_encoder.is_camera())
         #endif
           close_capture(rt->screen_encoder);
         }
@@ -1468,7 +1736,7 @@ int main() {
         if (rt->ecps_gui.capture_reselect.exchange(false)) {
           close_capture(rt->screen_encoder);
         }
-        if (rt->ecps_gui.capture_armed.load()) {
+        if (rt->ecps_gui.capture_armed.load() && !rt->screen_encoder.is_camera()) {
           // chosen but not shared yet: the first read opens the share dialog, the frames after it only feed the preview
           if (rt->screen_encoder.screen_read()) {
             auto& geometry = rt->screen_encoder.mdscr.Geometry;
@@ -1478,6 +1746,10 @@ int main() {
           continue;
         }
       #endif
+        rt->screen_encoder.poll_source();
+        if (rt->screen_encoder.is_camera()) {
+          close_capture(rt->screen_encoder);
+        }
         const int fps = std::max<int>(rt->screen_encoder.config_.frame_rate, 1);
         const auto sleep_time = std::chrono::microseconds(1000000 / fps);
         std::this_thread::sleep_for(sleep_time);
@@ -1564,6 +1836,9 @@ int main() {
 
   auto network_task = fan::event::every(1, []() -> fan::event::runv_t<bool> {
     co_await audio_share.send_pending();
+    if (voice_chat.has_work()) {
+      co_await voice_chat.sync();
+    }
     auto* rt = render_thread_ptr.load(std::memory_order_acquire);
     if (rt) {
       if (rt->ecps_gui.window_handler.auto_refresh) {

@@ -639,6 +639,16 @@ struct ecps_backend_t {
             audio_cb(&packet[offset], size - offset);
           }
         }
+        else if (bp.Command == ProtocolUDP::S2C_t::Channel_Voice_Data) {
+          uintptr_t offset = sizeof(bp) + sizeof(ProtocolUDP::S2C_t::Channel_Voice_Data_t);
+          if (size <= offset + sizeof(ScreenShare_AudioHeader_t)) {
+            co_return;
+          }
+          auto command_data = (ProtocolUDP::S2C_t::Channel_Voice_Data_t*)&packet[sizeof(bp)];
+          if (voice_cb) {
+            voice_cb(command_data->ChannelID, (std::uint32_t)command_data->SessionID.i, &packet[offset], size - offset);
+          }
+        }
         else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest) {
           uintptr_t offset = sizeof(bp) + sizeof(ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest_t);
           if (size < offset + sizeof(recovery_request_t)) {
@@ -690,6 +700,10 @@ struct ecps_backend_t {
     session_id = {};
     udp_crypto = {};
     server_new = false;
+    {
+      std::lock_guard<std::mutex> lock(voice_mutex);
+      voice_members.clear();
+    }
     {
       std::lock_guard<std::mutex> lock(username_mutex);
       my_username.clear();
@@ -909,8 +923,61 @@ struct ecps_backend_t {
     channel_info.erase(std::remove_if(channel_info.begin(), channel_info.end(),
       [&](const auto& channel) { return channel.channel_id.i == channel_id.i; }), channel_info.end());
     channel_sessions.erase(channel_id.i);
+    {
+      std::lock_guard<std::mutex> lock(voice_mutex);
+      voice_members.erase((std::uint32_t)channel_id.i);
+    }
     std::lock_guard<std::mutex> lock(streamers_mutex);
     channel_streamers.erase((std::uint32_t)channel_id.i);
+  }
+
+  mutable std::mutex voice_mutex;
+  std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> voice_members;
+  std::chrono::steady_clock::time_point voice_probed_at{};
+  std::function<void(Protocol_ChannelID_t channel_id, std::uint32_t session, const uint8_t* data, uintptr_t size)> voice_cb;
+
+  bool voice_known(Protocol_ChannelID_t channel_id) const {
+    std::lock_guard<std::mutex> lock(voice_mutex);
+    return voice_members.contains((std::uint32_t)channel_id.i);
+  }
+  std::vector<std::uint32_t> voice_members_of(Protocol_ChannelID_t channel_id) const {
+    std::lock_guard<std::mutex> lock(voice_mutex);
+    auto it = voice_members.find((std::uint32_t)channel_id.i);
+    return it == voice_members.end() ? std::vector<std::uint32_t>() : it->second;
+  }
+  fan::event::task_t write_voice(Protocol_ChannelID_t channel_id, const void* data, uintptr_t size) {
+    if (auto* channel = find_channel(channel_id)) {
+      ProtocolUDP::C2S_t::Channel_Voice_Data_t rest;
+      rest.ChannelID = channel->channel_id;
+      rest.ChannelSessionID = channel->session_id;
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Voice_Data, rest, data, size);
+    }
+  }
+  fan::event::task_t send_voice_join(Protocol_ChannelID_t channel_id, bool joined) {
+    if (auto* channel = find_channel(channel_id)) {
+      Protocol_C2S_t::Channel_Voice_Join_t rest;
+      rest.ChannelID = channel->channel_id;
+      rest.ChannelSessionID = channel->session_id;
+      rest.Joined = joined;
+      co_await tcp_write(Protocol_C2S_t::Channel_Voice_Join, &rest, sizeof(rest));
+    }
+  }
+  fan::event::task_t probe_voice() {
+    auto now = std::chrono::steady_clock::now();
+    if (now - voice_probed_at < std::chrono::seconds(2)) {
+      co_return;
+    }
+    voice_probed_at = now;
+    std::vector<Protocol_ChannelID_t> unanswered;
+    for (auto& channel : channel_info) {
+      if (channel.join_confirmed && channel.voice_probes < 5 && !voice_known(channel.channel_id)) {
+        ++channel.voice_probes;
+        unanswered.push_back(channel.channel_id);
+      }
+    }
+    for (auto channel_id : unanswered) {
+      co_await write_voice(channel_id, nullptr, 0);
+    }
   }
 
   bool is_channel_id_valid(Protocol_ChannelID_t channel_id) const {
@@ -1098,6 +1165,8 @@ struct ecps_backend_t {
     bool is_viewing = false;
     bool is_own = false;
     uint32_t join_request_id = (uint32_t)-1;
+    bool join_confirmed = false;
+    uint8_t voice_probes = 0;
     fan::time::timer joined_at;
     int flag = 0;
   };

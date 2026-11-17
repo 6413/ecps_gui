@@ -10,6 +10,7 @@ const SHARE_CODECS = ['avc1.640033', 'avc1.4d0033', 'avc1.42e033', 'avc1.42e01f'
 
 export const canView = () => typeof VideoDecoder != 'undefined'
 export const canShare = () => typeof VideoEncoder != 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
+export const canShareCamera = () => typeof VideoEncoder != 'undefined' && !!navigator.mediaDevices?.getUserMedia
 
 function findSps(data) {
   for (let i = 0; i + 7 < data.length; ++i) {

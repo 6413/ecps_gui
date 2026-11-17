@@ -121,6 +121,156 @@
     }
   }
 
+  bool render_voice_switch(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    if (!ecps_backend.voice_known(channel_id)) {
+      return false;
+    }
+    bool in_voice = voice_chat.is_wanted(channel_id);
+    if (settings_switch("Voice chat", &in_voice, "Talk with the others in this channel. Your microphone stays off until you join")) {
+      if (in_voice) {
+        voice_chat.join(channel_id);
+      }
+      else {
+        voice_chat.leave();
+      }
+    }
+    if (!in_voice) {
+      return false;
+    }
+    bool muted = voice_chat.muted.load();
+    if (settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
+      voice_chat.muted.store(muted);
+    }
+    bool deafened = voice_chat.deafened.load();
+    if (settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
+      voice_chat.deafened.store(deafened);
+    }
+    return true;
+  }
+
+  void render_audio_popup() {
+    if (audio_popup_requested) {
+      audio_popup_requested = false;
+      gui::set_next_window_pos(fan::vec2(24.f, 70.f));
+      gui::open_popup("Voice chat audio");
+    }
+    gui::set_next_window_size(fan::vec2(380.f, 0.f));
+    if (!gui::begin_popup("Voice chat audio")) {
+      return;
+    }
+    gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
+    gui::push_style_var(gui::style_var_frame_rounding, 5.f);
+    settings_section("VOICE CHAT");
+    render_voice_settings();
+    gui::pop_style_var(2);
+    gui::end_popup();
+  }
+
+  void render_voice_settings() {
+    if (!voice_chat.is_active()) {
+      text_wrapped_disabled("Join the voice chat of a channel to try these. The switch is above the channel's member list");
+    }
+    bool echo_cancel = stream_settings.voice_echo_cancel;
+    if (settings_switch("Echo cancellation", &echo_cancel,
+      "For speakers: keeps the others from hearing themselves back through your microphone. Not needed with headphones, and adds a little delay")) {
+      stream_settings.voice_echo_cancel = echo_cancel;
+      save_voice_settings();
+    }
+    if (voice_chat.capture_failed) {
+      text_wrapped_disabled("Could not open the microphone");
+    }
+    if (voice_chat.mixer_failed) {
+      text_wrapped_disabled("Could not open the speakers");
+    }
+
+    if (voice_inputs.empty()) {
+      voice_inputs = fan::audio::get_microphone_devices();
+      voice_outputs = fan::audio::get_loopback_devices();
+    }
+    auto device_row = [&](const char* label, const char* id, int index, std::string& chosen) {
+      auto& devices = index == 0 ? voice_inputs : voice_outputs;
+      std::string preview = chosen.empty() ? devices.front().name : "(unplugged device)";
+      for (const auto& device : devices) {
+        if (!chosen.empty() && device.id == chosen) {
+          preview = device.name;
+        }
+      }
+      bool open = false;
+      settings_row(label, [&] {
+        open = gui::begin_combo(id, preview);
+        if (open) {
+          if (!voice_combo_open[index]) {
+            devices = index == 0 ? fan::audio::get_microphone_devices() : fan::audio::get_loopback_devices();
+          }
+          for (const auto& device : devices) {
+            gui::push_id(device.id.empty() ? std::string("default") : device.id);
+            if (gui::selectable(device.name, device.id == chosen)) {
+              chosen = device.id;
+              save_voice_settings();
+            }
+            gui::pop_id();
+          }
+          gui::end_combo();
+        }
+      });
+      voice_combo_open[index] = open;
+    };
+    device_row("Microphone", "##voice_device", 0, stream_settings.voice_device);
+    device_row("Speakers", "##voice_output", 1, stream_settings.voice_output);
+
+    auto saved_slider = [&](const char* label, const char* id, f32_t* value, f32_t max) {
+      settings_row(label, [&] {
+        gui::slider(id, value, 0.f, max, gui::slider_flags_always_clamp);
+        if (gui::is_item_deactivated_after_edit()) {
+          save_voice_settings();
+        }
+      });
+    };
+    saved_slider("Mic level", "##voice_gain", &stream_settings.voice_gain, 2.f);
+    saved_slider("Send above", "##voice_threshold", &stream_settings.voice_threshold, voice_meter_range);
+
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    f32_t width = gui::get_content_region_avail().x;
+    f32_t level = std::min(voice_chat.level.load() / voice_meter_range, 1.f);
+    f32_t mark = width * std::min(stream_settings.voice_threshold / voice_meter_range, 1.f);
+    bool sending = voice_chat.is_talking((std::uint32_t)ecps_backend.session_id.i);
+    auto* list = gui::get_window_draw_list();
+    list->AddRectFilled(at, at + fan::vec2(width, 4.f), 0x30ffffffu, 2.f);
+    list->AddRectFilled(at, at + fan::vec2(width * level, 4.f), sending ? 0xff60d060u : 0xff909090u, 2.f);
+    list->AddRectFilled(at + fan::vec2(mark - 1.f, -2.f), at + fan::vec2(mark + 1.f, 6.f), 0xffffffffu);
+    gui::dummy(fan::vec2(width, 6.f));
+
+    saved_slider("Volume", "##voice_volume", &stream_settings.voice_volume, 2.f);
+  }
+
+  voice_chat_t::settings_t get_voice_settings() {
+    return {
+      .device = stream_settings.voice_device,
+      .gain = stream_settings.voice_gain,
+      .threshold = stream_settings.voice_threshold,
+      .volume = stream_settings.voice_volume,
+      .output_device = stream_settings.voice_output,
+      .echo_cancel = stream_settings.voice_echo_cancel,
+    };
+  }
+
+  void save_voice_settings() {
+    fan::json voice;
+    voice["device"] = stream_settings.voice_device;
+    voice["output"] = stream_settings.voice_output;
+    voice["gain"] = stream_settings.voice_gain;
+    voice["threshold"] = stream_settings.voice_threshold;
+    voice["volume"] = stream_settings.voice_volume;
+    voice["echo_cancel"] = stream_settings.voice_echo_cancel;
+    write_to_config("voice", voice);
+  }
+
+  static constexpr f32_t voice_meter_range = 0.5f;
+  bool audio_popup_requested = false;
+  std::vector<fan::audio::loopback_device_t> voice_inputs;
+  std::vector<fan::audio::loopback_device_t> voice_outputs;
+  bool voice_combo_open[2] = {};
+
   void save_audio_settings() {
     fan::json audio;
     audio["share"] = stream_settings.share_audio;

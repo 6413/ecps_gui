@@ -84,6 +84,16 @@
     bool play_audio = true;
     f32_t audio_volume = 1.f;
 
+    std::string voice_device;
+    f32_t voice_gain = 1.f;
+    f32_t voice_threshold = 0.02f;
+    f32_t voice_volume = 1.f;
+    std::string voice_output;
+    bool voice_echo_cancel = false;
+
+    bool share_camera = false;
+    std::string camera_device;
+
     struct audio_device_settings_t {
       f32_t gain = 1.f;
       bool exclude_discord = true;

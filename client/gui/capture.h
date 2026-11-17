@@ -392,7 +392,7 @@
     f32_t nx = (f32_t)(info.ptScreenPos.x - origin.x) / (f32_t)geometry.Resolution.x;
     f32_t ny = (f32_t)(info.ptScreenPos.y - origin.y) / (f32_t)geometry.Resolution.y;
     // showing for the system, and on the screen that is being shared
-    bool visible = (info.flags & CURSOR_SHOWING) != 0 && info.hCursor != nullptr &&
+    bool visible = !stream_settings.share_camera && (info.flags & CURSOR_SHOWING) != 0 && info.hCursor != nullptr &&
       nx >= 0.f && nx <= 1.f && ny >= 0.f && ny <= 1.f;
     std::uint16_t x = (std::uint16_t)(std::clamp(nx, 0.f, 1.f) * 65535.f);
     std::uint16_t y = (std::uint16_t)(std::clamp(ny, 0.f, 1.f) * 65535.f);

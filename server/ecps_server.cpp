@@ -533,6 +533,19 @@ static bool udp_read_one() {
     ScreenShare_AudioPacket(RestPacket->ChannelID, SessionID, AudioData, size - (AudioData - buffer));
     break;
   }
+  case ProtocolUDP::C2S_t::Channel_Voice_Data: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_Voice_Data_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    auto VoiceData = (uint8_t*)&RestPacket[1];
+    ScreenShare_VoicePacket(RestPacket->ChannelID, SessionID, VoiceData, size - (VoiceData - buffer));
+    break;
+  }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {
     auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest_t*)&BasePacket[1];
     IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);

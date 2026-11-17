@@ -538,6 +538,16 @@ case Protocol_C2S_t::Channel_ScreenShare_Share_StreamState:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_Voice_Join:{
+  auto Request = (Protocol_C2S_t::Channel_Voice_Join_t *)RestPacket;
+
+  if(IsAnythingInvalid(SessionID, Request->ChannelID, Request->ChannelSessionID) == true){
+    goto StateDone_gt;
+  }
+  ScreenShare_SetVoice(Request->ChannelID, SessionID, Request->Joined != 0);
+
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::Channel_ScreenShare_View_Watch:{
   auto Request = (Protocol_C2S_t::Channel_ScreenShare_View_Watch_t *)RestPacket;
 

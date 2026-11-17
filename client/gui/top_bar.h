@@ -175,6 +175,7 @@
     render_nav_bar(gui::get_window_pos(), gui::get_window_size().x, bar_height, 0.f, 1.f, false);
     gui::set_cursor_pos(fan::vec2(gui::get_style().WindowPadding.x, bar_height + 10.f));
     render_about_popup();
+    render_audio_popup();
   }
 
   void render_nav_bar(fan::vec2 area_pos, f32_t width, f32_t bar_height, f32_t y_offset, f32_t fade, bool overlay) {
@@ -270,6 +271,16 @@
     }
     if (gui::is_item_hovered()) {
       gui::set_tooltip("About and updates");
+    }
+
+    right -= 16.f + gui::calc_text_size("Audio").x;
+    gui::set_cursor_pos(fan::vec2(right, text_y));
+    gui::text(fan::color(0.7f, 0.7f, 0.75f, 1.f), "Audio");
+    if (gui::is_item_clicked()) {
+      audio_popup_requested = true;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Voice chat microphone, speakers and echo cancellation");
     }
 
     // something about updates that needs a look, or just happened

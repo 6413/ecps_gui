@@ -70,6 +70,18 @@ struct ecps_gui_t {
     updater.collect_state = [this]() { return collect_resume_state(); };
     load_resume_state();
 
+    if (config.contains("camera")) {
+      stream_settings.camera_device = config["camera"].value("device", std::string());
+    }
+    if (config.contains("voice")) {
+      fan::json voice = config["voice"];
+      stream_settings.voice_device = voice.value("device", std::string());
+      stream_settings.voice_gain = voice.value("gain", stream_settings.voice_gain);
+      stream_settings.voice_threshold = voice.value("threshold", stream_settings.voice_threshold);
+      stream_settings.voice_volume = voice.value("volume", stream_settings.voice_volume);
+      stream_settings.voice_output = voice.value("output", std::string());
+      stream_settings.voice_echo_cancel = voice.value("echo_cancel", stream_settings.voice_echo_cancel);
+    }
     if (config.contains("audio")) {
       fan::json audio = config["audio"];
       stream_settings.share_audio = audio.value("share", stream_settings.share_audio);
@@ -147,6 +159,7 @@ struct ecps_gui_t {
   #include "gui/capture_preview.h"
   #include "gui/capture.h"
   #include "gui/capture_linux.h"
+  #include "gui/camera.h"
   #include "gui/video_choice.h"
 
   #include "gui/session.h"
@@ -162,6 +175,10 @@ struct ecps_gui_t {
   void render() {
     apply_video_choice_once();
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
+    voice_chat.update(get_voice_settings());
+    if (auto* rt = get_render_thread()) {
+      rt->screen_encoder.set_camera(stream_settings.share_camera, stream_settings.camera_device);
+    }
     if (is_fullscreen_stream) {
       render_fullscreen_stream();
       update_input_control();

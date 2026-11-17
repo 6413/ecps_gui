@@ -1,11 +1,12 @@
 <script>
   import { onDestroy } from 'svelte'
-  import { Viewer, Sharer, canView, canShare } from './media.js'
+  import { Viewer, Sharer, canView, canShare, canShareCamera } from './media.js'
   import { MseViewer, canUseMse } from './mse.js'
   import { AudioPlayer, AudioSharer, FRAME_AUDIO, canPlayAudio, canShareAudio } from './audio.js'
   import { Transfers, FRAME_FILE, canStreamToDisk, formatBytes, isFinished, memoryLimit } from './transfers.js'
 
   const shareSupported = canShare()
+  const cameraSupported = canShareCamera()
   // ?mse forces the fallback player on browsers that have WebCodecs
   const useMse = canUseMse() && (!canView() || new URLSearchParams(location.search).has('mse'))
   const viewSupported = canView() || useMse
@@ -272,14 +273,19 @@
     freshSession()
   }
 
-  async function share() {
+  async function share(camera) {
     error = ''
     try {
-      pendingStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 60 },
-        audio: shareAudio && audioShareSupported,
-        systemAudio: 'include'
-      })
+      pendingStream = camera
+        ? await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+          audio: shareAudio && audioShareSupported
+        })
+        : await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 60 },
+          audio: shareAudio && audioShareSupported,
+          systemAudio: 'include'
+        })
     }
     catch {
       return
@@ -614,15 +620,20 @@
       {/if}
 
       <div class="actions">
-        {#if shareSupported && audioShareSupported}
+        {#if (shareSupported || cameraSupported) && audioShareSupported}
           <label class="check">
             <input type="checkbox" bind:checked={shareAudio} onchange={toggleShareAudio} disabled={current?.role == 'host'}>
             Share audio
           </label>
         {/if}
         {#if shareSupported}
-          <button class="primary" disabled={status != 'online' || current?.role == 'host'} onclick={share}>
+          <button class="primary" disabled={status != 'online' || current?.role == 'host'} onclick={() => share(false)}>
             Share screen
+          </button>
+        {/if}
+        {#if cameraSupported}
+          <button disabled={status != 'online' || current?.role == 'host'} onclick={() => share(true)}>
+            Share camera
           </button>
         {/if}
         {#if current}

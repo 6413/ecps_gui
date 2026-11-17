@@ -39,6 +39,7 @@
           updater.tick_restart();
           render_stream_view_content();
           This->render_about_popup();
+          This->render_audio_popup();
         }
         else {
         This->render_top_bar();
@@ -378,10 +379,14 @@
 
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
               f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 11.f : 6.f) : 0.f;
+              if (already_in_selected) {
+                This->render_voice_switch(This->selected_channel_id);
+              }
               if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
                   auto sharing_now = ecps_backend.streamers_of(This->selected_channel_id);
+                  auto in_voice = ecps_backend.voice_members_of(This->selected_channel_id);
                   for (const auto& session : it->second) {
                     bool is_sharing = std::find(sharing_now.begin(), sharing_now.end(), (std::uint32_t)session.session_id.i) != sharing_now.end();
                     bool is_me = session.session_id.i == ecps_backend.session_id.i;
@@ -410,6 +415,11 @@
                       gui::same_line(0, 8.f);
                       badge("live", 0x600a0affu, 0xff6a6affu);
                     }
+                    if (std::find(in_voice.begin(), in_voice.end(), (std::uint32_t)session.session_id.i) != in_voice.end()) {
+                      bool talking = voice_chat.is_talking((std::uint32_t)session.session_id.i);
+                      gui::same_line(0, 8.f);
+                      badge("voice", talking ? 0x8030b040u : 0x40909090u, talking ? 0xff90ff90u : 0xffb0b0b0u);
+                    }
                     gui::same_line(0, 10.f);
                     gui::text(fan::color(0.3f, 0.3f, 0.34f, 1.f), "#" + std::to_string(session.session_id.i));
 
@@ -421,8 +431,10 @@
                       }
                       if (is_sharing) {
                         gui::set_cursor_screen_pos(fan::vec2(x - button_size - 4.f, row_at.y + 4.f));
-                        if (icon_button("##watch", icon_e::eye, "Watch")) {
+                        if (icon_button("##watch", icon_e::eye, "Watch in Stream View")) {
                           This->set_watch(This->selected_channel_id, (std::uint32_t)session.session_id.i);
+                          // to the picture, watching from here would otherwise change nothing you can see
+                          main_tab = 1;
                         }
                       }
                     }
@@ -515,6 +527,7 @@
       // ---- what you share
       settings_section("SHARING");
       This->render_capture_source();
+      This->render_camera_source();
       if (streaming && rt) {
         This->resolution_controls.render_resolution_controls();
 
