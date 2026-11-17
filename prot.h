@@ -138,12 +138,17 @@ struct Protocol {
 
   enum class JoinChannel_Error_Reason_t : uint8_t {
     InvalidChannelType,
-    InvalidChannelID
+    InvalidChannelID,
+    PasswordRequired,
+    WrongPassword
   };
   inline static const char* JoinChannel_Error_Reason_String[] = {
     "InvalidChannelType",
-    "InvalidChannelID"
+    "InvalidChannelID",
+    "PasswordRequired",
+    "WrongPassword"
   };
+  static constexpr std::size_t ChannelPasswordMax = 64;
   enum class LoginType_t : uint8_t {
     Anonymous
   };
@@ -392,6 +397,16 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     Protocol_ChannelID_t ChannelID;
     Protocol_ChannelSessionID_t ChannelSessionID;
     uint8_t Joined;
+  );
+  /* both come last so that the command numbers of the older ones stay as they were. A server that does not know
+     them closes the connection, so they are sent only to a server that said it is new enough */
+  __dme(JoinChannelPassword,
+    Protocol_ChannelID_t ChannelID; /* first, so that it reads as a JoinChannel */
+    char Password[Protocol::ChannelPasswordMax];
+  );
+  __dme(SetChannelPassword,
+    Protocol_ChannelID_t ChannelID;
+    char Password[Protocol::ChannelPasswordMax]; /* empty removes the password, only the host may */
   );
 }Protocol_C2S;
 

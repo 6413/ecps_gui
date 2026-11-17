@@ -175,10 +175,17 @@ case Protocol_C2S_t::CreateChannel:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::JoinChannelPassword:
 case Protocol_C2S_t::JoinChannel:{
 
+  /* JoinChannelPassword begins with the same ChannelID */
   auto Request = (Protocol_C2S_t::JoinChannel_t *)RestPacket;
   Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  char Password[Protocol::ChannelPasswordMax] = {};
+  if(BasePacket->Command == Protocol_C2S_t::JoinChannelPassword){
+    auto WithPassword = (Protocol_C2S_t::JoinChannelPassword_t *)RestPacket;
+    __builtin_memcpy(Password, WithPassword->Password, sizeof(Password) - 1);
+  }
 
   if(IsChannelInvalid(ChannelID) == true){
     Protocol_S2C_t::JoinChannel_Error_t rest;
@@ -191,6 +198,19 @@ case Protocol_C2S_t::JoinChannel:{
     goto StateDone_gt;
   }
   auto Channel = &g_pile->ChannelList[ChannelID];
+
+  if(Channel_HasPassword(ChannelID) && GetChannelHost(ChannelID) != SessionID && !Channel_CheckPassword(ChannelID, Password)){
+    Protocol_S2C_t::JoinChannel_Error_t rest;
+    rest.Reason = Password[0] == 0
+      ? Protocol::JoinChannel_Error_Reason_t::PasswordRequired
+      : Protocol::JoinChannel_Error_Reason_t::WrongPassword;
+    TCP_WriteCommand(
+      peer,
+      BasePacket->ID,
+      Protocol_S2C_t::JoinChannel_Error,
+      rest);
+    goto StateDone_gt;
+  }
 
   Protocol_ChannelSessionID_t ChannelSessionID;
   switch(Channel->Type){
@@ -225,6 +245,34 @@ case Protocol_C2S_t::JoinChannel:{
   ScreenShare_SendFlagTo(ChannelID, {ChannelID, ChannelSessionID});
   ScreenShare_SendStreamersTo(ChannelID, SessionID);
 
+  goto StateDone_gt;
+}
+case Protocol_C2S_t::SetChannelPassword:{
+  auto Request = (Protocol_C2S_t::SetChannelPassword_t *)RestPacket;
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsChannelInvalid(ChannelID) == true){
+    goto StateDone_gt;
+  }
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    goto StateDone_gt;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  /* only the host decides who comes in */
+  if(ChannelData->HostSessionID != SessionID){
+    goto StateDone_gt;
+  }
+  char Password[Protocol::ChannelPasswordMax] = {};
+  __builtin_memcpy(Password, Request->Password, sizeof(Password) - 1);
+  if(Password[0] == 0){
+    ChannelData->HasPassword = false;
+    ChannelData->PasswordHash.fill(0);
+  }
+  else if(Channel_HashPassword(Password, ChannelData->PasswordHash)){
+    ChannelData->HasPassword = true;
+  }
+  __builtin_memset(Password, 0, sizeof(Password));
+  Channel_BroadcastChannelList();
   goto StateDone_gt;
 }
 case Protocol_C2S_t::QuitChannel:{

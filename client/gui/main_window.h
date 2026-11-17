@@ -39,7 +39,7 @@
           updater.tick_restart();
           render_stream_view_content();
           This->render_about_popup();
-          This->render_audio_popup();
+          This->render_password_popup();
         }
         else {
         This->render_top_bar();
@@ -173,6 +173,7 @@
                 display_name = "⭐ " + channel.name;
               }
               if (channel.is_password_protected) {
+                display_name += "  (password)";
               }
 
               bool already_joined = false;
@@ -378,7 +379,7 @@
               gui::spacing();
 
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
-              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 11.f : 6.f) : 0.f;
+              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 17.f : 12.f) : 0.f;
               if (already_in_selected) {
                 This->render_voice_switch(This->selected_channel_id);
               }
@@ -469,6 +470,7 @@
                   text_wrapped_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
                 }
                 This->render_share_audio_checkbox();
+                This->render_channel_password_controls(This->selected_channel_id);
               }
               if (is_host_of_selected) {
                 gui::end_child();

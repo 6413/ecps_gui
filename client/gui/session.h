@@ -114,6 +114,142 @@
     gui::end_popup();
   }
 
+  // ---- channel passwords ---------------------------------------------------------------------------------------
+
+  // The password prompt: shown when the server asks for a password the saved ones don't answer. What is typed is
+  // remembered once the server lets us in, see ecps_backend_t::remember_password
+  void render_password_popup() {
+    save_passwords_if_changed();
+    bool open_now = false;
+    if (!password_popup_open) {
+      std::lock_guard<std::mutex> lock(ecps_backend.password_mutex);
+      if (ecps_backend.password_prompt.wanted) {
+        ecps_backend.password_prompt.wanted = false;
+        password_popup_channel = ecps_backend.password_prompt.channel_id;
+        password_popup_name = ecps_backend.password_prompt.name;
+        password_popup_wrong = ecps_backend.password_prompt.wrong;
+        open_now = true;
+      }
+    }
+    if (open_now) {
+      password_popup_open = true;
+      password_input.clear();
+      gui::set_next_window_pos(fan::vec2(engine.window.get_size().x, engine.window.get_size().y) / 2 - fan::vec2(190, 80));
+      gui::open_popup("Channel password");
+    }
+    if (!password_popup_open) {
+      return;
+    }
+    if (!gui::begin_popup("Channel password")) {
+      password_popup_open = false;
+      return;
+    }
+    gui::text("\"" + password_popup_name + "\" needs a password");
+    if (password_popup_wrong) {
+      gui::text(fan::color(1.f, 0.5f, 0.45f, 1.f), "That password was not right");
+    }
+    gui::push_item_width(320);
+    bool enter = gui::input_text("##channel_password_prompt", &password_input,
+      gui::input_text_flags_enter_returns_true | gui::input_text_flags_password);
+    gui::pop_item_width();
+    text_wrapped_disabled("It is remembered on this computer, you are not asked again for this channel.");
+    bool can_join = !password_input.empty();
+    gui::begin_disabled(!can_join);
+    if (gui::button("Join") || (enter && can_join)) {
+      backend_queue([id = password_popup_channel, password = password_input]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.channel_join(id, false, password);
+          co_await ecps_backend.request_channel_list();
+          co_await ecps_backend.request_channel_session_list(id);
+        }
+        catch (...) {
+          fan::print("Failed to join channel");
+        }
+      });
+      password_input.clear();
+      password_popup_open = false;
+      gui::close_current_popup();
+    }
+    gui::end_disabled();
+    gui::same_line();
+    if (gui::button("Cancel")) {
+      password_input.clear();
+      password_popup_open = false;
+      gui::close_current_popup();
+    }
+    gui::end_popup();
+  }
+
+  // the host's part, in the channel's controls
+  void render_channel_password_controls(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    settings_section("PASSWORD");
+    if (!ecps_backend.channel_passwords_supported(channel_id)) {
+      text_wrapped_disabled("This server is too old for channel passwords, update it first");
+      return;
+    }
+    bool has_password = false;
+    for (const auto& channel : ecps_backend.available_channels) {
+      if (channel.channel_id.i == channel_id.i) {
+        has_password = channel.is_password_protected;
+      }
+    }
+    text_wrapped_disabled(has_password
+      ? "People need the password to join. They are asked once, then it is remembered"
+      : "Anyone can join. Set a password to keep others out");
+    gui::push_item_width(-1.f);
+    gui::input_text("##channel_password_set", &channel_password_input, gui::input_text_flags_password);
+    gui::pop_item_width();
+    gui::begin_disabled(channel_password_input.empty());
+    if (gui::button(has_password ? "Change password" : "Set password")) {
+      backend_queue([channel_id, password = channel_password_input]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.channel_set_password(channel_id, password);
+        }
+        catch (...) {
+          fan::print("Failed to set the channel password");
+        }
+      });
+      channel_password_input.clear();
+    }
+    gui::end_disabled();
+    if (has_password) {
+      gui::same_line();
+      if (gui::button("Remove password")) {
+        backend_queue([channel_id]() -> fan::event::task_t {
+          try {
+            co_await ecps_backend.channel_set_password(channel_id, std::string());
+          }
+          catch (...) {
+            fan::print("Failed to remove the channel password");
+          }
+        });
+      }
+    }
+  }
+
+  // the backend runs on its own thread, so it only says that the saved passwords changed
+  void save_passwords_if_changed() {
+    if (!passwords_dirty.exchange(false)) {
+      return;
+    }
+    fan::json saved = fan::json::object();
+    {
+      std::lock_guard<std::mutex> lock(ecps_backend.password_mutex);
+      for (const auto& [key, password] : ecps_backend.channel_passwords) {
+        saved[key] = password;
+      }
+    }
+    write_to_config("channel_passwords", saved);
+  }
+
+  bool password_popup_open = false;
+  bool password_popup_wrong = false;
+  ecps_backend_t::Protocol_ChannelID_t password_popup_channel{ (uint16_t)-1 };
+  std::string password_popup_name;
+  std::string password_input;
+  std::string channel_password_input;
+  std::atomic<bool> passwords_dirty { false };
+
   // ---- joining channels by themselves --------------------------------------------------------------------------
 
   void set_auto_join(const std::string& host_name) {

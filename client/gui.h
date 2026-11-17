@@ -39,9 +39,19 @@ struct ecps_gui_t {
       config = fan::json::parse(data);
     }
 
+    ecps_backend.passwords_changed = [this] { passwords_dirty.store(true); };
+
     if (config.is_object()) {
       if (config.contains("username") && config["username"].is_string()) {
         ecps_backend.desired_username = config["username"].get<std::string>();
+      }
+      if (config.contains("channel_passwords") && config["channel_passwords"].is_object()) {
+        fan::json saved = config["channel_passwords"];
+        for (auto it = saved.begin(); it != saved.end(); ++it) {
+          if (it.value().is_string()) {
+            ecps_backend.channel_passwords[it.key()] = it.value().get<std::string>();
+          }
+        }
       }
       if (config.contains("auto_join") && config["auto_join"].is_string()) {
         auto_join_host = config["auto_join"].get<std::string>();
@@ -81,6 +91,7 @@ struct ecps_gui_t {
       stream_settings.voice_volume = voice.value("volume", stream_settings.voice_volume);
       stream_settings.voice_output = voice.value("output", std::string());
       stream_settings.voice_echo_cancel = voice.value("echo_cancel", stream_settings.voice_echo_cancel);
+      stream_settings.voice_noise_suppress = voice.value("noise_suppress", stream_settings.voice_noise_suppress);
     }
     if (config.contains("audio")) {
       fan::json audio = config["audio"];

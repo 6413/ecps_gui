@@ -178,6 +178,9 @@ struct Channel_ScreenShare_Data_t{
   std::vector<uint32_t> Announced;
   std::vector<uint32_t> Voice;
   std::vector<uint32_t> VoiceAware;
+  /* the channel's password is not kept, only a keyed hash of it */
+  bool HasPassword = false;
+  std::array<uint8_t, 32> PasswordHash{};
 };
 
 struct pile_t{

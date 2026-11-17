@@ -90,6 +90,7 @@
     f32_t voice_volume = 1.f;
     std::string voice_output;
     bool voice_echo_cancel = false;
+    bool voice_noise_suppress = true;
 
     bool share_camera = false;
     std::string camera_device;

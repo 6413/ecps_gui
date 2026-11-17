@@ -895,15 +895,106 @@ struct ecps_backend_t {
     }
   }
   // the channel is listed as joined at once, a JoinChannel_Error from the server takes it out again
-  fan::event::task_t channel_join(Protocol_ChannelID_t channel_id, bool is_own_channel = false) {
+  // A password given here is tried, otherwise the one saved for this channel. A channel without one is joined as before
+  fan::event::task_t channel_join(Protocol_ChannelID_t channel_id, bool is_own_channel = false, std::string password = {}) {
     channel_info_t ci;
-    ci.join_request_id = co_await tcp_write(Protocol_C2S_t::JoinChannel, &channel_id, sizeof(channel_id));
+    if (password.empty() && !is_own_channel) {
+      password = saved_password(channel_id);
+    }
+    if (!password.empty() && !is_own_channel) {
+      Protocol_C2S_t::JoinChannelPassword_t rest;
+      std::memset(&rest, 0, sizeof(rest));
+      rest.ChannelID = channel_id;
+      std::memcpy(rest.Password, password.data(), std::min(password.size(), sizeof(rest.Password) - 1));
+      ci.join_request_id = co_await tcp_write(Protocol_C2S_t::JoinChannelPassword, &rest, sizeof(rest));
+      ci.password = password;
+    }
+    else {
+      ci.join_request_id = co_await tcp_write(Protocol_C2S_t::JoinChannel, &channel_id, sizeof(channel_id));
+    }
     ci.channel_id = channel_id;
     ci.joined_at.start();
     ci.is_own = is_own_channel;
     channel_info.emplace_back(ci);
     co_await send_idr_request(channel_id);
     did_just_join = !is_own_channel;
+  }
+
+  // ---- channel passwords --------------------------------------------------------------------------------------
+  // A password is kept per server and channel name (channels are named after their host), so it is asked for once
+  struct password_prompt_t {
+    bool wanted = false;
+    bool wrong = false;
+    Protocol_ChannelID_t channel_id = 0;
+    std::string name;
+  };
+  std::mutex password_mutex;
+  std::unordered_map<std::string, std::string> channel_passwords;
+  password_prompt_t password_prompt;
+  std::function<void()> passwords_changed;
+
+  std::string password_key(const std::string& channel_name) const {
+    return ip + ":" + std::to_string(port) + "/" + channel_name;
+  }
+  std::string channel_name_of(Protocol_ChannelID_t channel_id) const {
+    for (const auto& channel : available_channels) {
+      if (channel.channel_id.i == channel_id.i) {
+        return channel.name;
+      }
+    }
+    return {};
+  }
+  std::string saved_password(Protocol_ChannelID_t channel_id) {
+    std::string name = channel_name_of(channel_id);
+    if (name.empty()) {
+      return {};
+    }
+    std::lock_guard<std::mutex> lock(password_mutex);
+    auto it = channel_passwords.find(password_key(name));
+    return it == channel_passwords.end() ? std::string() : it->second;
+  }
+  void remember_password(const std::string& channel_name, const std::string& password) {
+    if (channel_name.empty() || password.empty()) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(password_mutex);
+      auto& saved = channel_passwords[password_key(channel_name)];
+      if (saved == password) {
+        return;
+      }
+      saved = password;
+    }
+    if (passwords_changed) {
+      passwords_changed();
+    }
+  }
+  void forget_password(const std::string& channel_name) {
+    {
+      std::lock_guard<std::mutex> lock(password_mutex);
+      if (channel_passwords.erase(password_key(channel_name)) == 0) {
+        return;
+      }
+    }
+    if (passwords_changed) {
+      passwords_changed();
+    }
+  }
+  // only a v0.99 server knows the command, the voice probe is how that shows
+  bool channel_passwords_supported(Protocol_ChannelID_t channel_id) const {
+    return voice_known(channel_id);
+  }
+  // an empty password removes it
+  fan::event::task_t channel_set_password(Protocol_ChannelID_t channel_id, std::string password) {
+    if (!channel_passwords_supported(channel_id)) {
+      co_return;
+    }
+    Protocol_C2S_t::SetChannelPassword_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel_id;
+    std::memcpy(rest.Password, password.data(), std::min(password.size(), sizeof(rest.Password) - 1));
+    co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &rest, sizeof(rest));
+    co_await request_channel_list();
   }
 
   // leaves a channel: the server is told, and everything kept about the channel here goes
@@ -1167,6 +1258,7 @@ struct ecps_backend_t {
     uint32_t join_request_id = (uint32_t)-1;
     bool join_confirmed = false;
     uint8_t voice_probes = 0;
+    std::string password; // sent with the join, kept when the server lets us in
     fan::time::timer joined_at;
     int flag = 0;
   };

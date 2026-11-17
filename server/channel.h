@@ -44,6 +44,38 @@ IsAnythingInvalid(
   return false;
 }
 
+/* HKDF with the server's private key as the salt: a stolen hash can't be tried against guesses without the key */
+bool Channel_HashPassword(const char* Password, std::array<uint8_t, 32>& Out){
+  return fan::network::crypto::hkdf(
+    (const uint8_t*)Password, std::strlen(Password),
+    g_pile->StaticPrivate.data(), g_pile->StaticPrivate.size(),
+    "ecps channel password",
+    Out.data(), Out.size());
+}
+bool Channel_HasPassword(Protocol_ChannelID_t ChannelID){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return false;
+  }
+  return ((Channel_ScreenShare_Data_t *)Channel->Buffer)->HasPassword;
+}
+/* true when the channel has no password or this is it. Takes the same time whatever the password is */
+bool Channel_CheckPassword(Protocol_ChannelID_t ChannelID, const char* Password){
+  if(!Channel_HasPassword(ChannelID)){
+    return true;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  std::array<uint8_t, 32> Given;
+  if(!Channel_HashPassword(Password, Given)){
+    return false;
+  }
+  uint8_t Difference = 0;
+  for(size_t i = 0; i < Given.size(); i++){
+    Difference |= Given[i] ^ ChannelData->PasswordHash[i];
+  }
+  return Difference == 0;
+}
+
 ChannelList_NodeReference_t AddChannel_ScreenShare(Protocol_SessionID_t HostSessionID){
   auto cnr = g_pile->ChannelList.NewNodeLast();
   auto cn = g_pile->ChannelList.GetNodeByReference(cnr);
@@ -256,7 +288,7 @@ void Channel_SendChannelList(NET_TCP_peer_t *peer, uint32_t ID) {
     info.Type = n->data.Type;
     info.UserCount = GetChannelUserCount(channel_id);
     info.HostSessionID = GetChannelHost(channel_id);
-    info.IsPasswordProtected = 0;
+    info.IsPasswordProtected = Channel_HasPassword(channel_id) ? 1 : 0;
     strncpy(info.Name, GetSessionUsername(GetChannelHost(channel_id)), sizeof(info.Name) - 1);
     info.Name[sizeof(info.Name) - 1] = '\0';
     infos.push_back(info);

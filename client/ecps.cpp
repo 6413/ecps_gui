@@ -399,6 +399,7 @@ struct voice_chat_t {
     f32_t volume = 1.f;
     std::string output_device;
     bool echo_cancel = false;
+    bool noise_suppress = true;
   };
   struct speaker_t {
     fan::audio::opus_decoder_t decoder;
@@ -452,6 +453,7 @@ struct voice_chat_t {
       level.store(0.f, std::memory_order_relaxed);
     }
     echo_cancel.store(settings.echo_cancel, std::memory_order_relaxed);
+    noise_suppress.store(settings.noise_suppress, std::memory_order_relaxed);
 
     bool listening = is_active() && !deafened.load();
     if (mixer_opening.valid()) {
@@ -505,6 +507,14 @@ struct voice_chat_t {
     echo_running = cancel;
     if (cancel) {
       echo.process(pcm.data(), fan::audio::stream_frame_size);
+    }
+    bool suppress = noise_suppress.load(std::memory_order_relaxed);
+    if (suppress && !noise_running) {
+      noise.reset();
+    }
+    noise_running = suppress;
+    if (suppress) {
+      noise.process(pcm.data(), fan::audio::stream_frame_size);
     }
     f32_t peak = 0.f;
     for (f32_t sample : pcm) {
@@ -615,6 +625,7 @@ struct voice_chat_t {
   fan::audio::microphone_capture_t capture;
   fan::audio::opus_encoder_t encoder;
   fan::audio::echo_canceller_t echo;
+  fan::audio::noise_suppressor_t noise;
   fan::audio::live_mixer_t mixer;
   std::future<bool> mixer_opening;
   bool mixer_open = false;
@@ -622,6 +633,8 @@ struct voice_chat_t {
   std::string output_device;
   std::atomic<bool> echo_cancel = false;
   bool echo_running = false;
+  std::atomic<bool> noise_suppress = true;
+  bool noise_running = false;
   std::atomic<f32_t> level = 0.f;
   std::mutex outgoing_mutex;
   std::vector<std::vector<std::uint8_t>> outgoing;
@@ -955,7 +968,7 @@ ecps_backend_t::ecps_backend_t() {
 
   s2c(CreateChannel_Error) {
     s2c_read(CreateChannel_Error);
-    fan::print("the server refused to create the channel:", Protocol::JoinChannel_Error_Reason_String[(std::uint8_t)msg->Reason % 2]);
+    fan::print("the server refused to create the channel:", Protocol::JoinChannel_Error_Reason_String[(std::uint8_t)msg->Reason % 4]);
     backend.finish_request(base.ID, Protocol_ChannelID_t((uint16_t)-1));
     co_return;
   };
@@ -965,6 +978,11 @@ ecps_backend_t::ecps_backend_t() {
     if (auto* channel = backend.find_channel(msg->ChannelID)) {
       channel->session_id = msg->ChannelSessionID;
       channel->join_confirmed = true;
+      // the password worked, it is not asked for again
+      if (!channel->password.empty()) {
+        backend.remember_password(backend.channel_name_of(channel->channel_id), channel->password);
+        channel->password.clear();
+      }
     }
     encoder_force_keyframe();
     co_return;
@@ -975,9 +993,22 @@ ecps_backend_t::ecps_backend_t() {
     // the channel was added when the join was sent, it has to go again
     for (const auto& channel : backend.channel_info) {
       if (channel.join_request_id == base.ID) {
-        fan::print("could not join channel", (uint64_t)channel.channel_id.i, ":", Protocol::JoinChannel_Error_Reason_String[(std::uint8_t)msg->Reason % 2]);
+        fan::print("could not join channel", (uint64_t)channel.channel_id.i, ":", Protocol::JoinChannel_Error_Reason_String[(std::uint8_t)msg->Reason % 4]);
         backend.did_just_join = false;
-        backend.forget_channel(channel.channel_id);
+        auto channel_id = channel.channel_id;
+        std::string name = backend.channel_name_of(channel_id);
+        backend.forget_channel(channel_id);
+        if (msg->Reason == Protocol::JoinChannel_Error_Reason_t::PasswordRequired ||
+          msg->Reason == Protocol::JoinChannel_Error_Reason_t::WrongPassword) {
+          bool wrong = msg->Reason == Protocol::JoinChannel_Error_Reason_t::WrongPassword;
+          if (wrong) {
+            backend.forget_password(name);
+          }
+          std::lock_guard<std::mutex> lock(backend.password_mutex);
+          if (!backend.password_prompt.wanted || wrong) {
+            backend.password_prompt = { true, wrong, channel_id, name };
+          }
+        }
         break;
       }
     }

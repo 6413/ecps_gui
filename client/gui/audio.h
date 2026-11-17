@@ -134,46 +134,51 @@
         voice_chat.leave();
       }
     }
-    if (!in_voice) {
-      return false;
+    if (in_voice) {
+      bool muted = voice_chat.muted.load();
+      if (settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
+        voice_chat.muted.store(muted);
+      }
+      bool deafened = voice_chat.deafened.load();
+      if (settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
+        voice_chat.deafened.store(deafened);
+      }
     }
-    bool muted = voice_chat.muted.load();
-    if (settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
-      voice_chat.muted.store(muted);
-    }
-    bool deafened = voice_chat.deafened.load();
-    if (settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
-      voice_chat.deafened.store(deafened);
-    }
-    return true;
+    render_voice_panel();
+    return in_voice;
   }
 
-  void render_audio_popup() {
-    if (audio_popup_requested) {
-      audio_popup_requested = false;
-      gui::set_next_window_pos(fan::vec2(24.f, 70.f));
-      gui::open_popup("Voice chat audio");
+  // the microphone, speakers and filters live in the channel panel itself, folded away until asked for
+  void render_voice_panel() {
+    gui::dummy(fan::vec2(0, 2.f));
+    if (gui::button(voice_settings_open ? "Hide voice settings" : "Voice settings")) {
+      voice_settings_open = !voice_settings_open;
     }
-    gui::set_next_window_size(fan::vec2(380.f, 0.f));
-    if (!gui::begin_popup("Voice chat audio")) {
+    if (!voice_settings_open) {
       return;
     }
     gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
     gui::push_style_var(gui::style_var_frame_rounding, 5.f);
-    settings_section("VOICE CHAT");
+    settings_section("VOICE SETTINGS");
     render_voice_settings();
     gui::pop_style_var(2);
-    gui::end_popup();
+    gui::dummy(fan::vec2(0, 6.f));
   }
 
   void render_voice_settings() {
     if (!voice_chat.is_active()) {
-      text_wrapped_disabled("Join the voice chat of a channel to try these. The switch is above the channel's member list");
+      text_wrapped_disabled("Join the voice chat of this channel to try these");
     }
     bool echo_cancel = stream_settings.voice_echo_cancel;
     if (settings_switch("Echo cancellation", &echo_cancel,
       "For speakers: keeps the others from hearing themselves back through your microphone. Not needed with headphones, and adds a little delay")) {
       stream_settings.voice_echo_cancel = echo_cancel;
+      save_voice_settings();
+    }
+    bool noise_suppress = stream_settings.voice_noise_suppress;
+    if (settings_switch("Noise suppression", &noise_suppress,
+      "Removes steady background noise from your microphone: fans, hiss, hum. Your voice is left as it is")) {
+      stream_settings.voice_noise_suppress = noise_suppress;
       save_voice_settings();
     }
     if (voice_chat.capture_failed) {
@@ -251,6 +256,7 @@
       .volume = stream_settings.voice_volume,
       .output_device = stream_settings.voice_output,
       .echo_cancel = stream_settings.voice_echo_cancel,
+      .noise_suppress = stream_settings.voice_noise_suppress,
     };
   }
 
@@ -262,11 +268,12 @@
     voice["threshold"] = stream_settings.voice_threshold;
     voice["volume"] = stream_settings.voice_volume;
     voice["echo_cancel"] = stream_settings.voice_echo_cancel;
+    voice["noise_suppress"] = stream_settings.voice_noise_suppress;
     write_to_config("voice", voice);
   }
 
   static constexpr f32_t voice_meter_range = 0.5f;
-  bool audio_popup_requested = false;
+  bool voice_settings_open = false;
   std::vector<fan::audio::loopback_device_t> voice_inputs;
   std::vector<fan::audio::loopback_device_t> voice_outputs;
   bool voice_combo_open[2] = {};
