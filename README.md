@@ -25,7 +25,7 @@ nix run github:6413/ecps_gui
 On Arch and the distros built on it (Manjaro, EndeavourOS, CachyOS), as a pacman package:
 
 ```bash
-git clone https://github.com/6413/ecps_gui
+git clone --depth 1 https://github.com/6413/ecps_gui
 cd ecps_gui/arch
 makepkg -si
 ```
