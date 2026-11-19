@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ECPS
+Comment=Every Communication Program Sucks - screen sharing client
+Exec=ecps
+Icon=ecps
+Categories=Network;VideoConference;

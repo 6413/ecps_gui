@@ -374,10 +374,13 @@
         break;
       case state_e::available:
         gui::text_wrapped("Update available: " + updater.latest());
-        if (updater_t::can_install) {
+        if (updater_t::self_updates()) {
           if (gui::button("Update now")) {
             updater.start_update();
           }
+        }
+        else if (updater_t::installer() == "pacman") {
+          text_wrapped_disabled("Update it the way it was installed: in the ecps_gui/arch folder run makepkg -si");
         }
         else {
           text_wrapped_disabled("Download it from github.com/6413/ecps_gui");

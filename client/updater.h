@@ -57,6 +57,15 @@ struct updater_t {
 
   std::atomic<state_e> state{state_e::idle};
 
+  // A package that is not the Nix one (the Arch PKGBUILD writes "installer=pacman" into build-info) is updated by its
+  // own package manager: the commit check still runs, "Update now" (a nix build) is not offered
+  static std::string installer() {
+    return build_info("installer");
+  }
+  static bool self_updates() {
+    return can_install && installer().empty();
+  }
+
   std::string latest() {
     std::lock_guard<std::mutex> lock(mutex);
     return latest_version;
@@ -175,7 +184,7 @@ struct updater_t {
 
   // Linux: build the new release in the background
   void start_update() {
-    if (!can_install || state.load() != state_e::available) {
+    if (!self_updates() || state.load() != state_e::available) {
       return;
     }
     std::error_code ec;

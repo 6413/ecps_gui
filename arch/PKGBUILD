@@ -1,0 +1,149 @@
+# ECPS client for Arch Linux and the distros built on it (Manjaro, EndeavourOS, CachyOS).
+#
+#   cd ecps_gui/arch
+#   makepkg -si
+#
+# The same build as the Nix package (nix/package.nix), with Arch's own libraries. The commits of the header
+# repos, Vulkan headers, lunasvg and box2d are read from flake.nix, so the two packages never disagree. fan is
+# its newest commit, like the in-app update of the Nix package. Run makepkg -si again to update: it fetches
+# the newest ecps_gui and fan.
+
+pkgname=ecps-git
+pkgver=0.99
+pkgrel=1
+pkgdesc="ECPS - Every Communication Program Sucks: screen sharing, voice and remote control"
+arch=('x86_64')
+url="https://github.com/6413/ecps_gui"
+license=('MIT')
+# fan uses `import std`: clang 20 or newer with libstdc++ 15 (gcc-libs)
+depends=('gcc-libs' 'glibc' 'libuv' 'glfw' 'libpng' 'libwebp' 'freetype2' 'fmt' 'shaderc' 'zlib' 'ffmpeg' 'opus'
+  'vulkan-icd-loader' 'gtk3' 'gsettings-desktop-schemas' 'openssl' 'curl'
+  'libx11' 'libxcb' 'libxrandr' 'libxinerama' 'libxcursor' 'libxi' 'libxtst' 'libxkbcommon' 'wayland'
+  'pipewire' 'dbus' 'libpulse' 'alsa-lib')
+makedepends=('git' 'clang' 'llvm' 'xmake' 'pkgconf' 'mold' 'cmake')
+optdepends=('xdg-desktop-portal: sharing the screen on Wayland'
+  'xdg-desktop-portal-gnome: the portal for GNOME'
+  'xdg-desktop-portal-kde: the portal for KDE Plasma'
+  'xdg-desktop-portal-wlr: the portal for Sway and other wlroots compositors')
+provides=('ecps')
+conflicts=('ecps')
+# the build sets its own flags, like the Nix one: makepkg's _FORTIFY_SOURCE breaks the std module
+options=('!buildflags' '!lto' '!debug' '!strip')
+
+source=("ecps_gui::git+https://github.com/6413/ecps_gui.git"
+  "fan::git+https://github.com/6413/fan.git"
+  "WITCH::git+https://github.com/7244/WITCH.git"
+  "BCOL::git+https://github.com/7244/BCOL.git"
+  "BLL::git+https://github.com/7244/BLL.git"
+  "BVEC::git+https://github.com/7244/BVEC.git"
+  "BDBT::git+https://github.com/7244/BDBT.git"
+  "bcontainer::git+https://github.com/7244/bcontainer.git"
+  "pixfconv::git+https://github.com/7244/pixfconv.git"
+  "PIXF::git+https://github.com/6413/PIXF.git"
+  "VulkanMemoryAllocator::git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
+  "VulkanUtilityLibraries::git+https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git"
+  "VulkanHeaders::git+https://github.com/KhronosGroup/Vulkan-Headers.git"
+  "lunasvg::git+https://github.com/sammycage/lunasvg.git"
+  "box2d::git+https://github.com/erincatto/box2d.git")
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+# the commit flake.nix pins for an input: `WITCH = { url = "github:7244/WITCH/<commit>"; ...`
+_pin() {
+  sed -nE "s|^ *$1 = \{ url = \"github:[^/]+/[^/]+/([0-9a-f]{40})\".*|\1|p" "$srcdir/ecps_gui/flake.nix"
+}
+
+_pinned=(WITCH BCOL BLL BVEC BDBT bcontainer pixfconv PIXF VulkanMemoryAllocator VulkanUtilityLibraries VulkanHeaders lunasvg box2d)
+
+pkgver() {
+  cd ecps_gui
+  local version
+  version=$(sed -nE 's|.*ecps_version = "([^"]+)".*|\1|p' client/version.h)
+  printf "%s.r%s.%s" "${version:-0}" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  local name commit
+  for name in "${_pinned[@]}"; do
+    commit=$(_pin "$name")
+    if [[ -z $commit ]]; then
+      echo "flake.nix pins no commit for $name" >&2
+      return 1
+    fi
+    git -C "$srcdir/$name" checkout -q --detach "$commit"
+  done
+}
+
+build() {
+  local deps="$srcdir/deps"
+  rm -rf "$deps" && mkdir -p "$deps/lib"
+
+  # the lunasvg and box2d versions fan is written for (Arch has other ones), linked in statically
+  cmake -S lunasvg -B build-lunasvg -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+  cmake --build build-lunasvg -j"$(nproc)"
+  cmake -S box2d -B build-box2d -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+    -DBOX2D_SAMPLES=OFF -DBOX2D_BENCHMARKS=OFF -DBOX2D_DOCS=OFF -DBOX2D_UNIT_TESTS=OFF
+  cmake --build build-box2d -j"$(nproc)"
+  find build-lunasvg build-box2d -name '*.a' -exec cp {} "$deps/lib/" \;
+  # lunasvg and box2d come first (build-ecps.sh names them), whatever else they built after them
+  local extra_libs="" lib
+  for lib in "$deps"/lib/lib*.a; do
+    lib=$(basename "$lib" .a)
+    lib=${lib#lib}
+    [[ $lib == lunasvg || $lib == box2d ]] || extra_libs="$extra_libs -l$lib"
+  done
+
+  # a fresh copy each build: build-ecps.sh edits fan's xmake.lua
+  rm -rf fan-work
+  cp -r fan fan-work
+  rm -rf fan-work/.git
+
+  # the header repos where fan's install.sh would clone them
+  local inc=fan-work/third_party/fan/include name
+  mkdir -p "$inc/vulkan" "$inc/VulkanMemoryAllocator/include"
+  for name in WITCH BCOL BLL BVEC BDBT bcontainer pixfconv PIXF; do
+    rm -rf "$inc/$name"
+    if [[ -d $name/$name ]]; then
+      mkdir -p "$inc/$name" && cp -r "$name/$name/." "$inc/$name/"
+    else
+      cp -r "$name" "$inc/$name"
+    fi
+    rm -rf "$inc/$name/.git"
+  done
+  cp VulkanMemoryAllocator/include/vk_mem_alloc.h "$inc/"
+  cp VulkanMemoryAllocator/include/vk_mem_alloc.h "$inc/VulkanMemoryAllocator/include/"
+  cp VulkanUtilityLibraries/include/vulkan/*.h "$inc/vulkan/"
+
+  # the mouse pointer in the portal's picture, and windows as well as screens to pick from
+  patch -p1 -d "$inc/WITCH" < ecps_gui/nix/witch-cursor.patch
+  patch -p1 -d "$inc/WITCH" < ecps_gui/nix/witch-window.patch
+
+  # the Vulkan headers that match the pinned utility headers go before the system's newer ones
+  export ECPS_EXTRA_CFLAGS="-isystem$srcdir/VulkanHeaders/include -I$srcdir/lunasvg/include -I$srcdir/box2d/include"
+  export ECPS_EXTRA_LDFLAGS="-L$deps/lib$extra_libs"
+  export ECPS_WAYLAND_CAPTURE=1
+  bash ecps_gui/nix/build-ecps.sh fan-work ecps_gui clang
+}
+
+package() {
+  local share="$pkgdir/usr/share/ecps"
+  install -Dm755 "$(find fan-work/build -type f -name a.exe -path '*release*' | head -n1)" "$pkgdir/usr/lib/ecps/ecps"
+
+  mkdir -p "$share"
+  local dir
+  for dir in shaders fonts icons images audio effects; do
+    [[ -d fan-work/$dir ]] && cp -r "fan-work/$dir" "$share/"
+  done
+  cp ecps_gui/client/webrtc.html "$share/"
+  cp -r "ecps_gui/assets/steinway keys" "$share/steinway-keys"
+  # the commits the in-app update check compares with GitHub. "installer" makes it say to run makepkg, the
+  # in-app update builds with Nix
+  printf 'ecps=%s\nfan=%s\ninstaller=pacman\n' "$(git -C ecps_gui rev-parse HEAD)" "$(git -C fan rev-parse HEAD)" \
+    > "$share/build-info"
+
+  install -Dm644 fan-work/icons/ecps_logo.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/ecps.png"
+  install -Dm755 ecps_gui/arch/ecps.sh "$pkgdir/usr/bin/ecps"
+  install -Dm644 ecps_gui/arch/ecps.desktop "$pkgdir/usr/share/applications/ecps.desktop"
+  install -Dm644 ecps_gui/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

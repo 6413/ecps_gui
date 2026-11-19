@@ -14,6 +14,24 @@ Built in encoders and decoders:
 ![image](https://github.com/user-attachments/assets/b5268106-993f-4d6a-a611-9c7bed6cc685)
 ![image](https://github.com/user-attachments/assets/d0f2ce5d-b866-4474-b4bc-d870fedc3a08)
 
+## Linux
+
+With Nix (any distro, NixOS included):
+
+```bash
+nix run github:6413/ecps_gui
+```
+
+On Arch and the distros built on it (Manjaro, EndeavourOS, CachyOS), as a pacman package:
+
+```bash
+git clone https://github.com/6413/ecps_gui
+cd ecps_gui/arch
+makepkg -si
+```
+
+Run `makepkg -si` there again to update, it builds the newest ecps_gui and fan.
+
 ## Audio
 
 The host can share what the computer is playing ("Share audio" next to the stream button or in
