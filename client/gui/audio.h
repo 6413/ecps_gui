@@ -133,15 +133,18 @@
       else {
         voice_chat.leave();
       }
+      save_server_voice(in_voice);
     }
     if (in_voice) {
       bool muted = voice_chat.muted.load();
       if (settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
         voice_chat.muted.store(muted);
+        save_server_voice(true);
       }
       bool deafened = voice_chat.deafened.load();
       if (settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
         voice_chat.deafened.store(deafened);
+        save_server_voice(true);
       }
     }
     render_voice_panel();
@@ -259,6 +262,55 @@
       .noise_suppress = stream_settings.voice_noise_suppress,
     };
   }
+
+  // ---- voice chat on or off, per server -----------------------------------------------------------------------
+  // config.json "voice_servers": {"ip:port": {"on", "muted", "deafened"}}. Turned on once on a server, the voice chat
+  // starts again in the channel you join there, with the microphone and the others muted as you left them
+  std::string server_voice_key() const {
+    return ecps_backend.ip + ":" + std::to_string(ecps_backend.port);
+  }
+
+  void save_server_voice(bool on) {
+    if (ecps_backend.ip.empty()) {
+      return;
+    }
+    fan::json servers = config.contains("voice_servers") && config["voice_servers"].is_object() ? config["voice_servers"] : fan::json::object();
+    servers[server_voice_key()] = {{"on", on}, {"muted", voice_chat.muted.load()}, {"deafened", voice_chat.deafened.load()}};
+    write_to_config("voice_servers", servers);
+  }
+
+  // once a second from the update loop: joins the voice chat of the selected channel when this server had it on
+  void update_server_voice() {
+    auto now = std::chrono::steady_clock::now();
+    if (now < next_voice_restore) {
+      return;
+    }
+    next_voice_restore = now + std::chrono::seconds(1);
+    std::uint32_t session = (std::uint32_t)ecps_backend.session_id.i;
+    auto channel_id = selected_channel_id;
+    if (!ecps_backend.connected || !ecps_backend.is_channel_joined(channel_id) || !ecps_backend.voice_known(channel_id)) {
+      return;
+    }
+    // once per channel and connection: turning it off by hand stays off, coming back after a reconnect turns it on
+    if (voice_restored_session == session && voice_restored_channel == (int)channel_id.i) {
+      return;
+    }
+    voice_restored_session = session;
+    voice_restored_channel = (int)channel_id.i;
+    if (!config.contains("voice_servers") || !config["voice_servers"].is_object() || !config["voice_servers"].contains(server_voice_key())) {
+      return;
+    }
+    fan::json saved = config["voice_servers"][server_voice_key()];
+    if (!saved.is_object() || !saved.value("on", false) || voice_chat.is_wanted(channel_id)) {
+      return;
+    }
+    voice_chat.muted.store(saved.value("muted", false));
+    voice_chat.deafened.store(saved.value("deafened", false));
+    voice_chat.join(channel_id);
+  }
+  std::chrono::steady_clock::time_point next_voice_restore;
+  std::uint32_t voice_restored_session = 0;
+  int voice_restored_channel = -1;
 
   void save_voice_settings() {
     fan::json voice;

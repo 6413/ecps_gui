@@ -142,6 +142,7 @@
     update_stale_picture();
     update_debug_sample();
     update_auto_join();
+    update_server_voice();
     update_midi_forward();
     remote_logs.tick([this](const std::function<fan::event::task_t()>& task) {
       backend_queue(task);

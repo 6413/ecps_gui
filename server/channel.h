@@ -76,6 +76,9 @@ bool Channel_CheckPassword(Protocol_ChannelID_t ChannelID, const char* Password)
   return Difference == 0;
 }
 
+const char* GetSessionUsername(Protocol_SessionID_t SessionID);
+bool Username_Equal(const char* a, const char* b);
+
 ChannelList_NodeReference_t AddChannel_ScreenShare(Protocol_SessionID_t HostSessionID){
   auto cnr = g_pile->ChannelList.NewNodeLast();
   auto cn = g_pile->ChannelList.GetNodeByReference(cnr);
@@ -85,8 +88,65 @@ ChannelList_NodeReference_t AddChannel_ScreenShare(Protocol_SessionID_t HostSess
   cn->data.Buffer = A_resize(0, sizeof(Channel_ScreenShare_Data_t));
   auto data = new (cn->data.Buffer) Channel_ScreenShare_Data_t;
   data->HostSessionID = HostSessionID;
+  snprintf(data->OwnerName, sizeof(data->OwnerName), "%s", g_pile->SessionList[HostSessionID].Username);
 
   return cnr;
+}
+
+/* the host left or closed: the channel stays, without a host, for the owner to come back to */
+void Channel_DropHost(Protocol_ChannelID_t ChannelID){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  ChannelData->HostSessionID = (Protocol_SessionID_t::Type)-1;
+}
+
+/* the owner joining a channel without a host is its host again */
+void Channel_ReclaimHost(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  const char *Name = g_pile->SessionList[SessionID].Username;
+  if(GetSessionUsername(ChannelData->HostSessionID)[0] == 0 && Name[0] && Username_Equal(Name, ChannelData->OwnerName)){
+    ChannelData->HostSessionID = SessionID;
+  }
+}
+
+/* the name a channel shows: its host's, which follows renames, or the owner's while the host is away */
+const char* Channel_ShownName(Protocol_ChannelID_t ChannelID){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return "";
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  const char *HostName = GetSessionUsername(ChannelData->HostSessionID);
+  if(HostName[0]){
+    snprintf(ChannelData->OwnerName, sizeof(ChannelData->OwnerName), "%s", HostName);
+  }
+  return ChannelData->OwnerName;
+}
+
+/* an owner's channel waiting without a host and without a password, for "Add new" to give back instead of a second one */
+bool Channel_FindOwnedEmpty(Protocol_SessionID_t SessionID, Protocol_ChannelID_t *Out){
+  const char *Name = g_pile->SessionList[SessionID].Username;
+  if(!Name[0]){
+    return false;
+  }
+  auto nr = g_pile->ChannelList.GetNodeFirst();
+  while(nr != g_pile->ChannelList.dst){
+    auto n = g_pile->ChannelList.GetNodeByReference(nr);
+    Protocol_ChannelID_t ChannelID(nr);
+    if(n->data.Type == Protocol::ChannelType_ScreenShare_e){
+      auto ChannelData = (Channel_ScreenShare_Data_t *)n->data.Buffer;
+      if(GetSessionUsername(ChannelData->HostSessionID)[0] == 0 && !ChannelData->HasPassword &&
+        Username_Equal(Name, ChannelData->OwnerName)){
+        *Out = ChannelID;
+        return true;
+      }
+    }
+    nr = n->NextNodeReference;
+  }
+  return false;
 }
 
 void
@@ -289,7 +349,7 @@ void Channel_SendChannelList(NET_TCP_peer_t *peer, uint32_t ID) {
     info.UserCount = GetChannelUserCount(channel_id);
     info.HostSessionID = GetChannelHost(channel_id);
     info.IsPasswordProtected = Channel_HasPassword(channel_id) ? 1 : 0;
-    strncpy(info.Name, GetSessionUsername(GetChannelHost(channel_id)), sizeof(info.Name) - 1);
+    strncpy(info.Name, Channel_ShownName(channel_id), sizeof(info.Name) - 1);
     info.Name[sizeof(info.Name) - 1] = '\0';
     infos.push_back(info);
 

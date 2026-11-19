@@ -72,20 +72,15 @@ void Close(Protocol_SessionID_t SessionID){
     switch(Channel->Type){
       case Protocol::ChannelType_ScreenShare_e:{
         auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+        /* the host closing keeps the channel, the same as leaving it */
         if(ChannelData->HostSessionID == SessionID){
-          _Close_ChannelClose(ChannelID);
-          Channel->SessionList.Close();
-          ChannelData->~Channel_ScreenShare_Data_t();
-          A_resize(Channel->Buffer, 0);
-          g_pile->ChannelList.unlrec(ChannelID);
-          goto gt_NextChannel;
+          Channel_DropHost(ChannelID);
         }
         ScreenShare_SetStreamer(ChannelID, SessionID, false, false);
         Channel_BroadcastSessionList(ChannelID);
         break;
       }
     }
-    gt_NextChannel:;
     nr = n->NextNodeReference;
   }
   Session->ChannelList.Close();

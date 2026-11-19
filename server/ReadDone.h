@@ -139,7 +139,12 @@ case Protocol_C2S_t::CreateChannel:{
   Protocol_ChannelSessionID_t ChannelSessionID;
   switch(Request->Type){
     case Protocol::ChannelType_ScreenShare_e:{
-      ChannelID = AddChannel_ScreenShare(SessionID);
+      if(Channel_FindOwnedEmpty(SessionID, &ChannelID) && !ScreenShare_IsMember(SessionID, ChannelID)){
+        Channel_ReclaimHost(ChannelID, SessionID);
+      }
+      else{
+        ChannelID = AddChannel_ScreenShare(SessionID);
+      }
 
       Protocol_CI_t CI = ScreenShare_AddPeer(
         ChannelID,
@@ -223,6 +228,7 @@ case Protocol_C2S_t::JoinChannel:{
         TCP_WriteCommand(peer, BasePacket->ID, CI);
         goto StateDone_gt;
       }
+      Channel_ReclaimHost(ChannelID, SessionID);
 
       break;
     }
@@ -287,14 +293,8 @@ case Protocol_C2S_t::QuitChannel:{
   if(Channel->Type == Protocol::ChannelType_ScreenShare_e){
     auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
     if(ChannelData->HostSessionID == SessionID){
-      /* the host leaving closes the channel, the same as when it disconnects */
-      Session::_Close_ChannelClose(ChannelID);
-      Channel->SessionList.Close();
-      ChannelData->~Channel_ScreenShare_Data_t();
-      A_resize(Channel->Buffer, 0);
-      g_pile->ChannelList.unlrec(ChannelID);
-      Channel_BroadcastChannelList();
-      goto StateDone_gt;
+      /* the host leaving keeps the channel for the others and for the host's return: only its stream and voice stop */
+      Channel_DropHost(ChannelID);
     }
     ScreenShare_SetStreamer(ChannelID, SessionID, false, false);
   }

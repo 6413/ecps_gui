@@ -768,6 +768,29 @@ struct dynamic_config_t {
   }
 };
 
+// What happens to the encoded frames on the way out, for the perf log. Written by the encode thread and the network
+// loop, read and reset once a second by the gui (perf_log_tick)
+struct send_debug_t {
+  std::atomic<std::uint64_t> queued{0};        // frames put in the send queue
+  std::atomic<std::uint64_t> sent{0};          // frames sent whole
+  std::atomic<std::uint64_t> flushed{0};       // frames thrown away from the queue when a keyframe came
+  std::atomic<std::uint64_t> backlog_idrs{0};  // keyframes asked for because the queue was long
+  std::atomic<std::uint64_t> lock_misses{0};   // frames lost because the queue was locked too long
+  std::atomic<std::uint64_t> passes{0};        // send passes with something to send
+  std::atomic<std::uint64_t> chunks{0};        // 1 KB packets sent
+  std::atomic<std::uint64_t> cap_stops{0};     // passes that stopped at the packet limit with frames left
+  std::atomic<std::uint64_t> bucket_stops{0};  // passes that stopped because the bitrate budget was used up
+  std::atomic<std::uint64_t> send_us{0};       // time spent sending
+  std::atomic<std::uint64_t> max_send_us{0};   // longest single pass
+  std::atomic<std::uint64_t> max_gap_us{0};    // longest wait between passes while frames waited
+  std::atomic<std::uint64_t> max_queue{0};     // most frames waiting at once
+
+  static void raise(std::atomic<std::uint64_t>& value, std::uint64_t to) {
+    std::uint64_t now = value.load(std::memory_order_relaxed);
+    while (to > now && !value.compare_exchange_weak(now, to, std::memory_order_relaxed)) {}
+  }
+}send_debug;
+
 struct render_thread_t {
   render_thread_t() {
     window_icon = engine.image_load("icons/ecps_logo.png");
@@ -1708,10 +1731,15 @@ int main() {
           if (frame_list_lock.owns_lock()) {
             // a backlog is latency on the viewer side, a keyframe lets the queue be dropped safely
             auto backlog_now = std::chrono::steady_clock::now();
-            if (!is_keyframe && flow.FrameList.Usage() > dynamic_config_t::get_adaptive_queue_size() &&
+            // a few frames waiting is a burst the sender catches up on, dropping them all for a keyframe is worse:
+            // only a queue of about a sixth of a second is let go
+            std::size_t backlog_limit = std::max<std::size_t>(dynamic_config_t::get_adaptive_queue_size(),
+              dynamic_config_t::get_target_framerate() / 6);
+            if (!is_keyframe && flow.FrameList.Usage() > backlog_limit &&
               backlog_now - last_backlog_idr > std::chrono::seconds(1)) {
               rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
               last_backlog_idr = backlog_now;
+              send_debug.backlog_idrs.fetch_add(1, std::memory_order_relaxed);
             }
 
             if (is_keyframe) {
@@ -1720,6 +1748,7 @@ int main() {
               if (head != flow.FrameList.dst && flow.FrameList[head].SentOffset) {
                 ++ecps_backend.share.frame_index;
               }
+              send_debug.flushed.fetch_add(flow.FrameList.Usage(), std::memory_order_relaxed);
               while (flow.FrameList.Usage() > 0) {
                 flow.FrameList.unlrec(flow.FrameList.GetNodeFirst());
               }
@@ -1730,9 +1759,12 @@ int main() {
             f->vec = std::move(rt->screen_encoder.current_packet_.data);
             f->SentOffset = 0;
             f->keyframe = is_keyframe;
+            send_debug.queued.fetch_add(1, std::memory_order_relaxed);
+            send_debug_t::raise(send_debug.max_queue, flow.FrameList.Usage());
           }
           else {
             rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
+            send_debug.lock_misses.fetch_add(1, std::memory_order_relaxed);
           }
         }
 
@@ -1933,9 +1965,18 @@ int main() {
     auto& flow = ecps_backend.share.m_NetworkFlow;
     flow.Bucket = std::min(flow.Bucket + static_cast<int64_t>(bits_to_add), static_cast<int64_t>(flow.BucketSize));
 
-    // several frames can go in one tick, a late tick must not lower the frame rate
-    const size_t max_chunks = dynamic_config_t::get_adaptive_chunk_count();
+    if (flow.FrameList.Usage() > 0) {
+      send_debug_t::raise(send_debug.max_gap_us, DeltaTime / 1000);
+    }
+
+    // several frames can go in one tick, a late tick must not lower the frame rate. The limit is what the bitrate
+    // budget holds, not a fixed packet count: a fixed count capped the upload at count x ticks per second
+    const size_t max_chunks = std::clamp<size_t>(
+      (size_t)std::max<int64_t>(flow.Bucket, 0) / (0x400 * 8) + 1, dynamic_config_t::get_adaptive_chunk_count(), 512);
     size_t chunks_left = max_chunks;
+    auto pass_start = std::chrono::steady_clock::now();
+    std::uint64_t pass_chunks = 0;
+    bool bucket_stop = false;
 
     while (chunks_left > 0) {
       auto flnr = flow.FrameList.GetNodeFirst();
@@ -1957,12 +1998,17 @@ int main() {
       bool blocked = false;
       for (; sent_offset < Possible && chunks_left > 0; sent_offset++, chunks_left--) {
         uintptr_t DataSize = std::min<uintptr_t>(f->vec.size() - sent_offset * 0x400, 0x400);
-        if (flow.Bucket - static_cast<int64_t>(DataSize * 8) < min_bucket ||
-          co_await ecps_backend.write_stream(sent_offset, Possible, Flag, &f->vec[sent_offset * 0x400], DataSize)) {
+        if (flow.Bucket - static_cast<int64_t>(DataSize * 8) < min_bucket) {
+          bucket_stop = true;
+          blocked = true;
+          break;
+        }
+        if (co_await ecps_backend.write_stream(sent_offset, Possible, Flag, &f->vec[sent_offset * 0x400], DataSize)) {
           blocked = true;
           break;
         }
         flow.Bucket -= static_cast<int64_t>(DataSize * 8);
+        ++pass_chunks;
       }
 
       f->SentOffset = sent_offset;
@@ -1972,6 +2018,21 @@ int main() {
       }
       flow.FrameList.unlrec(flnr);
       ++ecps_backend.share.frame_index;
+      send_debug.sent.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    if (pass_chunks || bucket_stop) {
+      auto pass_us = (std::uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pass_start).count();
+      send_debug.passes.fetch_add(1, std::memory_order_relaxed);
+      send_debug.chunks.fetch_add(pass_chunks, std::memory_order_relaxed);
+      send_debug.send_us.fetch_add(pass_us, std::memory_order_relaxed);
+      send_debug_t::raise(send_debug.max_send_us, pass_us);
+      if (bucket_stop) {
+        send_debug.bucket_stops.fetch_add(1, std::memory_order_relaxed);
+      }
+      else if (chunks_left == 0 && flow.FrameList.Usage() > 0) {
+        send_debug.cap_stops.fetch_add(1, std::memory_order_relaxed);
+      }
     }
 
     co_return 0;

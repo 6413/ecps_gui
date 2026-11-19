@@ -181,6 +181,9 @@ struct Channel_ScreenShare_Data_t{
   /* the channel's password is not kept, only a keyed hash of it */
   bool HasPassword = false;
   std::array<uint8_t, 32> PasswordHash{};
+  /* who made it, by name. The channel stays when its host leaves: it is shown under this name, and the one with
+     this name becomes its host again on joining */
+  char OwnerName[32] = {};
 };
 
 struct pile_t{

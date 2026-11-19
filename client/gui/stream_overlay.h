@@ -134,6 +134,7 @@
         debug_sample.share_kbps_history.push(debug_sample.share_kbps);
         debug_sample.share_fps_history.push(debug_sample.share_fps);
         debug_sample.ping_history.push(ecps_backend.ping_ms);
+        perf_log_tick();
       }
       debug_sample.view_packets = view_packets;
       debug_sample.view_bytes = view_bytes;
@@ -144,6 +145,180 @@
       debug_sample.share_frames = shared;
       debug_sample.voices = midi_host.synth.active_voices();
       debug_sample.at = now;
+    }
+  }
+
+  // ---- performance in the log -------------------------------------------------------------------------------
+  // One line every 30 s while sharing or watching, with what each step takes, and a warning (at most once a minute
+  // of each kind) when something holds the stream back, saying where. Runs once a second, from update_debug_sample.
+  // The viewer's line is the one that tells a slow stream apart: frames that never arrive (network, server) or
+  // frames that arrive but are not decoded in time (this computer)
+  struct perf_log_t {
+    std::chrono::steady_clock::time_point summary_at = std::chrono::steady_clock::now();
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> warned_at;
+    int share_slow_seconds = 0;
+    int decode_behind_seconds = 0;
+    std::uint64_t frame_total = 0, frame_drop = 0, packet_total = 0, packet_drop = 0;
+    // send_debug summed (or the most) since the last summary
+    std::uint64_t queued = 0, sent = 0, flushed = 0, backlog_idrs = 0, lock_misses = 0, passes = 0, chunks = 0,
+      cap_stops = 0, bucket_stops = 0, send_us = 0, max_send_us = 0, max_gap_us = 0, max_queue = 0;
+  } perf_log;
+
+  // once a second: what the sending did, with a warning when frames were thrown away
+  void perf_collect_send(bool sharing) {
+    auto take = [](std::atomic<std::uint64_t>& value) { return value.exchange(0, std::memory_order_relaxed); };
+    std::uint64_t flushed = take(send_debug.flushed), backlog_idrs = take(send_debug.backlog_idrs),
+      lock_misses = take(send_debug.lock_misses), max_queue = take(send_debug.max_queue), max_gap_us = take(send_debug.max_gap_us),
+      queued = take(send_debug.queued), sent = take(send_debug.sent), cap_stops = take(send_debug.cap_stops),
+      bucket_stops = take(send_debug.bucket_stops);
+    perf_log.queued += queued;
+    perf_log.sent += sent;
+    perf_log.flushed += flushed;
+    perf_log.backlog_idrs += backlog_idrs;
+    perf_log.lock_misses += lock_misses;
+    perf_log.passes += take(send_debug.passes);
+    perf_log.chunks += take(send_debug.chunks);
+    perf_log.cap_stops += cap_stops;
+    perf_log.bucket_stops += bucket_stops;
+    perf_log.send_us += take(send_debug.send_us);
+    perf_log.max_send_us = std::max(perf_log.max_send_us, take(send_debug.max_send_us));
+    perf_log.max_gap_us = std::max(perf_log.max_gap_us, max_gap_us);
+    perf_log.max_queue = std::max(perf_log.max_queue, max_queue);
+    if (!sharing) {
+      return;
+    }
+    if (flushed || lock_misses) {
+      perf_warn("send_drop", "threw away " + std::to_string(flushed) + " waiting frames for a keyframe (" +
+        std::to_string(backlog_idrs) + " asked for by a long queue, up to " + std::to_string(max_queue) + " waited), " +
+        std::to_string(lock_misses) + " lost to a locked queue, in the last second: " + std::to_string(queued) + " queued, " +
+        std::to_string(sent) + " sent, " + std::to_string(cap_stops) + " passes hit the packet limit, " +
+        std::to_string(bucket_stops) + " the bitrate budget, longest wait between passes " + number_text(max_gap_us / 1000.0, 1) + " ms");
+    }
+  }
+
+  void perf_warn(const std::string& kind, const std::string& text) {
+    auto now = std::chrono::steady_clock::now();
+    auto it = perf_log.warned_at.find(kind);
+    if (it != perf_log.warned_at.end() && now - it->second < std::chrono::seconds(60)) {
+      return;
+    }
+    perf_log.warned_at[kind] = now;
+    fan::print("perf: " + text);
+  }
+
+  void perf_log_tick() {
+    auto* rt = get_render_thread();
+    if (!rt) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    bool sharing = ecps_backend.is_streaming_to_any_channel();
+    bool watching = debug_sample.view_pps > 0.5f;
+
+    // what was lost in the last second
+    auto& stats = ecps_backend.view.m_stats;
+    std::uint64_t packet_drops_now = stats.Packet_HeadDrop + stats.Packet_BodyDrop;
+    std::uint64_t frames = stats.Frame_Total - perf_log.frame_total;
+    std::uint64_t frames_lost = stats.Frame_Drop - perf_log.frame_drop;
+    std::uint64_t packets = stats.Packet_Total - perf_log.packet_total;
+    std::uint64_t packets_lost = packet_drops_now - perf_log.packet_drop;
+    perf_log.frame_total = stats.Frame_Total;
+    perf_log.frame_drop = stats.Frame_Drop;
+    perf_log.packet_total = stats.Packet_Total;
+    perf_log.packet_drop = packet_drops_now;
+    f32_t frame_loss = frames ? frames_lost * 100.f / frames : 0.f;
+    f32_t packet_loss = packets + packets_lost ? packets_lost * 100.f / (packets + packets_lost) : 0.f;
+
+    std::string encoder_name = rt->screen_encoder.encoder_.get_codec_name();
+    auto& decoder = rt->screen_decoder.decoder_;
+    std::string decoder_name = decoder.using_hardware_ ? decoder.get_hardware_type_string() : std::string("CPU");
+    std::size_t queued = ecps_backend.share.m_NetworkFlow.FrameList.Usage();
+
+    perf_collect_send(sharing);
+
+    if (sharing) {
+      int target = std::max(1, (int)rt->screen_encoder.config_.frame_rate);
+      f32_t budget = 1000.f / target;
+      f32_t capture_ms = stage_times.capture.ms.load();
+      f32_t encode_ms = stage_times.encode.ms.load();
+      perf_log.share_slow_seconds = debug_sample.share_fps < target * 0.8f ? perf_log.share_slow_seconds + 1 : 0;
+      if (perf_log.share_slow_seconds == 5) {
+        std::string why;
+        if (encode_ms > budget * 0.8f) {
+          why = "encoding takes " + number_text(encode_ms, 1) + " ms of the " + number_text(budget, 1) + " ms a frame has (" +
+            encoder_name + (encoder_name.rfind("lib", 0) == 0 ? ", the CPU encoder: try Encode on GPU" : "") + ")";
+        }
+        else if (capture_ms > budget * 0.8f) {
+          why = "capturing takes " + number_text(capture_ms, 1) + " ms of the " + number_text(budget, 1) + " ms a frame has";
+        }
+        else if (queued > 2) {
+          why = std::to_string(queued) + " frames wait to be sent: the bitrate is too high for the upload";
+        }
+        else {
+          why = "capture and encoding are fast enough (" + number_text(capture_ms, 1) + " + " + number_text(encode_ms, 1) +
+            " ms), the screen gives fewer new frames: a still screen, or a game capped below " + std::to_string(target) + " fps";
+        }
+        perf_warn("share_fps", "sending " + number_text(debug_sample.share_fps, 0) + " of " + std::to_string(target) + " fps: " + why);
+      }
+    }
+    else {
+      perf_log.share_slow_seconds = 0;
+    }
+
+    if (watching) {
+      bool behind = debug_sample.assembled_fps > debug_sample.decoded_fps + 3.f;
+      perf_log.decode_behind_seconds = behind ? perf_log.decode_behind_seconds + 1 : 0;
+      if (perf_log.decode_behind_seconds == 5) {
+        perf_warn("decode", "this computer decodes too slowly: " + number_text(debug_sample.assembled_fps, 0) + " frames/s come in, " +
+          number_text(debug_sample.decoded_fps, 0) + " decoded, decode takes " + number_text(stage_times.decode.ms.load(), 1) +
+          " ms (" + decoder_name + (decoder.using_hardware_ ? "" : ": try Decode on GPU") + ")");
+      }
+      if (frames >= 5 && frame_loss > 5.f) {
+        perf_warn("frame_loss", "lost " + number_text(frame_loss, 0) + "% of frames in the last second (" + std::to_string(frames_lost) +
+          " of " + std::to_string(frames) + "), " + number_text(packet_loss, 1) + "% of packets, ping " +
+          number_text(ecps_backend.ping_ms, 0) + " ms: data is lost between the sharer, the server and here");
+      }
+    }
+    else {
+      perf_log.decode_behind_seconds = 0;
+    }
+
+    if ((sharing || watching) && ecps_backend.ping_ms > 150.f) {
+      perf_warn("ping", "ping to the server is " + number_text(ecps_backend.ping_ms, 0) + " ms");
+    }
+
+    if ((sharing || watching) && now - perf_log.summary_at >= std::chrono::seconds(30)) {
+      perf_log.summary_at = now;
+      if (sharing) {
+        fan::print("perf: sending " + size_label(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " " +
+          number_text(debug_sample.share_fps, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
+          number_text(debug_sample.share_kbps / 1000.0, 1) + " Mbit/s, capture " + number_text(stage_times.capture.ms.load(), 1) +
+          " ms, encode " + number_text(stage_times.encode.ms.load(), 1) + " ms (" + encoder_name + "), " +
+          std::to_string(queued) + " frames queued");
+        // where the frames went: sent whole, thrown away for a keyframe, or lost before the queue. And how the network
+        // loop kept up: packets per pass, passes stopped by the packet limit or the bitrate budget, the longest stall
+        auto& p = perf_log;
+        f64_t seconds = 30.0;
+        fan::print("perf: send path " + number_text(p.queued / seconds, 1) + " frames/s queued, " + number_text(p.sent / seconds, 1) +
+          " sent, " + std::to_string(p.flushed) + " thrown away (" + std::to_string(p.backlog_idrs) + " keyframes for a long queue), " +
+          std::to_string(p.lock_misses) + " lost to a locked queue, most waiting " + std::to_string(p.max_queue) + ". " +
+          number_text(p.passes / seconds, 0) + " passes/s, " + number_text(p.passes ? (f64_t)p.chunks / p.passes : 0.0, 1) +
+          " packets each, " + number_text(p.passes ? p.send_us / 1000.0 / p.passes : 0.0, 2) + " ms each (longest " +
+          number_text(p.max_send_us / 1000.0, 1) + " ms), " + std::to_string(p.cap_stops) + " stopped at the packet limit, " +
+          std::to_string(p.bucket_stops) + " at the bitrate budget, longest stall " + number_text(p.max_gap_us / 1000.0, 1) + " ms");
+      }
+      perf_log.queued = perf_log.sent = perf_log.flushed = perf_log.backlog_idrs = perf_log.lock_misses = perf_log.passes = 0;
+      perf_log.chunks = perf_log.cap_stops = perf_log.bucket_stops = perf_log.send_us = 0;
+      perf_log.max_send_us = perf_log.max_gap_us = perf_log.max_queue = 0;
+      if (watching) {
+        // "fps" is what arrives whole. Lower than the sharer sends: lost on the way. Decoded lower than that: this computer
+        fan::print("perf: receiving " + size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) + " " +
+          number_text(debug_sample.assembled_fps, 0) + " fps " + number_text(debug_sample.view_kbps / 1000.0, 1) +
+          " Mbit/s, decoded " + number_text(debug_sample.decoded_fps, 0) + "/s, decode " + number_text(stage_times.decode.ms.load(), 1) +
+          " ms (" + decoder_name + "), upload " + number_text(stage_times.upload.ms.load(), 1) + " ms, lost " +
+          number_text(frame_loss, 1) + "% frames " + number_text(packet_loss, 1) + "% packets, ping " +
+          number_text(ecps_backend.ping_ms, 0) + " ms");
+      }
     }
   }
 
