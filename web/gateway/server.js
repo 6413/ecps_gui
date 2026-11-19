@@ -81,10 +81,11 @@ function bridge(ws) {
     ecps.on('ready', () => send({ t: 'ready', sessionId: ecps.sessionId }))
     ecps.on('channels', channels => send({ t: 'channels', channels }))
     ecps.on('users', list => send({ t: 'users', ...list }))
+    ecps.on('streamers', list => send({ t: 'streamers', ...list }))
     for (const t of ['joined', 'created', 'kicked']) {
       ecps.on(t, channel => send({ t, channel }))
     }
-    ecps.on('channelError', () => send({ t: 'error', message: 'could not enter that channel' }))
+    ecps.on('channelError', (reason, channel) => send({ t: 'channelError', reason, channel }))
     ecps.on('keyframeWanted', () => send({ t: 'keyframe' }))
     ecps.on('closed', reason => {
       send({ t: 'closed', reason })
@@ -128,7 +129,13 @@ function bridge(ws) {
       }
       case 'join': {
         if (Number.isInteger(message.channel)) {
-          ecps.join(message.channel & 0xffff)
+          ecps.join(message.channel & 0xffff, typeof message.password == 'string' ? message.password : '')
+        }
+        break
+      }
+      case 'setPassword': {
+        if (Number.isInteger(message.channel) && typeof message.password == 'string') {
+          ecps.setPassword(message.channel & 0xffff, message.password)
         }
         break
       }
@@ -140,6 +147,19 @@ function bridge(ws) {
       }
       case 'share': {
         ecps.createChannel()
+        break
+      }
+      // sharing in the channel this session is in, next to watching
+      case 'shareHere': {
+        ecps.setStreaming(true)
+        break
+      }
+      case 'stopShare': {
+        ecps.setStreaming(false)
+        break
+      }
+      case 'watch': {
+        ecps.watch(Number.isInteger(message.source) ? message.source >>> 0 : null)
         break
       }
       case 'keyframe': {

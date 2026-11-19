@@ -20,8 +20,17 @@ export const C2S = {
   FileResponse: 17,
   FileChunk: 18,
   FileAck: 19,
-  FileCancel: 20
+  FileCancel: 20,
+  // sharing in a channel joined (not only the one made), and picking whose screen to watch, like the app
+  StreamState: 35,
+  ViewWatch: 36,
+  // newer servers only (the ones with channel passwords): sent only for a channel that has one, or by its host
+  JoinChannelPassword: 31,
+  SetChannelPassword: 32
 }
+// why a join failed, the server's JoinChannel_Error_Reason_t
+const JOIN_ERROR = ['invalidType', 'invalidChannel', 'passwordRequired', 'wrongPassword']
+const CHANNEL_PASSWORD_MAX = 64
 export const S2C = {
   KeepAlive: 0,
   KeyExchange: 1,
@@ -38,14 +47,17 @@ export const S2C = {
   FileResponse: 19,
   FileChunk: 20,
   FileAck: 21,
-  FileCancel: 22
+  FileCancel: 22,
+  Streamers: 27
 }
 // body size of every S2C command, in protocol order
 // (the file messages are Offer 178, Response 43, Chunk 4132, Ack 18, Cancel 10). The ones after them are read
 // and skipped, a newer server sends them to every client: host MIDI 5, view MIDI 5, host cursor 7, the session's
-// name 33 (also sent once after login), the channel's streamers 35, and the log messages 7, 7 and 1041
+// name 33 (also sent once after login), the channel's streamers 35, the log messages 7, 7 and 1041, and the voice
+// chat's members 67 (only sent to clients that asked about voice, which this one doesn't, but a size it knows can't
+// close the connection)
 const S2C_SIZE = [0, 80, 8, 7, 1, 7, 1, 3, 2, 4, 3, 10, 10, 10, 12, 5, 4, 4, 178, 43, 4132, 18, 10,
-  5, 5, 7, 33, 35, 7, 7, 1041]
+  5, 5, 7, 33, 35, 7, 7, 1041, 67]
 
 const UDP_C2S = { KeepAlive: 0, HostStreamData: 1, HostAudioData: 3 }
 const UDP_S2C = { KeepAlive: 0, ViewStreamData: 1, ViewAudioData: 3 }
@@ -180,6 +192,13 @@ function u16(value) {
   const b = Buffer.alloc(2)
   b.writeUInt16LE(value)
   return b
+}
+
+// the fixed 64 byte password field: UTF-8, cut to 63 bytes so it always ends in a zero
+function passwordField(password) {
+  const field = Buffer.alloc(CHANNEL_PASSWORD_MAX)
+  Buffer.from(String(password ?? ''), 'utf8').subarray(0, CHANNEL_PASSWORD_MAX - 1).copy(field)
+  return field
 }
 
 function cString(b) {
@@ -423,7 +442,7 @@ export class EcpsClient extends EventEmitter {
       }
       case S2C.JoinChannel_Error:
       case S2C.CreateChannel_Error: {
-        this.emit('channelError')
+        this.emit('channelError', JOIN_ERROR[body[0]] ?? 'unknown', this.joining)
         break
       }
       case S2C.KickedFromChannel: {
@@ -438,6 +457,7 @@ export class EcpsClient extends EventEmitter {
             id: c.readUInt16LE(0),
             users: c.readUInt32LE(3),
             name: cString(c.subarray(7, 71)),
+            locked: c[71] != 0,
             hostSessionId: c.readUInt32LE(72)
           })
         }
@@ -451,6 +471,14 @@ export class EcpsClient extends EventEmitter {
           users.push({ sessionId: s.readUInt32LE(0), name: cString(s.subarray(12, 44)), isHost: s[44] != 0 })
         }
         this.emit('users', { channel: body.readUInt16LE(0), users })
+        break
+      }
+      case S2C.Streamers: {
+        const streamers = []
+        for (let i = 0; i < Math.min(body[2], 8); ++i) {
+          streamers.push(body.readUInt32LE(3 + i * 4))
+        }
+        this.emit('streamers', { channel: body.readUInt16LE(0), streamers })
         break
       }
       case S2C.ViewToShare: {
@@ -483,8 +511,54 @@ export class EcpsClient extends EventEmitter {
     this.writeCommand(C2S.CreateChannel, Buffer.alloc(1))
   }
 
-  join(channel) {
-    this.writeCommand(C2S.JoinChannel, u16(channel))
+  // with a password only when one is given: a server without channel passwords doesn't know that command
+  join(channel, password) {
+    this.joining = channel
+    if (password) {
+      this.writeCommand(C2S.JoinChannelPassword, Buffer.concat([u16(channel), passwordField(password)]))
+    }
+    else {
+      this.writeCommand(C2S.JoinChannel, u16(channel))
+    }
+  }
+
+  // whose screen to receive, null for the channel's host. What came from the one before is dropped, the new one's
+  // stream starts at a keyframe
+  watch(source) {
+    if (!this.channel) {
+      return
+    }
+    const b = Buffer.alloc(11)
+    b.writeUInt16LE(this.channel.id, 0)
+    b.writeUInt32LE(this.channel.sessionId, 2)
+    b[6] = source == null ? 0 : 1
+    b.writeUInt32LE(source ?? 0, 7)
+    this.writeCommand(C2S.ViewWatch, b)
+    this.frames = new Map()
+    this.lastDelivered = -1
+    this.waitingForKeyframe = true
+    this.lastKeyframeRequest = 0
+    this.requestKeyframe()
+  }
+
+  // says this session started or stopped sharing, so it shows in everyone's list of who shares
+  setStreaming(streaming) {
+    if (!this.channel) {
+      return
+    }
+    const b = Buffer.alloc(7)
+    b.writeUInt16LE(this.channel.id, 0)
+    b.writeUInt32LE(this.channel.sessionId, 2)
+    b[6] = streaming ? 1 : 0
+    this.writeCommand(C2S.StreamState, b)
+    if (!streaming) {
+      this.sendQueue.length = 0
+    }
+  }
+
+  // only the channel's host may, an empty password removes it
+  setPassword(channel, password) {
+    this.writeCommand(C2S.SetChannelPassword, Buffer.concat([u16(channel), passwordField(password)]))
   }
 
   requestKeyframe() {

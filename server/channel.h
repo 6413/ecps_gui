@@ -97,6 +97,8 @@ ChannelList_NodeReference_t AddChannel_ScreenShare(Protocol_SessionID_t HostSess
 void Channel_DropHost(Protocol_ChannelID_t ChannelID){
   auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
   ChannelData->HostSessionID = (Protocol_SessionID_t::Type)-1;
+  /* control of the host's mouse, keyboard and MIDI was the host's to give: it ends with the host leaving */
+  ChannelData->Flag = 0;
 }
 
 /* the owner joining a channel without a host is its host again */

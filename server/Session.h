@@ -17,8 +17,15 @@ bool IsInvalid(Protocol_SessionID_t SessionID){
   return false;
 }
 
+/* to a session that is gone (a channel without its host, a closed one) nothing is sent */
 void WriteCommand(Protocol_SessionID_t SessionID, uint32_t ID, Protocol_CI_t Command, auto&&...args){
+  if(IsInvalid(SessionID)){
+    return;
+  }
   auto Session = &g_pile->SessionList[SessionID];
+  if(Session->TCP.peer == nullptr){
+    return;
+  }
   TCP_WriteCommand(Session->TCP.peer, ID, Command, args...);
 }
 

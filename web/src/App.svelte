@@ -59,7 +59,17 @@
   let audio = null
   let audioSharer = null
   let pendingStream = null
+  // { channel, password } to join once the next session is ready
   let pendingJoin = null
+  // the channel asking for its password: { channel, text, message }
+  let lockPrompt = $state(null)
+  let newChannelPassword = $state('')
+  // sharing and watching are apart, like in the app: in a channel you can share and watch someone else at once
+  let sharing = $state(false)
+  // who shares in the channel (session ids, from the server), and whose screen this one shows
+  let streamers = $state([])
+  let watched = $state(null)
+  let passwordNote = $state('')
   let reconnectTimer = null
   let retryMs = 500
   let destroyed = false
@@ -71,7 +81,11 @@
   const WHEEL_SPEED = 0.002
 
   const users = $derived(current ? usersByChannel[current.channel] ?? [] : [])
-  const visibleChannels = $derived(channels.filter(c => c.users > 0))
+  // empty ones too: a channel stays on the server after everyone left, like in the app
+  const visibleChannels = $derived(channels)
+  const currentLocked = $derived(channels.find(c => c.id == current?.channel)?.locked ?? false)
+  // the host by the server's list: the one who made it, or its maker come back to a channel that stayed
+  const isHost = $derived(current != null && channels.find(c => c.id == current.channel)?.hostSessionId == sessionId)
 
   function send(message) {
     if (ws?.readyState == WebSocket.OPEN) {
@@ -145,7 +159,7 @@
           send({ t: 'share' })
         }
         else if (pendingJoin != null) {
-          send({ t: 'join', channel: pendingJoin })
+          send({ t: 'join', channel: pendingJoin.channel, password: pendingJoin.password })
           pendingJoin = null
         }
         break
@@ -165,12 +179,23 @@
       }
       case 'joined': {
         current = { channel: message.channel, role: 'viewer' }
-        startViewer()
+        streamers = []
+        watched = null
+        // the server sends who shares right after the join, the screen to show is picked from that
         break
       }
       case 'created': {
         current = { channel: message.channel, role: 'host' }
+        streamers = []
+        watched = null
         startSharing()
+        break
+      }
+      case 'streamers': {
+        if (message.channel == current?.channel) {
+          streamers = message.streamers
+          pickWatched()
+        }
         break
       }
       case 'kicked': {
@@ -187,6 +212,19 @@
         error = message.message
         break
       }
+      case 'channelError': {
+        if (message.reason == 'passwordRequired' || message.reason == 'wrongPassword') {
+          lockPrompt = {
+            channel: message.channel,
+            text: '',
+            message: message.reason == 'wrongPassword' ? 'Wrong password' : 'This channel has a password'
+          }
+        }
+        else {
+          error = 'could not enter that channel'
+        }
+        break
+      }
       case 'closed': {
         error = message.reason
         break
@@ -194,8 +232,38 @@
     }
   }
 
+  // the screen shown: the one picked while it still shares, else the first one sharing that isn't this session
+  function pickWatched() {
+    const others = streamers.filter(id => id != sessionId)
+    if (watched != null && others.includes(watched)) {
+      return
+    }
+    watchSource(others[0] ?? null)
+  }
+
+  function watchSource(source) {
+    if (source == watched && (source == null || viewer)) {
+      return
+    }
+    watched = source
+    if (source == null) {
+      stopViewer()
+      return
+    }
+    send({ t: 'watch', source })
+    startViewer()
+  }
+
+  function stopViewer() {
+    viewer?.close()
+    viewer = null
+    audio?.close()
+    audio = null
+    resetZoom()
+  }
+
   function startViewer() {
-    stopMedia()
+    stopViewer()
     const requestKeyframe = () => send({ t: 'keyframe' })
     const onError = text => { error = text }
     viewer = useMse ? new MseViewer(video, requestKeyframe, onError) : new Viewer(canvas, requestKeyframe, onError)
@@ -207,6 +275,9 @@
   async function startSharing() {
     const stream = pendingStream
     pendingStream = null
+    if (!stream) {
+      return
+    }
     sharer = new Sharer(
       stream,
       packet => {
@@ -214,13 +285,15 @@
           ws.send(packet)
         }
       },
-      leave,
+      stopSharing,
       text => { error = text }
     )
     if (!await sharer.start()) {
-      leave()
+      stopSharing()
       return
     }
+    sharing = true
+    send({ t: 'shareHere' })
     const track = stream.getAudioTracks()[0]
     if (track && audioShareSupported) {
       audioSharer = new AudioSharer(
@@ -238,16 +311,23 @@
     }
   }
 
-  function stopMedia() {
-    viewer?.close()
-    viewer = null
-    resetZoom()
+  // stops sending, the channel and the screen watched stay
+  function stopSharing() {
     sharer?.stop()
     sharer = null
-    audio?.close()
-    audio = null
     audioSharer?.stop()
     audioSharer = null
+    if (sharing) {
+      send({ t: 'stopShare' })
+    }
+    sharing = false
+  }
+
+  function stopMedia() {
+    stopViewer()
+    stopSharing()
+    streamers = []
+    watched = null
   }
 
   // the server can't leave a channel yet, a new session does the same thing
@@ -257,15 +337,46 @@
     connect()
   }
 
-  function join(channel) {
+  // a locked channel asks for its password first, its host gets in without
+  function join(channel, password = '') {
     error = ''
+    const info = channels.find(c => c.id == channel)
+    if (info?.locked && !password && info.hostSessionId != sessionId) {
+      lockPrompt = { channel, text: '', message: '' }
+      return
+    }
+    lockPrompt = null
     if (current) {
-      pendingJoin = channel
+      pendingJoin = { channel, password }
       freshSession()
     }
     else {
-      send({ t: 'join', channel })
+      send({ t: 'join', channel, password })
     }
+  }
+
+  function submitChannelPassword(event) {
+    event.preventDefault()
+    if (lockPrompt?.text) {
+      join(lockPrompt.channel, lockPrompt.text)
+    }
+  }
+
+  // the host's channel: set a password, or remove it with an empty one
+  function setChannelPassword(event, remove = false) {
+    event?.preventDefault()
+    if (!isHost) {
+      return
+    }
+    send({ t: 'setPassword', channel: current.channel, password: remove ? '' : newChannelPassword })
+    passwordNote = remove ? 'Password removed' : newChannelPassword ? 'Password set' : ''
+    newChannelPassword = ''
+  }
+
+  // everyone in it but the host. A channel stays after its host leaves, then all in it are watching
+  function watching(channel) {
+    const hostHere = channel.hostSessionId != 0xffffffff
+    return Math.max(channel.users - (hostHere ? 1 : 0), 0)
   }
 
   function leave() {
@@ -290,8 +401,9 @@
     catch {
       return
     }
+    // in a channel: share into it and keep watching. Else a channel of its own is made for it
     if (current) {
-      freshSession()
+      startSharing()
     }
     else {
       send({ t: 'share' })
@@ -535,13 +647,61 @@
           {#each visibleChannels as channel (channel.id)}
             <li class:active={current?.channel == channel.id}>
               <button class="row" disabled={status != 'online' || !viewSupported} onclick={() => join(channel.id)}>
-                <span>{channel.name}{channel.hostSessionId == sessionId ? ' (you)' : ''}</span>
-                <span class="muted">{Math.max(channel.users - 1, 0)} watching</span>
+                <span>
+                  {#if channel.locked}<span class="lock" title="Has a password" aria-label="Has a password">&#128274;</span>{/if}
+                  {channel.name}{channel.hostSessionId == sessionId ? ' (you)' : ''}
+                </span>
+                <span class="muted">{watching(channel)} watching</span>
               </button>
+              {#if lockPrompt?.channel == channel.id}
+                <form class="lock-form" onsubmit={submitChannelPassword}>
+                  {#if lockPrompt.message}<span class="muted">{lockPrompt.message}</span>{/if}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input type="password" placeholder="Channel password" autocomplete="off" autofocus
+                    aria-label="Channel password" bind:value={lockPrompt.text}>
+                  <div class="file-actions">
+                    <button class="primary small" type="submit" disabled={!lockPrompt.text}>Join</button>
+                    <button class="small" type="button" onclick={() => { lockPrompt = null }}>Cancel</button>
+                  </div>
+                </form>
+              {/if}
             </li>
           {/each}
         </ul>
       </section>
+
+      {#if isHost}
+        <section>
+          <h2>Channel password</h2>
+          <form onsubmit={e => setChannelPassword(e)}>
+            <input type="password" autocomplete="new-password" aria-label="New channel password"
+              placeholder={currentLocked ? 'New password' : 'No password, anyone can join'} bind:value={newChannelPassword}>
+            <div class="file-actions">
+              <button class="primary small" type="submit" disabled={!newChannelPassword}>Set</button>
+              {#if currentLocked}
+                <button class="small" type="button" onclick={e => setChannelPassword(e, true)}>Remove</button>
+              {/if}
+            </div>
+          </form>
+          {#if passwordNote}<p class="muted hint">{passwordNote}</p>{/if}
+        </section>
+      {/if}
+
+      {#if current && streamers.some(id => id != sessionId)}
+        <section>
+          <h2>Watching</h2>
+          <ul>
+            {#each streamers.filter(id => id != sessionId) as id (id)}
+              <li class:active={watched == id}>
+                <button class="row" disabled={!viewSupported} onclick={() => watchSource(id)}>
+                  <span>{userName(id)}</span>
+                  <span class="muted">{watched == id ? 'showing' : 'sharing'}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
 
       {#if current}
         <section>
@@ -622,22 +782,25 @@
       <div class="actions">
         {#if (shareSupported || cameraSupported) && audioShareSupported}
           <label class="check">
-            <input type="checkbox" bind:checked={shareAudio} onchange={toggleShareAudio} disabled={current?.role == 'host'}>
+            <input type="checkbox" bind:checked={shareAudio} onchange={toggleShareAudio} disabled={sharing}>
             Share audio
           </label>
         {/if}
         {#if shareSupported}
-          <button class="primary" disabled={status != 'online' || current?.role == 'host'} onclick={() => share(false)}>
+          <button class="primary" disabled={status != 'online' || sharing} onclick={() => share(false)}>
             Share screen
           </button>
         {/if}
         {#if cameraSupported}
-          <button disabled={status != 'online' || current?.role == 'host'} onclick={() => share(true)}>
+          <button disabled={status != 'online' || sharing} onclick={() => share(true)}>
             Share camera
           </button>
         {/if}
+        {#if sharing}
+          <button onclick={stopSharing}>Stop sharing</button>
+        {/if}
         {#if current}
-          <button onclick={leave}>{current.role == 'host' ? 'Stop sharing' : 'Leave'}</button>
+          <button onclick={leave}>Leave</button>
         {/if}
       </div>
     {/if}
@@ -653,7 +816,7 @@
   <main class="stage" bind:this={stage}>
     <div
       class="view"
-      class:hidden={current?.role != 'viewer'}
+      class:hidden={watched == null}
       class:zoomed={zoom > 1}
       bind:this={view}
       role="application"
@@ -668,7 +831,7 @@
       <canvas bind:this={canvas} class:hidden={useMse}></canvas>
       <video bind:this={video} class:hidden={!useMse} muted playsinline></video>
     </div>
-    {#if current?.role == 'viewer'}
+    {#if watched != null}
       <div class="controls">
         <button aria-label="Zoom out" disabled={zoom <= 1} onclick={() => zoomAt(zoom / ZOOM_STEP)}>-</button>
         <button aria-label="Reset zoom" disabled={zoom == 1} onclick={resetZoom}>{Math.round(zoom * 100)}%</button>
@@ -678,8 +841,10 @@
         {/if}
         <button onclick={fullscreen}>Fullscreen</button>
       </div>
-    {:else if current?.role == 'host'}
-      <p class="muted">You are sharing your screen.</p>
+    {:else if sharing}
+      <p class="muted">You are sharing your screen. Nobody else here shares.</p>
+    {:else if current}
+      <p class="muted">Nobody shares here yet. Share your screen, or wait for someone.</p>
     {:else}
       <p class="muted">Pick a channel to watch.</p>
     {/if}
@@ -799,6 +964,13 @@
   }
   li.active .row {
     border-color: var(--accent);
+  }
+  .lock {
+    margin-right: 4px;
+    font-size: 0.85em;
+  }
+  .lock-form {
+    margin-top: 6px;
   }
   .user {
     display: flex;
