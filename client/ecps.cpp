@@ -791,6 +791,7 @@ struct send_debug_t {
   std::atomic<std::uint64_t> max_send_us{0};   // longest single pass
   std::atomic<std::uint64_t> max_gap_us{0};    // longest wait between passes while frames waited
   std::atomic<std::uint64_t> max_queue{0};     // most frames waiting at once
+  std::atomic<std::uint64_t> queued_bytes_total{0}; // never reset: the send pacing reads the encoder's real rate from it
 
   static void raise(std::atomic<std::uint64_t>& value, std::uint64_t to) {
     std::uint64_t now = value.load(std::memory_order_relaxed);
@@ -1785,6 +1786,7 @@ int main() {
             f->SentOffset = 0;
             f->keyframe = is_keyframe;
             send_debug.queued.fetch_add(1, std::memory_order_relaxed);
+            send_debug.queued_bytes_total.fetch_add(f->vec.size(), std::memory_order_relaxed);
             send_debug_t::raise(send_debug.max_queue, flow.FrameList.Usage());
           }
           else {
@@ -1984,10 +1986,26 @@ int main() {
       co_return 0;
     }
 
+    // The pacing smooths bursts, it must not hold the stream below what the encoder makes: the encoder can go over its
+    // target (high frame rates, keyframes), and a pace below that only fills the queue until frames are thrown away.
+    // So the rate is the target or what came out of the encoder over the last half second, whichever is higher
+    static uint64_t rate_window_start = ctime;
+    static uint64_t rate_window_bytes = send_debug.queued_bytes_total.load(std::memory_order_relaxed);
+    static double encoder_bps = 0.0;
+    if (ctime - rate_window_start >= 500000000ull) {
+      uint64_t total = send_debug.queued_bytes_total.load(std::memory_order_relaxed);
+      encoder_bps = (total - rate_window_bytes) * 8.0 / ((ctime - rate_window_start) / 1e9);
+      rate_window_bytes = total;
+      rate_window_start = ctime;
+    }
+    double pace_bps = std::max<double>((double)rt->screen_encoder.config_.bitrate, encoder_bps);
+
     double seconds_elapsed = static_cast<double>(DeltaTime) / 1000000000.0;
-    double bits_to_add = seconds_elapsed * rt->screen_encoder.config_.bitrate * bucket_multiplier;
+    double bits_to_add = seconds_elapsed * pace_bps * bucket_multiplier;
 
     auto& flow = ecps_backend.share.m_NetworkFlow;
+    // room for a quarter second at the pace, so a keyframe's debt is paid back in time
+    flow.BucketSize = std::max<uint64_t>(dynamic_config_t::get_adaptive_bucket_size(), (uint64_t)(pace_bps / 4));
     flow.Bucket = std::min(flow.Bucket + static_cast<int64_t>(bits_to_add), static_cast<int64_t>(flow.BucketSize));
 
     if (flow.FrameList.Usage() > 0) {
