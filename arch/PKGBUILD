@@ -1,6 +1,6 @@
 # ECPS client for Arch Linux and the distros built on it (Manjaro, EndeavourOS, CachyOS).
 #
-#   cd ecps_gui/arch
+#   git clone --depth 1 https://github.com/6413/ecps_gui && cd ecps_gui/arch
 #   makepkg -si
 #
 # The same build as the Nix package (nix/package.nix), with Arch's own libraries. The commits of the header
@@ -30,47 +30,53 @@ conflicts=('ecps')
 # the build sets its own flags, like the Nix one: makepkg's _FORTIFY_SOURCE breaks the std module
 options=('!buildflags' '!lto' '!debug' '!strip')
 
-source=("ecps_gui::git+https://github.com/6413/ecps_gui.git"
-  "fan::git+https://github.com/6413/fan.git"
-  "WITCH::git+https://github.com/7244/WITCH.git"
-  "BCOL::git+https://github.com/7244/BCOL.git"
-  "BLL::git+https://github.com/7244/BLL.git"
-  "BVEC::git+https://github.com/7244/BVEC.git"
-  "BDBT::git+https://github.com/7244/BDBT.git"
-  "bcontainer::git+https://github.com/7244/bcontainer.git"
-  "pixfconv::git+https://github.com/7244/pixfconv.git"
-  "PIXF::git+https://github.com/6413/PIXF.git"
-  "VulkanMemoryAllocator::git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
-  "VulkanUtilityLibraries::git+https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git"
-  "VulkanHeaders::git+https://github.com/KhronosGroup/Vulkan-Headers.git"
-  "lunasvg::git+https://github.com/sammycage/lunasvg.git"
-  "box2d::git+https://github.com/erincatto/box2d.git")
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
-
-# the commit flake.nix pins for an input: `WITCH = { url = "github:7244/WITCH/<commit>"; ...`
-_pin() {
-  sed -nE "s|^ *$1 = \{ url = \"github:[^/]+/[^/]+/([0-9a-f]{40})\".*|\1|p" "$srcdir/ecps_gui/flake.nix"
-}
+# No makepkg sources: makepkg clones every git source with its whole history. prepare() fetches each repo at depth 1
+# instead, only the one commit that is built. ecps_gui and fan are their newest commits; the others are the commits
+# flake.nix pins (read from the ecps_gui just fetched), so this and the Nix package never disagree
+source=()
+sha256sums=()
 
 _pinned=(WITCH BCOL BLL BVEC BDBT bcontainer pixfconv PIXF VulkanMemoryAllocator VulkanUtilityLibraries VulkanHeaders lunasvg box2d)
 
-pkgver() {
-  cd ecps_gui
-  local version
-  version=$(sed -nE 's|.*ecps_version = "([^"]+)".*|\1|p' client/version.h)
-  printf "%s.r%s.%s" "${version:-0}" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+# from flake.nix: `WITCH = { url = "github:7244/WITCH/<commit>"; ...` gives 7244/WITCH and the commit
+_flake_url() {
+  sed -nE "s|^ *$1 = \{ url = \"github:([^/]+/[^/]+)/([0-9a-f]{40})\".*|\1 \2|p" "$srcdir/ecps_gui/flake.nix"
+}
+
+# one commit (a hash or a branch) of a GitHub repo into a folder, without the history. Run again, it moves the
+# folder to that commit, fetching only what it doesn't have yet
+_fetch() {
+  local dir=$1 repo=$2 ref=$3
+  if [[ ! -d $dir/.git ]]; then
+    rm -rf "$dir"
+    git init -q "$dir"
+    git -C "$dir" remote add origin "https://github.com/$repo.git"
+  fi
+  git -C "$dir" fetch -q --depth 1 origin "$ref"
+  git -C "$dir" checkout -q --detach FETCH_HEAD
 }
 
 prepare() {
-  local name commit
+  cd "$srcdir"
+  _fetch ecps_gui 6413/ecps_gui HEAD
+  _fetch fan 6413/fan HEAD
+  local name repo commit
   for name in "${_pinned[@]}"; do
-    commit=$(_pin "$name")
+    read -r repo commit <<< "$(_flake_url "$name")"
     if [[ -z $commit ]]; then
       echo "flake.nix pins no commit for $name" >&2
       return 1
     fi
-    git -C "$srcdir/$name" checkout -q --detach "$commit"
+    _fetch "$name" "$repo" "$commit"
   done
+}
+
+pkgver() {
+  cd "$srcdir/ecps_gui"
+  local version
+  version=$(sed -nE 's|.*ecps_version = "([^"]+)".*|\1|p' client/version.h)
+  # a depth 1 clone has no commit count: the commit's date orders the versions
+  printf "%s.%s.g%s" "${version:-0}" "$(git log -1 --format=%cd --date=format:%Y%m%d%H%M)" "$(git rev-parse --short HEAD)"
 }
 
 build() {
