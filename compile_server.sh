@@ -17,10 +17,8 @@ out_dir="$script_dir/build"
 
 cd "$fan_dir"
 
-# only the fan modules the server imports and what they import in turn, not all of fan's core
-only=$(grep -hoE '^[[:space:]]*import[[:space:]]+fan\.[A-Za-z0-9_.]+[[:space:]]*;' "$script_dir"/server/*.cpp "$script_dir"/server/*.h |
-  sed -E 's/.*import[[:space:]]+([^ ;]+).*/\1/' | sort -u | paste -sd, -)
-[[ -n $only ]] || { echo "no fan imports found in the server sources" >&2; exit 1; }
+# only the fan modules the server imports and what they import in turn (the module files), not all of fan's core
+only=$(bash "$script_dir/nix/fan-modules.sh" "$fan_dir" "$script_dir"/server/*.cpp "$script_dir"/server/*.h)
 echo "fan modules for the server: $only"
 
 

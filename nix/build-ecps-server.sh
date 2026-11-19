@@ -49,10 +49,8 @@ for flag in $cflags $ldflags; do
   fi
 done
 
-# only the fan modules the server imports and what they import in turn, not all of fan's core
-only=$(grep -hoE '^[[:space:]]*import[[:space:]]+fan\.[A-Za-z0-9_.]+[[:space:]]*;' "$ecps_src"/server/*.cpp "$ecps_src"/server/*.h |
-  sed -E 's/.*import[[:space:]]+([^ ;]+).*/\1/' | sort -u | paste -sd, -)
-[[ -n $only ]] || { echo "no fan imports found in the server sources" >&2; exit 1; }
+# only the fan modules the server imports and what they import in turn (the module files), not all of fan's core
+only=$(bash "$ecps_src/nix/fan-modules.sh" . "$ecps_src"/server/*.cpp "$ecps_src"/server/*.h)
 echo "fan modules for the server: $only"
 
 xmake f -y -c -m release --compiler="$compiler" --toolchain="$compiler" \
