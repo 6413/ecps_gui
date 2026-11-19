@@ -474,6 +474,8 @@ export class EcpsClient extends EventEmitter {
         break
       }
       case S2C.Streamers: {
+        // only a server that knows who shares sends this, and only that one knows ViewWatch and StreamState
+        this.multiStream = true
         const streamers = []
         for (let i = 0; i < Math.min(body[2], 8); ++i) {
           streamers.push(body.readUInt32LE(3 + i * 4))
@@ -525,7 +527,7 @@ export class EcpsClient extends EventEmitter {
   // whose screen to receive, null for the channel's host. What came from the one before is dropped, the new one's
   // stream starts at a keyframe
   watch(source) {
-    if (!this.channel) {
+    if (!this.channel || !this.multiStream) {
       return
     }
     const b = Buffer.alloc(11)
@@ -543,7 +545,7 @@ export class EcpsClient extends EventEmitter {
 
   // says this session started or stopped sharing, so it shows in everyone's list of who shares
   setStreaming(streaming) {
-    if (!this.channel) {
+    if (!this.channel || !this.multiStream) {
       return
     }
     const b = Buffer.alloc(7)
@@ -747,4 +749,7 @@ export class EcpsClient extends EventEmitter {
   sending = false
   frameIndex = 0
   audioSequence = 0
+  // the server has said who shares (S2C.Streamers): it knows the commands to pick a screen and to announce sharing.
+  // An older one closes the connection on them
+  multiStream = false
 }

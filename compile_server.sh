@@ -17,10 +17,17 @@ out_dir="$script_dir/build"
 
 cd "$fan_dir"
 
+# only the fan modules the server imports and what they import in turn, not all of fan's core
+only=$(grep -hoE '^[[:space:]]*import[[:space:]]+fan\.[A-Za-z0-9_.]+[[:space:]]*;' "$script_dir"/server/*.cpp "$script_dir"/server/*.h |
+  sed -E 's/.*import[[:space:]]+([^ ;]+).*/\1/' | sort -u | paste -sd, -)
+[[ -n $only ]] || { echo "no fan imports found in the server sources" >&2; exit 1; }
+echo "fan modules for the server: $only"
+
+
 xmake f -y -c -m "$mode" --compiler="$compiler" \
   --FAN_WINDOW=n --FAN_2D=n --FAN_GUI=n --FAN_PHYSICS_2D=n --FAN_JSON=y --FAN_NETWORK=y \
   --FAN_VIDEO=n --FAN_FMT=n --FAN_3D=n --FAN_AUDIO=n --FAN_AUDIO_STREAM=n --FAN_WAYLAND_SCREEN=n \
-  --FAN_REFLECTION=n --FAN_SHADERC=n \
+  --FAN_REFLECTION=n --FAN_SHADERC=n --FAN_ONLY="$only" \
   --FAN_DEBUG_INFO=y --main="$main" --ldflags="-lev -lssl -lcrypto"
 xmake -y -j"$(nproc)" a.exe
 

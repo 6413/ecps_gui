@@ -181,7 +181,14 @@
         current = { channel: message.channel, role: 'viewer' }
         streamers = []
         watched = null
-        // the server sends who shares right after the join, the screen to show is picked from that
+        // the host's screen first (all an older server sends). A newer one says right after who shares, and the
+        // screen is picked again from that
+        {
+          const host = channels.find(c => c.id == message.channel)?.hostSessionId
+          if (host != null && host != 0xffffffff && host != sessionId) {
+            watchSource(host)
+          }
+        }
         break
       }
       case 'created': {
