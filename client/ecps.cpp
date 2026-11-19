@@ -202,6 +202,13 @@ struct stage_times_t {
   stage_time_t capture, encode, decode, upload;
 }stage_times;
 
+// how often the window is drawn, measured over each second by the render loop: a stream decoded at 60 still
+// looks like 15 when the window only draws 15 times a second
+struct draw_rate_t {
+  std::atomic<f32_t> fps{0.f};
+  std::atomic<f32_t> slowest_ms{0.f};  // the longest single frame in that second
+}draw_rate;
+
 struct render_thread_t;
 // 0 prints nothing extra. 1 adds the share/view status lines (what the capture, encoder and network are
 // doing, every few seconds). Higher levels print per packet. Set it with -Decps_debug_prints=1
@@ -1567,6 +1574,24 @@ int main() {
       }
 
       render_thread_instance.render([] {});
+      {
+        static auto second_start = std::chrono::steady_clock::now();
+        static auto last_frame = second_start;
+        static int frames = 0;
+        static f32_t slowest_ms = 0.f;
+        auto now = std::chrono::steady_clock::now();
+        slowest_ms = std::max(slowest_ms, std::chrono::duration<f32_t, std::milli>(now - last_frame).count());
+        last_frame = now;
+        ++frames;
+        f32_t seconds = std::chrono::duration<f32_t>(now - second_start).count();
+        if (seconds >= 1.f) {
+          draw_rate.fps.store(frames / seconds, std::memory_order_relaxed);
+          draw_rate.slowest_ms.store(slowest_ms, std::memory_order_relaxed);
+          frames = 0;
+          slowest_ms = 0.f;
+          second_start = now;
+        }
+      }
 
       std::this_thread::yield();
     }

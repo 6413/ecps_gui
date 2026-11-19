@@ -287,7 +287,11 @@
     }
     next_voice_restore = now + std::chrono::seconds(1);
     std::uint32_t session = (std::uint32_t)ecps_backend.session_id.i;
+    // the open channel, or the one joined at start (auto join does not always open it)
     auto channel_id = selected_channel_id;
+    if (!ecps_backend.is_channel_joined(channel_id) && !ecps_backend.channel_info.empty()) {
+      channel_id = ecps_backend.channel_info.front().channel_id;
+    }
     if (!ecps_backend.connected || !ecps_backend.is_channel_joined(channel_id) || !ecps_backend.voice_known(channel_id)) {
       return;
     }
@@ -307,6 +311,7 @@
     voice_chat.muted.store(saved.value("muted", false));
     voice_chat.deafened.store(saved.value("deafened", false));
     voice_chat.join(channel_id);
+    fan::print("voice chat: on again, as it was left on this server");
   }
   std::chrono::steady_clock::time_point next_voice_restore;
   std::uint32_t voice_restored_session = 0;

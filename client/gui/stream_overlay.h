@@ -158,6 +158,7 @@
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> warned_at;
     int share_slow_seconds = 0;
     int decode_behind_seconds = 0;
+    int draw_behind_seconds = 0;
     std::uint64_t frame_total = 0, frame_drop = 0, packet_total = 0, packet_drop = 0;
     // send_debug summed (or the most) since the last summary
     std::uint64_t queued = 0, sent = 0, flushed = 0, backlog_idrs = 0, lock_misses = 0, passes = 0, chunks = 0,
@@ -273,6 +274,15 @@
           number_text(debug_sample.decoded_fps, 0) + " decoded, decode takes " + number_text(stage_times.decode.ms.load(), 1) +
           " ms (" + decoder_name + (decoder.using_hardware_ ? "" : ": try Decode on GPU") + ")");
       }
+      // decoded in time but drawn less often: the window, not the stream
+      f32_t draw_fps = draw_rate.fps.load(std::memory_order_relaxed);
+      bool draw_behind = draw_fps < debug_sample.decoded_fps * 0.8f && debug_sample.decoded_fps > 10.f;
+      perf_log.draw_behind_seconds = draw_behind ? perf_log.draw_behind_seconds + 1 : 0;
+      if (perf_log.draw_behind_seconds == 5) {
+        perf_warn("draw", "this window draws only " + number_text(draw_fps, 0) + " times a second (slowest frame " +
+          number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms) while " +
+          number_text(debug_sample.decoded_fps, 0) + " frames/s are decoded: the stream shows at the window's rate");
+      }
       if (frames >= 5 && frame_loss > 5.f) {
         perf_warn("frame_loss", "lost " + number_text(frame_loss, 0) + "% of frames in the last second (" + std::to_string(frames_lost) +
           " of " + std::to_string(frames) + "), " + number_text(packet_loss, 1) + "% of packets, ping " +
@@ -317,7 +327,9 @@
           " Mbit/s, decoded " + number_text(debug_sample.decoded_fps, 0) + "/s, decode " + number_text(stage_times.decode.ms.load(), 1) +
           " ms (" + decoder_name + "), upload " + number_text(stage_times.upload.ms.load(), 1) + " ms, lost " +
           number_text(frame_loss, 1) + "% frames " + number_text(packet_loss, 1) + "% packets, ping " +
-          number_text(ecps_backend.ping_ms, 0) + " ms");
+          number_text(ecps_backend.ping_ms, 0) + " ms, shown " + number_text(rt->displayed_fps, 0) + "/s, window draws " +
+          number_text(draw_rate.fps.load(std::memory_order_relaxed), 0) + "/s (slowest " +
+          number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms)");
       }
     }
   }

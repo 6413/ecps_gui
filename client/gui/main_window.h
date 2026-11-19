@@ -209,7 +209,9 @@
               }
               {
                 gui::table_set_column_index(2);
-                gui::text(std::to_string(channel.user_count - 1));
+                // everyone but the host. A channel stays after its host leaves, then all in it are viewers (and it can be empty)
+                bool host_here = channel.host_session_id.i != decltype(channel.host_session_id.i)(-1);
+                gui::text(std::to_string(channel.user_count - (host_here && channel.user_count > 0 ? 1 : 0)));
               }
               {
                 gui::table_set_column_index(3);
