@@ -1,10 +1,41 @@
 // Part of ecps_gui_t, included inside the struct by gui.h: the logs and MIDI tabs.
 
+  // ---- log sharing on or off, per server ------------------------------------------------------------------------
+  // config.json "log_servers": {"ip:port": true}. Set again on each connect, off for a server it was never turned on for
+  void save_server_logs(bool allow) {
+    if (ecps_backend.ip.empty()) {
+      return;
+    }
+    fan::json servers = config.contains("log_servers") && config["log_servers"].is_object() ? config["log_servers"] : fan::json::object();
+    servers[server_voice_key()] = allow;
+    write_to_config("log_servers", servers);
+  }
+
+  // from the update loop: the first time a server is connected (and after switching servers), its saved choice
+  void update_server_logs() {
+    if (!ecps_backend.connected || ecps_backend.ip.empty()) {
+      return;
+    }
+    std::string key = server_voice_key();
+    if (key == logs_applied_server) {
+      return;
+    }
+    logs_applied_server = key;
+    bool allow = false;
+    if (config.contains("log_servers") && config["log_servers"].is_object() && config["log_servers"].contains(key) &&
+      config["log_servers"][key].is_boolean()) {
+      allow = config["log_servers"][key].get<bool>();
+    }
+    remote_logs.allow = allow;
+  }
+  std::string logs_applied_server;
+
   void render_logs_tab() {
     gui::spacing();
     bool allow = remote_logs.allow.load();
     if (gui::checkbox("Let others in this channel read my logs", &allow)) {
       remote_logs.allow = allow;
+      save_server_logs(allow);
     }
     text_wrapped_disabled("They see everything this program prints. It passes through the server.");
     gui::separator();

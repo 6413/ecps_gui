@@ -159,6 +159,10 @@
     int share_slow_seconds = 0;
     int decode_behind_seconds = 0;
     int draw_behind_seconds = 0;
+    // the screen's new frames: counts read from the encoder each second, the last second's rate, and sums for the summary
+    std::uint64_t seen_new_frames = 0, seen_wait_ns = 0;
+    f32_t screen_fps = 0.f, screen_ms = 0.f;
+    std::uint64_t sum_new_frames = 0, sum_wait_ns = 0;
     std::uint64_t frame_total = 0, frame_drop = 0, packet_total = 0, packet_drop = 0;
     // send_debug summed (or the most) since the last summary
     std::uint64_t queued = 0, sent = 0, flushed = 0, backlog_idrs = 0, lock_misses = 0, passes = 0, chunks = 0,
@@ -237,6 +241,18 @@
 
     perf_collect_send(sharing);
 
+    {
+      auto& encoder = rt->screen_encoder;
+      std::uint64_t frames_now = encoder.new_frames, wait_now = encoder.screen_wait_ns;
+      std::uint64_t got = frames_now - perf_log.seen_new_frames, waited = wait_now - perf_log.seen_wait_ns;
+      perf_log.seen_new_frames = frames_now;
+      perf_log.seen_wait_ns = wait_now;
+      perf_log.screen_fps = (f32_t)got;
+      perf_log.screen_ms = got ? waited / 1e6f / got : 0.f;
+      perf_log.sum_new_frames += got;
+      perf_log.sum_wait_ns += waited;
+    }
+
     if (sharing) {
       int target = std::max(1, (int)rt->screen_encoder.config_.frame_rate);
       f32_t budget = 1000.f / target;
@@ -255,15 +271,21 @@
         else if (queued > 2) {
           why = std::to_string(queued) + " frames wait to be sent: the bitrate is too high for the upload";
         }
+        else if (perf_log.screen_ms > budget * 0.8f) {
+          why = "the screen gave " + number_text(perf_log.screen_fps, 0) + " new frames, getting each took " +
+            number_text(perf_log.screen_ms, 1) + " ms (waiting for the screen included): the screen or the compositor gives no more";
+        }
         else {
-          why = "capture and encoding are fast enough (" + number_text(capture_ms, 1) + " + " + number_text(encode_ms, 1) +
-            " ms), the screen gives fewer new frames: a still screen, or a game capped below " + std::to_string(target) + " fps";
+          why = "the screen gave " + number_text(perf_log.screen_fps, 0) + " new frames in the last second, each in " +
+            number_text(perf_log.screen_ms, 1) + " ms, encoding " + number_text(encode_ms, 1) +
+            " ms: a still screen, or a game capped below " + std::to_string(target) + " fps";
         }
         perf_warn("share_fps", "sending " + number_text(debug_sample.share_fps, 0) + " of " + std::to_string(target) + " fps: " + why);
       }
     }
     else {
       perf_log.share_slow_seconds = 0;
+      perf_log.sum_new_frames = perf_log.sum_wait_ns = 0; // the preview captures too, its frames are not the share's
     }
 
     if (watching) {
@@ -281,7 +303,7 @@
       if (perf_log.draw_behind_seconds == 5) {
         perf_warn("draw", "this window draws only " + number_text(draw_fps, 0) + " times a second (slowest frame " +
           number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms) while " +
-          number_text(debug_sample.decoded_fps, 0) + " frames/s are decoded: the stream shows at the window's rate");
+          number_text(debug_sample.decoded_fps, 0) + " frames/s are decoded: the stream shows at the window's rate. Near the monitor's refresh rate that is the most it can show");
       }
       if (frames >= 5 && frame_loss > 5.f) {
         perf_warn("frame_loss", "lost " + number_text(frame_loss, 0) + "% of frames in the last second (" + std::to_string(frames_lost) +
@@ -304,7 +326,9 @@
           number_text(debug_sample.share_fps, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
           number_text(debug_sample.share_kbps / 1000.0, 1) + " Mbit/s, capture " + number_text(stage_times.capture.ms.load(), 1) +
           " ms, encode " + number_text(stage_times.encode.ms.load(), 1) + " ms (" + encoder_name + "), " +
-          std::to_string(queued) + " frames queued");
+          std::to_string(queued) + " frames queued, the screen gave " + number_text(perf_log.sum_new_frames / 30.0, 1) +
+          " new frames/s, " + number_text(perf_log.sum_new_frames ? perf_log.sum_wait_ns / 1e6 / perf_log.sum_new_frames : 0.0, 1) +
+          " ms each (waiting for the screen included)");
         // where the frames went: sent whole, thrown away for a keyframe, or lost before the queue. And how the network
         // loop kept up: packets per pass, passes stopped by the packet limit or the bitrate budget, the longest stall
         auto& p = perf_log;
@@ -320,6 +344,7 @@
       perf_log.queued = perf_log.sent = perf_log.flushed = perf_log.backlog_idrs = perf_log.lock_misses = perf_log.passes = 0;
       perf_log.chunks = perf_log.cap_stops = perf_log.bucket_stops = perf_log.send_us = 0;
       perf_log.max_send_us = perf_log.max_gap_us = perf_log.max_queue = 0;
+      perf_log.sum_new_frames = perf_log.sum_wait_ns = 0;
       if (watching) {
         // "fps" is what arrives whole. Lower than the sharer sends: lost on the way. Decoded lower than that: this computer
         fan::print("perf: receiving " + size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) + " " +
