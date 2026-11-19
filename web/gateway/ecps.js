@@ -22,8 +22,8 @@ export const C2S = {
   FileAck: 19,
   FileCancel: 20,
   // sharing in a channel joined (not only the one made), and picking whose screen to watch, like the app
-  StreamState: 35,
-  ViewWatch: 36,
+  StreamState: 25,
+  ViewWatch: 26,
   // newer servers only (the ones with channel passwords): sent only for a channel that has one, or by its host
   JoinChannelPassword: 31,
   SetChannelPassword: 32
