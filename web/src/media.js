@@ -318,6 +318,9 @@ export class RecordingSharer {
         if (!event.data.size || this.stopped) {
           return
         }
+        if (kind == 'video') {
+          this.videoBytes += event.data.size
+        }
         queue = queue.then(async () => {
           const bytes = new Uint8Array(await event.data.arrayBuffer())
           if (this.stopped) {
@@ -334,7 +337,8 @@ export class RecordingSharer {
       this.recorders.push(recorder)
     }
     try {
-      record([video], 'video', FRAME_RECORDED_VIDEO, 6000000)
+      // well above Firefox's 2.5 Mbit/s default, which is too little for HD
+      record([video], 'video', FRAME_RECORDED_VIDEO, 8000000)
       const audio = this.stream.getAudioTracks()
       if (this.withAudio && audio.length && canRecordAudio()) {
         record(audio, 'audio', FRAME_RECORDED_AUDIO, 128000)
@@ -350,6 +354,20 @@ export class RecordingSharer {
 
   // the gateway's ffmpeg makes a keyframe every second, an earlier one can't be asked for
   requestKeyframe() {}
+
+  // what the camera or screen really gives and how much the recording makes of it, for the preview's label
+  stats() {
+    const now = performance.now()
+    const seconds = (now - this.statsAt) / 1000
+    const kbps = seconds > 0 ? this.videoBytes * 8 / 1000 / seconds : 0
+    this.statsAt = now
+    this.videoBytes = 0
+    const settings = this.stream.getVideoTracks()[0]?.getSettings() ?? {}
+    return { width: settings.width, height: settings.height, fps: settings.frameRate, kbps, type: this.recorders?.[0]?.mimeType }
+  }
+
+  videoBytes = 0
+  statsAt = performance.now()
 
   stop() {
     this.stopped = true

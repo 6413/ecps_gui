@@ -64,6 +64,15 @@
   let audio = null
   let audioSharer = null
   let pendingStream = null
+  // what this browser sends, shown small in a corner while sharing
+  let ownStream = $state(null)
+  let ownPreview = $state()
+  let sharingCamera = $state(false)
+  // "1280x720 30 fps, 2.1 Mbit/s recorded" under the preview, once a second while recording
+  let ownStats = $state('')
+  // the gateway's line about a recording it converts: what came in, what went out, frames skipped
+  let gatewayStats = $state('')
+  let statsTimer = null
   // { channel, password } to join once the next session is ready
   let pendingJoin = null
   // the channel asking for its password: { channel, text, message }
@@ -91,6 +100,13 @@
   const currentLocked = $derived(channels.find(c => c.id == current?.channel)?.locked ?? false)
   // the host by the server's list: the one who made it, or its maker come back to a channel that stayed
   const isHost = $derived(current != null && channels.find(c => c.id == current.channel)?.hostSessionId == sessionId)
+
+  $effect(() => {
+    if (ownPreview && ownStream) {
+      ownPreview.srcObject = ownStream
+      ownPreview.play?.().catch(() => {})
+    }
+  })
 
   function send(message) {
     if (ws?.readyState == WebSocket.OPEN) {
@@ -225,6 +241,10 @@
         error = message.message
         break
       }
+      case 'recordInfo': {
+        gatewayStats = message.text
+        break
+      }
       case 'channelError': {
         if (message.reason == 'passwordRequired' || message.reason == 'wrongPassword') {
           lockPrompt = {
@@ -305,7 +325,19 @@
       return
     }
     sharing = true
+    ownStream = stream
     send({ t: 'shareHere' })
+    clearInterval(statsTimer)
+    statsTimer = setInterval(() => {
+      const s = sharer?.stats?.()
+      if (!s) {
+        ownStats = ''
+        return
+      }
+      ownStats = `${s.width ?? '?'}x${s.height ?? '?'} ${Math.round(s.fps ?? 0)} fps, ` +
+        `${(s.kbps / 1000).toFixed(1)} Mbit/s recorded${s.type ? ` (${s.type.replace(/^video\//, '')})` : ''}`
+      console.log('ecps share:', ownStats)
+    }, 1000)
     // the recording carries its audio itself
     const track = stream.getAudioTracks()[0]
     if (encodesItself && track && audioShareSupported) {
@@ -334,6 +366,10 @@
       send({ t: 'stopShare' })
     }
     sharing = false
+    ownStream = null
+    clearInterval(statsTimer)
+    ownStats = ''
+    gatewayStats = ''
   }
 
   function stopMedia() {
@@ -397,23 +433,57 @@
     freshSession()
   }
 
+  // why the browser gave no camera or screen, in words
+  function mediaError(e, camera) {
+    const what = camera ? 'camera' : 'screen'
+    switch (e?.name) {
+      case 'NotAllowedError':
+      case 'SecurityError':
+        return `The ${what} was not allowed. Allow it for this site in the browser's settings and try again.`
+      case 'NotFoundError':
+        return `No ${what} was found.`
+      case 'NotReadableError':
+        return `The ${what} is in use by another app.`
+      case 'AbortError':
+        return ''
+      default:
+        return `Could not open the ${what}: ${e?.message ?? e}`
+    }
+  }
+
+  async function openCamera() {
+    const audio = shareAudio && audioShareSupported
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio
+      })
+    }
+    catch (e) {
+      // a camera that can't do what was asked for gets asked for anything it can do
+      if (e?.name != 'OverconstrainedError' && e?.name != 'TypeError') {
+        throw e
+      }
+      return await navigator.mediaDevices.getUserMedia({ video: true, audio })
+    }
+  }
+
   async function share(camera) {
     error = ''
     try {
       pendingStream = camera
-        ? await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-          audio: shareAudio && audioShareSupported
-        })
+        ? await openCamera()
         : await navigator.mediaDevices.getDisplayMedia({
           video: { frameRate: 60 },
           audio: shareAudio && audioShareSupported,
           systemAudio: 'include'
         })
     }
-    catch {
+    catch (e) {
+      error = mediaError(e, camera)
       return
     }
+    sharingCamera = camera
     // in a channel: share into it and keep watching. Else a channel of its own is made for it
     if (current) {
       startSharing()
@@ -621,6 +691,8 @@
 
   function submitPassword(e) {
     e.preventDefault()
+    // the browser's password bar above the keyboard goes once the field has no focus
+    document.activeElement?.blur?.()
     needsPassword = false
     connect()
   }
@@ -868,11 +940,20 @@
         <button onclick={fullscreen}>Fullscreen</button>
       </div>
     {:else if sharing}
-      <p class="muted">You are sharing your screen. Nobody else here shares.</p>
+      <p class="muted">You are sharing your {sharingCamera ? 'camera' : 'screen'}. Nobody else here shares.</p>
     {:else if current}
       <p class="muted">Nobody shares here yet. Share your screen, or wait for someone.</p>
     {:else}
       <p class="muted">Pick a channel to watch.</p>
+    {/if}
+    {#if ownStream}
+      <!-- what goes out, mirrored like a mirror for the camera -->
+      <div class="own">
+        <video class="own-preview" class:mirrored={sharingCamera} bind:this={ownPreview} muted playsinline autoplay
+          aria-label="What you share"></video>
+        {#if ownStats}<span class="own-stats">{ownStats}</span>{/if}
+        {#if gatewayStats}<span class="own-stats">{gatewayStats}</span>{/if}
+      </div>
     {/if}
   </main>
 </div>
@@ -1078,6 +1159,33 @@
   }
   .stage {
     overflow: hidden;
+  }
+  .own {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    width: min(28%, 240px);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    z-index: 2;
+  }
+  .own-preview {
+    width: 100%;
+    max-height: 30vh;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #000;
+  }
+  .own-stats {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    text-shadow: 0 0 3px #000;
+  }
+  .own-preview.mirrored {
+    transform: scaleX(-1);
   }
   .view {
     position: absolute;

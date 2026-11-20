@@ -7,7 +7,8 @@ import { spawn } from 'node:child_process'
 const FFMPEG = process.env.FFMPEG || 'ffmpeg'
 
 // the recorder's WebM is read as it arrives: a small probe, no analysis (-fflags nobuffer breaks VP8 input)
-const INPUT = ['-hide_banner', '-loglevel', 'error', '-flags', 'low_delay',
+// info, not error: ffmpeg says once what it reads (codec, size), the gateway logs it
+const INPUT = ['-hide_banner', '-nostats', '-loglevel', 'info', '-flags', 'low_delay',
   '-probesize', '32768', '-analyzeduration', '0', '-f', 'matroska', '-i', 'pipe:0']
 
 export function canTranscode() {
@@ -26,9 +27,21 @@ export function canTranscode() {
 class Transcoder {
   constructor(args, onOutput, onError) {
     this.process = spawn(FFMPEG, [...INPUT, ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
-    this.process.stdout.on('data', onOutput)
+    this.process.stdout.on('data', data => {
+      this.bytesOut += data.length
+      onOutput(data)
+    })
     let errors = ''
-    this.process.stderr.on('data', d => { errors = (errors + d).slice(-500) })
+    this.process.stderr.on('data', d => {
+      errors = (errors + d).slice(-2000)
+      // "Stream #0:0: Video: vp8, yuv420p(...), 1280x720, ..." of the input, the first time it shows
+      if (!this.input) {
+        const video = /Stream #0:\d.*?Video: (\w+)[^\n]*?(\d{2,5})x(\d{2,5})/.exec(errors)
+        if (video) {
+          this.input = `${video[1]} ${video[2]}x${video[3]}`
+        }
+      }
+    })
     this.process.on('error', e => onError(`ffmpeg could not start: ${e.message}`))
     this.process.on('exit', code => {
       if (!this.closed && code != 0) {
@@ -40,9 +53,14 @@ class Transcoder {
 
   write(data) {
     if (!this.closed && this.process.stdin.writable) {
+      this.bytesIn += data.length
       this.process.stdin.write(data)
     }
   }
+
+  bytesIn = 0
+  bytesOut = 0
+  input = ''
 
   close() {
     this.closed = true
@@ -149,12 +167,34 @@ export class RecordingShare {
     const units = new AccessUnits(onFrame)
     this.video = new Transcoder([
       '-an', '-vf', "scale='min(1920,iw)':-2", '-pix_fmt', 'yuv420p',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '30', '-bf', '0',
-      '-b:v', '4M', '-maxrate', '6M', '-bufsize', '2M', '-x264-params', 'aud=1:repeat-headers=1',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-g', '60', '-bf', '0',
+      // a recording has no fixed frame rate, ffmpeg takes its millisecond timestamps for 1000 fps and x264 gave each
+      // frame a thousandth of the bitrate (0.1 Mbit/s out of 8 in). x264 is told 30 fps instead, and encodes for a
+      // quality (crf) capped at 8 Mbit/s, so a camera giving fewer frames still gets the quality
+      '-crf', '20', '-maxrate', '8M', '-bufsize', '8M', '-x264-params', 'aud=1:repeat-headers=1:fps=30:force-cfr=1',
       '-fps_mode', 'passthrough', '-flush_packets', '1', '-f', 'h264', 'pipe:1'
     ], data => units.push(data), onError)
     this.onAudio = onAudio
     this.onError = onError
+    this.frames = 0
+    this.skipped = 0
+    this.lastReport = { at: Date.now(), in: 0, out: 0, frames: 0 }
+  }
+
+  // a line for the gateway's window every 10 s: what the browser records and what goes out of it
+  report() {
+    const now = Date.now()
+    const seconds = (now - this.lastReport.at) / 1000
+    if (seconds < 10) {
+      return null
+    }
+    const mbit = bytes => (bytes * 8 / 1e6 / seconds).toFixed(1)
+    const line = `browser recording: in ${this.video.input || 'unknown'} ${mbit(this.video.bytesIn - this.lastReport.in)} Mbit/s, ` +
+      `out H.264 ${mbit(this.video.bytesOut - this.lastReport.out)} Mbit/s ` +
+      `${((this.frames - this.lastReport.frames) / seconds).toFixed(0)} fps, ${this.skipped} frames skipped (send queue full)`
+    this.lastReport = { at: now, in: this.video.bytesIn, out: this.video.bytesOut, frames: this.frames }
+    this.skipped = 0
+    return line
   }
 
   writeVideo(data) {

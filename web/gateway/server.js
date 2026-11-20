@@ -170,8 +170,26 @@ function bridge(ws) {
       // a recording starts: everything before it was another one
       case 'recordStart': {
         stopRecording()
-        recording = new RecordingShare(
-          (frame, keyframe) => ecps.sendFrame(frame, keyframe),
+        // a frame that can't be queued is not sent, and neither are the ones after it until a keyframe: they build on
+        // it, sending them would show blocks until then
+        let waitForKey = false
+        const share = recording = new RecordingShare(
+          (frame, keyframe) => {
+            share.frames++
+            if (waitForKey && !keyframe) {
+              share.skipped++
+              return
+            }
+            waitForKey = !ecps.sendFrame(frame, keyframe)
+            if (waitForKey) {
+              share.skipped++
+            }
+            const line = share.report()
+            if (line) {
+              console.log(line)
+              send({ t: 'recordInfo', text: line })
+            }
+          },
           packet => ecps.sendAudio(packet),
           text => send({ t: 'error', message: text })
         )

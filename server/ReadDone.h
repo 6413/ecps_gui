@@ -279,6 +279,8 @@ case Protocol_C2S_t::SetChannelPassword:{
   }
   __builtin_memset(Password, 0, sizeof(Password));
   Channel_BroadcastChannelList();
+  /* with a password set the ones outside stop seeing who is in it, removed they see it again */
+  Channel_BroadcastSessionList(ChannelID);
   goto StateDone_gt;
 }
 case Protocol_C2S_t::QuitChannel:{
@@ -684,7 +686,7 @@ case Protocol_C2S_t::RequestChannelSessionList: {
     goto StateDone_gt;
   }
   
-  Channel_SendSessionList(peer, BasePacket->ID, ChannelID);
+  Channel_SendSessionList(peer, BasePacket->ID, ChannelID, SessionID);
   
   goto StateDone_gt;
 }

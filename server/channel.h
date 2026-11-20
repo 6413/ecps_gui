@@ -307,12 +307,27 @@ void Username_AssignDefault(Protocol_SessionID_t SessionID, uint32_t Ip) {
   snprintf(Session->Username, sizeof(Session->Username), "%s", Name);
 }
 
-void Channel_SendSessionList(NET_TCP_peer_t *peer, uint32_t ID, Protocol_ChannelID_t ChannelID) {
+/* who is in a channel with a password is told only to those in it: to the others the list is empty */
+bool Channel_IsInChannel(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID) {
+  auto& Channel = g_pile->ChannelList[ChannelID];
+  auto nr = Channel.SessionList.GetNodeFirst();
+  while (nr != Channel.SessionList.dst) {
+    auto n = Channel.SessionList.GetNodeByReference(nr);
+    if (n->data.SessionID == SessionID) {
+      return true;
+    }
+    nr = n->NextNodeReference;
+  }
+  return false;
+}
+
+void Channel_SendSessionList(NET_TCP_peer_t *peer, uint32_t ID, Protocol_ChannelID_t ChannelID, Protocol_SessionID_t Viewer) {
   auto& Channel = g_pile->ChannelList[ChannelID];
   Protocol_SessionID_t host_session = GetChannelHost(ChannelID);
+  bool hidden = Channel_HasPassword(ChannelID) && !Channel_IsInChannel(ChannelID, Viewer);
 
   std::vector<Protocol_S2C_t::SessionInfo_t> infos;
-  auto nr = Channel.SessionList.GetNodeFirst();
+  auto nr = hidden ? Channel.SessionList.dst : Channel.SessionList.GetNodeFirst();
   while (nr != Channel.SessionList.dst) {
     auto n = Channel.SessionList.GetNodeByReference(nr);
 
@@ -373,20 +388,20 @@ void ForEachConnectedSession(F f) {
   while (nr != g_pile->SessionList.dst) {
     auto n = g_pile->SessionList.GetNodeByReference(nr);
     if (n->data.TCP.peer != nullptr && n->data.TCP.Crypto.ready) {
-      f(n->data.TCP.peer);
+      f(n->data.TCP.peer, Protocol_SessionID_t(nr));
     }
     nr = n->NextNodeReference;
   }
 }
 
 void Channel_BroadcastSessionList(Protocol_ChannelID_t ChannelID) {
-  ForEachConnectedSession([&](NET_TCP_peer_t *peer) {
-    Channel_SendSessionList(peer, 0, ChannelID);
+  ForEachConnectedSession([&](NET_TCP_peer_t *peer, Protocol_SessionID_t Viewer) {
+    Channel_SendSessionList(peer, 0, ChannelID, Viewer);
   });
 }
 
 void Channel_BroadcastChannelList() {
-  ForEachConnectedSession([](NET_TCP_peer_t *peer) {
+  ForEachConnectedSession([](NET_TCP_peer_t *peer, Protocol_SessionID_t) {
     Channel_SendChannelList(peer, 0);
   });
 }
