@@ -121,7 +121,7 @@
 
   // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
   // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
-  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat };
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy };
 
   // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
   static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
@@ -217,6 +217,12 @@
         break;
       case icon_e::stop:
         list->AddRectFilled(P(-0.5f, -0.5f), P(0.5f, 0.5f), color, h * 0.12f);
+        break;
+      case icon_e::copy:
+        // two sheets: the front one whole, the back one's top and right edges
+        list->AddRect(P(-0.8f, -0.4f) - fan::vec2(grow, grow), P(0.3f, 0.9f) + fan::vec2(grow, grow), color, h * 0.18f, 0, t);
+        line(P(-0.35f, -0.85f), P(0.75f, -0.85f));
+        line(P(0.75f, -0.85f), P(0.75f, 0.45f));
         break;
       case icon_e::chat:
         // a speech bubble with its tail down-left and three dots

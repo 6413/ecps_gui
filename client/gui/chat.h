@@ -316,6 +316,9 @@
   std::unordered_map<std::string, std::string> chat_sent_files;
   std::unordered_set<std::uint64_t> chat_accepted_pictures;
   bool chat_scroll_down = false;
+  // the code block whose copy icon was pressed last, it says Copied for a moment
+  std::string chat_copied_id;
+  std::chrono::steady_clock::time_point chat_copied_at{};
 
   // a file offer that a "[file] name (size)" line from the same person in the channel's chat announced: it is taken
   // without asking (pictures into the picture cache to show them, the rest into ecps_downloads)
@@ -568,42 +571,64 @@
         gui::push_style_color(gui::col_child_bg, fan::color(0.f, 0.f, 0.f, 0.35f));
         if (gui::begin_child("##chat_code" + id, fan::vec2(0, std::min(height, 400.f)), 1, gui::window_flags_horizontal_scrollbar)) {
           gui::text(code);
+          bool copied = chat_copied_id == id && std::chrono::steady_clock::now() - chat_copied_at < std::chrono::milliseconds(1500);
+          if (gui::is_window_hovered() || copied) {
+            f32_t button = gui::get_frame_height();
+            gui::set_cursor_screen_pos(gui::get_window_pos() + fan::vec2(gui::get_window_size().x - button - 6.f, 6.f));
+            if (icon_button(("##chat_code_copy" + id).c_str(), icon_e::copy, copied ? "Copied" : "Copy", button)) {
+              engine.window.set_clipboard(code);
+              chat_copied_id = id;
+              chat_copied_at = std::chrono::steady_clock::now();
+            }
+          }
         }
         gui::end_child();
         chat_add_line(code, "\n", true, gui::get_item_rect_min(), gui::get_item_rect_max());
         gui::pop_style_color();
-      }
-      if (gui::button("Copy##chat_code_copy" + id)) {
-        engine.window.set_clipboard(code);
       }
       at = close == std::string::npos ? text.size() : close + 3;
     }
     render_chat_file_actions(text, message_id, from);
   }
 
-  // ---- the side panel of the stream view: the settings or the chat, picked by the two icons under the stream
-  bool side_panel_chat = false;
-  // where the panel is: 0 right, 1 bottom, 2 left. Its width (stream_settings.settings_panel_width) for the right and
-  // the left, its height at the bottom. Kept in the config
-  int side_panel_side = 0;
+  // ---- the panels of the stream view: Settings and Chat. Each is open or closed and sits on the right, at the
+  // bottom or on the left: drag its tab near an edge of the stream. Two on the same side share one panel with a tab
+  // each. The sides and sizes are kept in the config
+  bool settings_panel_open = false;
+  bool chat_panel_open = false;
+  int settings_panel_side = 0; // 0 right, 1 bottom, 2 left
+  int chat_panel_side = 0;
+  bool side_panel_chat = false; // the tab shown when both share a side
   f32_t side_panel_height = 300.f;
   bool side_panel_loaded = false;
-  // the stream view with the panel, this frame: where a dragged tab can be dropped
+  // the stream view this frame: where a dragged tab can be dropped
   fan::vec2 side_view_min = 0;
   fan::vec2 side_view_max = 0;
-  // a tab of the panel is being dragged, and the side it would go to (-1 none)
-  bool side_panel_moving = false;
+  int side_panel_moving = -1; // the tab being dragged: 0 settings, 1 chat
   int side_panel_drop = -1;
   bool side_panel_resizing = false;
+
+  int& panel_side(bool chat) {
+    return chat ? chat_panel_side : settings_panel_side;
+  }
+  bool& panel_open(bool chat) {
+    return chat ? chat_panel_open : settings_panel_open;
+  }
+  // open, and not the hidden tab of a shared panel
+  bool panel_shown(bool chat) {
+    return panel_open(chat) && (!panel_open(!chat) || panel_side(chat) != panel_side(!chat) || side_panel_chat == chat);
+  }
 
   void load_side_panel_layout() {
     if (side_panel_loaded) {
       return;
     }
     side_panel_loaded = true;
+    settings_panel_open = stream_settings.show_in_stream_view;
     if (config.contains("side_panel")) {
       fan::json layout = config["side_panel"];
-      side_panel_side = std::clamp(layout.value("side", 0), 0, 2);
+      settings_panel_side = std::clamp(layout.value("settings_side", layout.value("side", 0)), 0, 2);
+      chat_panel_side = std::clamp(layout.value("chat_side", settings_panel_side), 0, 2);
       side_panel_height = layout.value("height", side_panel_height);
       stream_settings.settings_panel_width = layout.value("width", stream_settings.settings_panel_width);
     }
@@ -611,16 +636,145 @@
 
   void save_side_panel_layout() {
     fan::json layout;
-    layout["side"] = side_panel_side;
+    layout["settings_side"] = settings_panel_side;
+    layout["chat_side"] = chat_panel_side;
     layout["height"] = side_panel_height;
     layout["width"] = stream_settings.settings_panel_width;
     write_to_config("side_panel", layout);
   }
 
-  // the line between the stream and the panel: dragged, it makes the panel bigger or smaller
+  // something came in that the chat hasn't shown yet
+  bool chat_unread() const {
+    return !chat_showing() && ecps_backend.chat_revision.load() != chat_seen_revision &&
+      ecps_backend.chat_revision.load() != ecps_backend.chat_history_revision.load() &&
+      ecps_backend.chat_known(selected_channel_id);
+  }
+
+  // the gear and the chat icon: open their panel (or its tab), the same again closes it
+  void toggle_side_panel(bool chat) {
+    load_side_panel_layout();
+    if (panel_shown(chat)) {
+      panel_open(chat) = false;
+    }
+    else {
+      panel_open(chat) = true;
+      side_panel_chat = chat;
+      if (chat) {
+        chat_focus_input = true;
+      }
+    }
+    stream_settings.show_in_stream_view = settings_panel_open || chat_panel_open;
+  }
+
+  // the chat icon of the stream toolbars, with a dot while there is something unread
+  void render_side_chat_button(const char* id, f32_t size) {
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    if (icon_button(id, icon_e::chat, panel_shown(true) ? "Hide chat" : "Chat", size, icon_style_e::overlay)) {
+      toggle_side_panel(true);
+    }
+    if (chat_unread()) {
+      gui::get_window_draw_list()->AddCircleFilled(at + fan::vec2(size * 0.86f, size * 0.14f), size * 0.16f, 0xff4040ffu, 16);
+    }
+  }
+
+  // the gear of the stream toolbars
+  void render_side_settings_button(const char* id, f32_t size) {
+    if (icon_button(id, icon_e::gear, panel_shown(false) ? "Hide settings" : "Settings", size, icon_style_e::overlay)) {
+      toggle_side_panel(false);
+    }
+  }
+
+  // the panels on a side (-1: every open one, for full screen)
+  std::vector<bool> panels_on(int side) {
+    std::vector<bool> out;
+    for (bool chat : {false, true}) {
+      if (panel_open(chat) && (side < 0 || panel_side(chat) == side)) {
+        out.push_back(chat);
+      }
+    }
+    return out;
+  }
+
+  // the tabs at the top of a panel, and an X that closes the one shown. Dragging a tab moves that panel
+  void render_side_panel_header(const std::vector<bool>& panels) {
+    f32_t height = gui::get_frame_height();
+    f32_t close_width = height;
+    f32_t width = (gui::get_content_region_avail().x - close_width - 4.f * panels.size()) / panels.size();
+    bool shown_chat = panels.size() == 2 ? side_panel_chat : panels[0];
+    for (std::size_t i = 0; i < panels.size(); ++i) {
+      bool chat = panels[i];
+      bool selected = chat == shown_chat;
+      const char* text = chat ? "Chat" : "Settings";
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      bool clicked = gui::invisible_button(chat ? "##side_tab_chat" : "##side_tab_settings", fan::vec2(width, height));
+      bool hovered = gui::is_item_hovered();
+      if (!is_fullscreen_stream && gui::is_item_active() && gui::is_mouse_dragging(0, 6.f)) {
+        side_panel_moving = chat ? 1 : 0;
+      }
+      if (hovered && side_panel_moving < 0 && !is_fullscreen_stream) {
+        gui::set_tooltip("Drag to move it to the right, the bottom or the left. Drop it on the other one to share a panel");
+      }
+      if (clicked && side_panel_moving < 0) {
+        side_panel_chat = chat;
+        if (chat) {
+          chat_focus_input = true;
+        }
+      }
+      auto* list = gui::get_window_draw_list();
+      std::uint32_t fill = selected ? 0xff3a170cu : hovered ? 0xff1c0f09u : 0x00000000u;
+      list->AddRectFilled(at, at + fan::vec2(width, height), fill, height * 0.3f);
+      if (selected) {
+        list->AddRectFilled(at + fan::vec2(6.f, height - 2.f), at + fan::vec2(width - 6.f, height), 0xffff7a33u, 1.f);
+      }
+      f32_t icon_size = height * 0.55f;
+      f32_t content = icon_size + 6.f + gui::calc_text_size(text).x;
+      fan::vec2 start = at + fan::vec2((width - content) * 0.5f, 0);
+      std::uint32_t ink = selected || hovered ? 0xffffffffu : 0xffa0a0a0u;
+      draw_icon(list, chat ? icon_e::chat : icon_e::gear, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size, ink);
+      list->AddText(start + fan::vec2(icon_size + 6.f, (height - gui::get_font_size()) * 0.5f), ink, text);
+      if (chat && chat_unread()) {
+        list->AddCircleFilled(start + fan::vec2(content + 7.f, height * 0.3f), 3.5f, 0xff4040ffu, 12);
+      }
+      gui::same_line(0, 4.f);
+    }
+    if (gui::button("x##side_panel_close", fan::vec2(close_width, height))) {
+      panel_open(shown_chat) = false;
+      stream_settings.show_in_stream_view = settings_panel_open || chat_panel_open;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip(shown_chat ? "Close the chat" : "Close the settings");
+    }
+    gui::spacing();
+  }
+
+  // a panel: its tabs and the one shown
+  void render_side_panel_content(int side = -1) {
+    load_side_panel_layout();
+    auto panels = panels_on(side);
+    if (panels.empty()) {
+      return;
+    }
+    render_side_panel_header(panels);
+    bool chat = panels.size() == 2 ? side_panel_chat : panels[0];
+    if (chat) {
+      if (ecps_backend.channel_info.empty()) {
+        text_wrapped_disabled("Join a channel to chat");
+      }
+      else {
+        render_chat_tab(selected_channel_id);
+      }
+    }
+    else {
+      window_handler.render_stream_settings_content_compact();
+    }
+  }
+
+  // the line between the stream and a panel: dragged, it makes the panel bigger or smaller
   void render_side_panel_handle(fan::vec2 size, int side) {
     fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::push_id(side);
     gui::invisible_button("##side_panel_handle", size);
+    gui::pop_id();
     bool hot = gui::is_item_hovered() || gui::is_item_active();
     if (hot) {
       gui::set_mouse_cursor(side == 1 ? gui::mouse_cursor_resize_ns : gui::mouse_cursor_resize_ew);
@@ -637,7 +791,7 @@
       }
       side_panel_resizing = true;
     }
-    else if (side_panel_resizing) {
+    else if (side_panel_resizing && !fan::window::is_mouse_down(0)) {
       side_panel_resizing = false;
       save_side_panel_layout();
     }
@@ -653,15 +807,17 @@
 
   // while a tab is dragged: where it would go, and on release it goes there
   void render_side_panel_drop() {
-    if (!side_panel_moving) {
+    if (side_panel_moving < 0) {
       return;
     }
+    bool chat = side_panel_moving == 1;
     if (!fan::window::is_mouse_down(0)) {
-      side_panel_moving = false;
-      if (side_panel_drop >= 0 && side_panel_drop != side_panel_side) {
-        side_panel_side = side_panel_drop;
+      if (side_panel_drop >= 0 && side_panel_drop != panel_side(chat)) {
+        panel_side(chat) = side_panel_drop;
+        side_panel_chat = chat;
         save_side_panel_layout();
       }
+      side_panel_moving = -1;
       side_panel_drop = -1;
       return;
     }
@@ -669,132 +825,26 @@
     fan::vec2 min = side_view_min;
     fan::vec2 max = side_view_max;
     fan::vec2 size = max - min;
-    // the nearest of the right, bottom and left edges
     f32_t to_right = (max.x - m.x) / size.x;
     f32_t to_bottom = (max.y - m.y) / size.y;
     f32_t to_left = (m.x - min.x) / size.x;
     side_panel_drop = to_right <= to_bottom && to_right <= to_left ? 0 : to_bottom <= to_left ? 1 : 2;
+    bool joins = panel_open(!chat) && panel_side(!chat) == side_panel_drop;
     fan::vec2 a, b;
-    const char* where = "";
+    std::string where;
     switch (side_panel_drop) {
-      case 0: a = fan::vec2(max.x - size.x * 0.28f, min.y); b = max; where = "Dock on the right"; break;
-      case 1: a = fan::vec2(min.x, max.y - size.y * 0.35f); b = max; where = "Dock at the bottom"; break;
-      default: a = min; b = fan::vec2(min.x + size.x * 0.28f, max.y); where = "Dock on the left"; break;
+      case 0: a = fan::vec2(max.x - size.x * 0.28f, min.y); b = max; where = "on the right"; break;
+      case 1: a = fan::vec2(min.x, max.y - size.y * 0.35f); b = max; where = "at the bottom"; break;
+      default: a = min; b = fan::vec2(min.x + size.x * 0.28f, max.y); where = "on the left"; break;
     }
+    where = joins ? std::string("Together with ") + (chat ? "Settings " : "Chat ") + where : (chat ? "Chat " : "Settings ") + where;
     auto* list = gui::get_foreground_draw_list();
     list->AddRectFilled(min, max, 0x40000000u, 8.f);
     list->AddRectFilled(a, b, 0x50ff7a33u, 8.f);
     list->AddRect(a, b, 0xffff7a33u, 8.f, 0, 2.f);
     fan::vec2 text_size = gui::calc_text_size(where);
-    list->AddText((a + b) * 0.5f - text_size * 0.5f, 0xffffffffu, where);
+    list->AddText((a + b) * 0.5f - text_size * 0.5f, 0xffffffffu, where.c_str());
     gui::set_mouse_cursor(gui::mouse_cursor_resize_all);
-  }
-
-  // something came in that the chat hasn't shown yet
-  bool chat_unread() const {
-    return !chat_showing() && ecps_backend.chat_revision.load() != chat_seen_revision &&
-      ecps_backend.chat_revision.load() != ecps_backend.chat_history_revision.load() &&
-      ecps_backend.chat_known(selected_channel_id);
-  }
-
-  // the gear and the chat icon: one opens its panel, the same again closes it, the other one switches to its own
-  void toggle_side_panel(bool chat) {
-    if (stream_settings.show_in_stream_view && side_panel_chat == chat) {
-      stream_settings.show_in_stream_view = false;
-      return;
-    }
-    stream_settings.show_in_stream_view = true;
-    side_panel_chat = chat;
-    if (chat) {
-      chat_focus_input = true;
-    }
-  }
-
-  // the chat icon of the stream toolbars, with a dot while there is something unread
-  void render_side_chat_button(const char* id, f32_t size) {
-    bool open = stream_settings.show_in_stream_view && side_panel_chat;
-    fan::vec2 at = gui::get_cursor_screen_pos();
-    if (icon_button(id, icon_e::chat, open ? "Hide chat" : "Chat", size, icon_style_e::overlay)) {
-      toggle_side_panel(true);
-    }
-    if (chat_unread()) {
-      gui::get_window_draw_list()->AddCircleFilled(at + fan::vec2(size * 0.86f, size * 0.14f), size * 0.16f, 0xff4040ffu, 16);
-    }
-  }
-
-  // the gear of the stream toolbars
-  void render_side_settings_button(const char* id, f32_t size) {
-    bool open = stream_settings.show_in_stream_view && !side_panel_chat;
-    if (icon_button(id, icon_e::gear, open ? "Hide settings" : "Settings", size, icon_style_e::overlay)) {
-      toggle_side_panel(false);
-    }
-  }
-
-  // two tabs at the top of the side panel, Settings and Chat, with an X that closes it
-  void render_side_panel_header() {
-    f32_t height = gui::get_frame_height();
-    f32_t close_width = height;
-    f32_t width = (gui::get_content_region_avail().x - close_width - 8.f) * 0.5f;
-    auto tab = [&](const char* id, icon_e icon, const char* text, bool selected, bool dot) {
-      fan::vec2 at = gui::get_cursor_screen_pos();
-      bool clicked = gui::invisible_button(id, fan::vec2(width, height));
-      bool hovered = gui::is_item_hovered();
-      auto* list = gui::get_window_draw_list();
-      std::uint32_t fill = selected ? 0xff3a170cu : hovered ? 0xff1c0f09u : 0x00000000u;
-      list->AddRectFilled(at, at + fan::vec2(width, height), fill, height * 0.3f);
-      if (selected) {
-        list->AddRectFilled(at + fan::vec2(6.f, height - 2.f), at + fan::vec2(width - 6.f, height), 0xffff7a33u, 1.f);
-      }
-      f32_t icon_size = height * 0.55f;
-      f32_t content = icon_size + 6.f + gui::calc_text_size(text).x;
-      fan::vec2 start = at + fan::vec2((width - content) * 0.5f, 0);
-      std::uint32_t ink = selected || hovered ? 0xffffffffu : 0xffa0a0a0u;
-      draw_icon(list, icon, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size, ink);
-      list->AddText(start + fan::vec2(icon_size + 6.f, (height - gui::get_font_size()) * 0.5f), ink, text);
-      if (dot) {
-        list->AddCircleFilled(start + fan::vec2(content + 7.f, height * 0.3f), 3.5f, 0xff4040ffu, 12);
-      }
-      // dragging a tab moves the panel (not in full screen, where it stays on the right)
-      if (!is_fullscreen_stream && gui::is_item_active() && gui::is_mouse_dragging(0, 6.f)) {
-        side_panel_moving = true;
-      }
-      if (hovered && !side_panel_moving && !is_fullscreen_stream) {
-        gui::set_tooltip("Drag to move the panel to the right, the bottom or the left");
-      }
-      return clicked && !side_panel_moving;
-    };
-    if (tab("##side_tab_settings", icon_e::gear, "Settings", !side_panel_chat, false)) {
-      side_panel_chat = false;
-    }
-    gui::same_line(0, 4.f);
-    if (tab("##side_tab_chat", icon_e::chat, "Chat", side_panel_chat, chat_unread())) {
-      side_panel_chat = true;
-      chat_focus_input = true;
-    }
-    gui::same_line(0, 4.f);
-    if (gui::button("x##side_panel_close", fan::vec2(close_width, height))) {
-      stream_settings.show_in_stream_view = false;
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip("Close the panel");
-    }
-    gui::spacing();
-  }
-
-  // what the side panel shows under its tabs
-  void render_side_panel_content() {
-    render_side_panel_header();
-    if (side_panel_chat) {
-      if (ecps_backend.channel_info.empty()) {
-        text_wrapped_disabled("Join a channel to chat");
-      }
-      else {
-        render_chat_tab(selected_channel_id);
-      }
-    }
-    else {
-      window_handler.render_stream_settings_content_compact();
-    }
   }
 
   bool chat_showing() const {

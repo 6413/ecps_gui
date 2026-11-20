@@ -802,8 +802,8 @@
       }
     }
 
-    // The stream and the side panel (settings or chat). The panel sits on the right, at the bottom or on the left:
-    // drag its Settings or Chat tab over the stream and drop it near an edge. The line between them resizes it
+    // The stream and its panels: Settings and Chat each on the right, at the bottom or on the left (two on one side
+    // share a panel). The lines between them resize them
     void process_stream_settings() {
       This->load_side_panel_layout();
       fan::vec2 avail = gui::get_content_region_avail();
@@ -817,39 +817,38 @@
       }
       This->side_view_min = origin;
       This->side_view_max = origin + area;
-      int side = This->side_panel_side;
-      fan::vec2 stream_at, stream_size, handle_at, handle_size, panel_at, panel_size;
-      if (side == 1) {
-        f32_t height = std::clamp(This->side_panel_height, 150.f, area.y * 0.7f);
-        stream_at = origin;
-        stream_size = fan::vec2(area.x, area.y - height - handle);
-        handle_at = origin + fan::vec2(0, stream_size.y);
-        handle_size = fan::vec2(area.x, handle);
-        panel_at = origin + fan::vec2(0, stream_size.y + handle);
-        panel_size = fan::vec2(area.x, height);
+      bool right = !This->panels_on(0).empty();
+      bool bottom = !This->panels_on(1).empty();
+      bool left = !This->panels_on(2).empty();
+      f32_t height = bottom ? std::clamp(This->side_panel_height, 150.f, area.y * 0.7f) : 0.f;
+      f32_t top_height = area.y - (bottom ? height + handle : 0.f);
+      f32_t width = std::clamp(This->stream_settings.settings_panel_width, 250.f, area.x * (left && right ? 0.35f : 0.6f));
+      auto panel = [&](int side, fan::vec2 at, fan::vec2 size) {
+        gui::set_cursor_screen_pos(at);
+        gui::begin_child(("##side_panel_" + std::to_string(side)).c_str(), size, true);
+        This->render_side_panel_content(side);
+        gui::end_child();
+      };
+      f32_t x = origin.x;
+      if (left) {
+        panel(2, origin, fan::vec2(width, top_height));
+        gui::set_cursor_screen_pos(fan::vec2(origin.x + width, origin.y));
+        This->render_side_panel_handle(fan::vec2(handle, top_height), 2);
+        x += width + handle;
       }
-      else {
-        f32_t width = std::clamp(This->stream_settings.settings_panel_width, 250.f, area.x * 0.6f);
-        f32_t stream_width = area.x - width - handle;
-        stream_at = side == 0 ? origin : origin + fan::vec2(width + handle, 0);
-        stream_size = fan::vec2(stream_width, area.y);
-        handle_at = origin + fan::vec2(side == 0 ? stream_width : width, 0);
-        handle_size = fan::vec2(handle, area.y);
-        panel_at = side == 0 ? origin + fan::vec2(stream_width + handle, 0) : origin;
-        panel_size = fan::vec2(width, area.y);
+      f32_t stream_width = area.x - (left ? width + handle : 0.f) - (right ? width + handle : 0.f);
+      gui::set_cursor_screen_pos(fan::vec2(x, origin.y));
+      render_stream_area("##stream_display_split", fan::vec2(stream_width, top_height));
+      if (right) {
+        gui::set_cursor_screen_pos(fan::vec2(x + stream_width, origin.y));
+        This->render_side_panel_handle(fan::vec2(handle, top_height), 0);
+        panel(0, fan::vec2(x + stream_width + handle, origin.y), fan::vec2(width, top_height));
       }
-
-      gui::set_cursor_screen_pos(stream_at);
-      render_stream_area("##stream_display_split", stream_size);
-
-      gui::set_cursor_screen_pos(handle_at);
-      This->render_side_panel_handle(handle_size, side);
-
-      gui::set_cursor_screen_pos(panel_at);
-      gui::begin_child("##stream_settings_panel", panel_size, true);
-      This->render_side_panel_content();
-      gui::end_child();
-
+      if (bottom) {
+        gui::set_cursor_screen_pos(fan::vec2(origin.x, origin.y + top_height));
+        This->render_side_panel_handle(fan::vec2(area.x, handle), 1);
+        panel(1, fan::vec2(origin.x, origin.y + top_height + handle), fan::vec2(area.x, height));
+      }
       This->render_side_panel_drop();
     }
 
