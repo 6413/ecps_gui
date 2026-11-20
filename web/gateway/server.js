@@ -7,6 +7,14 @@ import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { EcpsClient, FRAME_AUDIO, FRAME_KEY } from './ecps.js'
 import { FRAME_FILE, FileTransfers } from './transfer.js'
+import { RecordingShare, canTranscode } from './recorder.js'
+
+// a recording from a browser without an H.264 encoder (Firefox): its video and its audio, turned into H.264 and
+// Opus by ffmpeg here
+const FRAME_RECORDED_VIDEO = 0x20
+const FRAME_RECORDED_AUDIO = 0x10
+// whether ffmpeg runs here, the page offers sharing to such browsers only then
+const transcodeAvailable = canTranscode()
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const distDir = path.join(here, '..', 'dist')
@@ -78,7 +86,7 @@ function bridge(ws) {
       }
     })
     ecps.on('file', (command, body) => transfers.onFile(command, body))
-    ecps.on('ready', () => send({ t: 'ready', sessionId: ecps.sessionId }))
+    ecps.on('ready', async () => send({ t: 'ready', sessionId: ecps.sessionId, recorder: await transcodeAvailable }))
     ecps.on('channels', channels => send({ t: 'channels', channels }))
     ecps.on('users', list => send({ t: 'users', ...list }))
     ecps.on('streamers', list => send({ t: 'streamers', ...list }))
@@ -155,7 +163,18 @@ function bridge(ws) {
         break
       }
       case 'stopShare': {
+        stopRecording()
         ecps.setStreaming(false)
+        break
+      }
+      // a recording starts: everything before it was another one
+      case 'recordStart': {
+        stopRecording()
+        recording = new RecordingShare(
+          (frame, keyframe) => ecps.sendFrame(frame, keyframe),
+          packet => ecps.sendAudio(packet),
+          text => send({ t: 'error', message: text })
+        )
         break
       }
       case 'watch': {
@@ -190,7 +209,14 @@ function bridge(ws) {
   }
 
   // tell the other side of any running transfer before the session goes away
+  let recording = null
+  const stopRecording = () => {
+    recording?.close()
+    recording = null
+  }
+
   const closeSession = () => {
+    stopRecording()
     transfers?.abortAll()
     setTimeout(() => ecps?.close(), 100)
   }
@@ -202,6 +228,12 @@ function bridge(ws) {
       }
       else if (authed && data.length > 5 && data[0] & FRAME_FILE) {
         transfers.onData(data.readUInt32LE(1), data.subarray(5))
+      }
+      else if (authed && data.length > 1 && data[0] & FRAME_RECORDED_VIDEO) {
+        recording?.writeVideo(data.subarray(1))
+      }
+      else if (authed && data.length > 1 && data[0] & FRAME_RECORDED_AUDIO) {
+        recording?.writeAudio(data.subarray(1))
       }
       else if (authed && data.length > 1 && data.length <= MAX_FRAME) {
         if (!ecps.sendFrame(data.subarray(1), (data[0] & FRAME_KEY) != 0)) {

@@ -140,7 +140,8 @@
     if (!password_popup_open) {
       return;
     }
-    if (!gui::begin_popup("Channel password")) {
+    // modal: it stays in front, and open, until Join or Cancel
+    if (!gui::begin_popup_modal("Channel password", gui::window_flags_always_auto_resize | gui::window_flags_no_saved_settings)) {
       password_popup_open = false;
       return;
     }
@@ -149,6 +150,9 @@
       gui::text(fan::color(1.f, 0.5f, 0.45f, 1.f), "That password was not right");
     }
     gui::push_item_width(320);
+    if (open_now) {
+      gui::set_keyboard_focus_here();
+    }
     bool enter = gui::input_text("##channel_password_prompt", &password_input,
       gui::input_text_flags_enter_returns_true | gui::input_text_flags_password);
     gui::pop_item_width();

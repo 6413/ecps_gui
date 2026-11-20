@@ -1,17 +1,22 @@
 <script>
   import { onDestroy } from 'svelte'
-  import { Viewer, Sharer, canView, canShare, canShareCamera } from './media.js'
+  import { Viewer, Sharer, RecordingSharer, canView, canShare, canShareCamera, canRecordScreen, canRecordCamera, canRecordAudio } from './media.js'
   import { MseViewer, canUseMse } from './mse.js'
   import { AudioPlayer, AudioSharer, FRAME_AUDIO, canPlayAudio, canShareAudio } from './audio.js'
   import { Transfers, FRAME_FILE, canStreamToDisk, formatBytes, isFinished, memoryLimit } from './transfers.js'
 
-  const shareSupported = canShare()
-  const cameraSupported = canShareCamera()
+  // the gateway says on connect whether it can turn a recording into H.264 (ffmpeg), for browsers without an encoder
+  let recorderAvailable = $state(false)
+  // this browser encodes H.264 itself, else it records and the gateway converts
+  const encodesItself = typeof VideoEncoder != 'undefined'
+  const shareSupported = $derived(canShare() || (!encodesItself && recorderAvailable && canRecordScreen()))
+  const cameraSupported = $derived(canShareCamera() || (!encodesItself && recorderAvailable && canRecordCamera()))
   // ?mse forces the fallback player on browsers that have WebCodecs
   const useMse = canUseMse() && (!canView() || new URLSearchParams(location.search).has('mse'))
   const viewSupported = canView() || useMse
   const audioPlaySupported = canPlayAudio()
-  const audioShareSupported = canShareAudio()
+  // audio goes with the encoder path (WebCodecs audio) or in the recording
+  const audioShareSupported = $derived(encodesItself ? canShareAudio() : recorderAvailable && canRecordAudio())
 
   function loadSetting(key, fallback) {
     try {
@@ -155,6 +160,7 @@
         needsPassword = false
         retryMs = 500
         sessionId = message.sessionId
+        recorderAvailable = !!message.recorder
         if (pendingStream) {
           send({ t: 'share' })
         }
@@ -285,24 +291,24 @@
     if (!stream) {
       return
     }
-    sharer = new Sharer(
-      stream,
-      packet => {
-        if (ws?.readyState == WebSocket.OPEN) {
-          ws.send(packet)
-        }
-      },
-      stopSharing,
-      text => { error = text }
-    )
+    const sendBinary = packet => {
+      if (ws?.readyState == WebSocket.OPEN) {
+        ws.send(packet)
+      }
+    }
+    const onError = text => { error = text }
+    sharer = encodesItself
+      ? new Sharer(stream, sendBinary, stopSharing, onError)
+      : new RecordingSharer(stream, sendBinary, send, shareAudio && audioShareSupported, stopSharing, onError)
     if (!await sharer.start()) {
       stopSharing()
       return
     }
     sharing = true
     send({ t: 'shareHere' })
+    // the recording carries its audio itself
     const track = stream.getAudioTracks()[0]
-    if (track && audioShareSupported) {
+    if (encodesItself && track && audioShareSupported) {
       audioSharer = new AudioSharer(
         track,
         packet => {
@@ -814,6 +820,19 @@
 
     {#if !viewSupported}
       <p class="error">This browser can't play H.264 streams here. Open the https:// link, or try Chrome.</p>
+    {/if}
+    {#if !shareSupported && !cameraSupported && !needsPassword && status == 'online'}
+      <p class="muted hint">
+        {#if !window.isSecureContext}
+          Sharing needs the https:// link.
+        {:else if !encodesItself && (canRecordScreen() || canRecordCamera())}
+          Sharing from this browser needs ffmpeg on the computer that runs the web gateway (on its PATH, or named by
+          FFMPEG). Chrome and Edge share without it.
+        {:else}
+          This browser can't share video, it can only watch. Use Chrome or Edge, on a phone Chrome (Android) or Safari
+          (iPhone).
+        {/if}
+      </p>
     {/if}
     {#if error}
       <p class="error">{error}</p>

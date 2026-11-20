@@ -264,3 +264,102 @@ export class Sharer {
   lastFrameAt = 0
   lastKeyframeAt = 0
 }
+
+// Browsers without an H.264 encoder (Firefox, also on Android) record instead: MediaRecorder makes WebM, the gateway
+// turns it into H.264 and Opus with ffmpeg. A little more delay than the encoder path, and the gateway decides the
+// keyframes (one a second)
+export const FRAME_RECORDED_VIDEO = 0x20
+export const FRAME_RECORDED_AUDIO = 0x10
+const RECORD_SLICE_MS = 50
+
+function recorderType(kind) {
+  if (typeof MediaRecorder == 'undefined') {
+    return null
+  }
+  const types = kind == 'video'
+    ? ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm']
+    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+  return types.find(type => MediaRecorder.isTypeSupported(type)) ?? null
+}
+
+export const canRecordVideo = () => recorderType('video') != null
+export const canRecordAudio = () => recorderType('audio') != null
+export const canRecordScreen = () => canRecordVideo() && !!navigator.mediaDevices?.getDisplayMedia
+export const canRecordCamera = () => canRecordVideo() && !!navigator.mediaDevices?.getUserMedia
+
+export class RecordingSharer {
+  // send(binary) goes to the gateway, control(message) too. withAudio: record the stream's audio as well
+  constructor(stream, send, control, withAudio, onEnded, onError) {
+    this.stream = stream
+    this.send = send
+    this.control = control
+    this.withAudio = withAudio
+    this.onEnded = onEnded
+    this.onError = onError
+  }
+
+  async start() {
+    const video = this.stream.getVideoTracks()[0]
+    if (!video) {
+      this.onError('nothing to share')
+      return false
+    }
+    video.addEventListener('ended', () => this.onEnded())
+    this.control({ t: 'recordStart' })
+    this.recorders = []
+    const record = (tracks, kind, tag, bitrate) => {
+      const recorder = new MediaRecorder(new MediaStream(tracks), {
+        mimeType: recorderType(kind),
+        [kind == 'video' ? 'videoBitsPerSecond' : 'audioBitsPerSecond']: bitrate
+      })
+      // in order: each piece is sent once the one before it is read
+      let queue = Promise.resolve()
+      recorder.ondataavailable = event => {
+        if (!event.data.size || this.stopped) {
+          return
+        }
+        queue = queue.then(async () => {
+          const bytes = new Uint8Array(await event.data.arrayBuffer())
+          if (this.stopped) {
+            return
+          }
+          const packet = new Uint8Array(bytes.length + 1)
+          packet[0] = tag
+          packet.set(bytes, 1)
+          this.send(packet)
+        })
+      }
+      recorder.onerror = event => this.onError(event.error?.message ?? 'recording failed')
+      recorder.start(RECORD_SLICE_MS)
+      this.recorders.push(recorder)
+    }
+    try {
+      record([video], 'video', FRAME_RECORDED_VIDEO, 6000000)
+      const audio = this.stream.getAudioTracks()
+      if (this.withAudio && audio.length && canRecordAudio()) {
+        record(audio, 'audio', FRAME_RECORDED_AUDIO, 128000)
+      }
+    }
+    catch (e) {
+      this.onError(`recording failed: ${e.message}`)
+      this.stop()
+      return false
+    }
+    return true
+  }
+
+  // the gateway's ffmpeg makes a keyframe every second, an earlier one can't be asked for
+  requestKeyframe() {}
+
+  stop() {
+    this.stopped = true
+    for (const recorder of this.recorders ?? []) {
+      if (recorder.state != 'inactive') {
+        recorder.stop()
+      }
+    }
+    this.stream.getTracks().forEach(track => track.stop())
+  }
+
+  stopped = false
+}
