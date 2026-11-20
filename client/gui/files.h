@@ -155,10 +155,11 @@
     auto views = ecps_backend.file_transfer_views();
     const ecps_backend_t::file_transfer_view_t* offer = nullptr;
     for (const auto& v : views) {
-      // a picture sent into the chat is shown there: taken at once, no question
-      if (!v.outgoing && v.state == state_e::offered && chat_takes_picture(v)) {
+      // a file sent into the chat: taken at once, no question. Pictures go to the cache and show in the chat
+      if (!v.outgoing && v.state == state_e::offered && chat_announced(v)) {
         if (chat_accepted_pictures.insert(((std::uint64_t)v.peer.i << 32) | v.id).second) {
-          backend_queue([id = v.id, peer = v.peer, folder = chat_picture_folder()]() -> fan::event::task_t {
+          std::string folder = chat_takes_picture(v) ? chat_picture_folder() : std::string();
+          backend_queue([id = v.id, peer = v.peer, folder]() -> fan::event::task_t {
             return ecps_backend.accept_file(id, peer, folder);
           });
         }

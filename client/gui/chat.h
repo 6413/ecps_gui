@@ -315,6 +315,62 @@
   // what we sent ourselves: file name -> path here
   std::unordered_map<std::string, std::string> chat_sent_files;
   std::unordered_set<std::uint64_t> chat_accepted_pictures;
+  bool chat_scroll_down = false;
+
+  // a file offer that a "[file] name (size)" line from the same person in the channel's chat announced: it is taken
+  // without asking (pictures into the picture cache to show them, the rest into ecps_downloads)
+  bool chat_announced(const ecps_backend_t::file_transfer_view_t& v) const {
+    if (!ecps_backend.is_channel_joined(v.channel_id)) {
+      return false;
+    }
+    std::string line = "[file] " + v.name + " (";
+    for (const auto& message : ecps_backend.chat_of(v.channel_id)) {
+      if (message.from == (std::uint32_t)v.peer.i && message.text.rfind(line, 0) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // a file line of someone else: how far it is, or Open and Show in folder when it is here
+  void render_chat_file_actions(const std::string& text, std::uint32_t message_id, std::uint32_t from) {
+    static const std::string prefix = "[file] ";
+    if (from == (std::uint32_t)ecps_backend.session_id.i || text.rfind(prefix, 0) != 0) {
+      return;
+    }
+    std::size_t paren = text.rfind(" (");
+    if (paren == std::string::npos || paren <= prefix.size()) {
+      return;
+    }
+    std::string name = text.substr(prefix.size(), paren - prefix.size());
+    using state_e = ecps_backend_t::file_transfer_t::state_e;
+    auto views = ecps_backend.file_transfer_views();
+    const ecps_backend_t::file_transfer_view_t* found = nullptr;
+    for (const auto& v : views) {
+      if (!v.outgoing && (std::uint32_t)v.peer.i == from && v.name == name) {
+        found = &v;
+      }
+    }
+    if (!found) {
+      return;
+    }
+    std::string id = std::to_string(message_id);
+    if (found->state == state_e::transferring) {
+      text_wrapped_disabled("Receiving  " + file_progress_text(*found));
+    }
+    else if (found->state == state_e::done) {
+      if (gui::button("Open##chat_file_open" + id)) {
+        chat_open_path(found->path);
+      }
+      gui::same_line();
+      if (gui::button("Show in folder##chat_file_folder" + id)) {
+        chat_open_path(ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(found->path).parent_path()));
+      }
+    }
+    else if (ecps_backend_t::file_state_finished(found->state)) {
+      text_wrapped_disabled(found->status);
+    }
+  }
 
   static bool chat_is_picture_name(const std::string& name) {
     std::string extension = std::filesystem::path(name).extension().string();
@@ -333,7 +389,7 @@
   }
 
   bool chat_takes_picture(const ecps_backend_t::file_transfer_view_t& v) const {
-    return chat_is_picture_name(v.name) && v.size <= chat_picture_max && ecps_backend.is_channel_joined(v.channel_id);
+    return chat_is_picture_name(v.name) && v.size <= chat_picture_max;
   }
 
   static void chat_open_path(const std::string& path) {
@@ -417,6 +473,8 @@
         picture.image = engine.image_load(info, smooth_image());
         picture.size = fan::vec2((f32_t)owned.size.x, (f32_t)owned.size.y);
         picture.ready = true;
+        // the log got taller: down to it, so a pasted or new picture is seen
+        chat_scroll_down = true;
       }
       else {
         picture.failed = true;
@@ -464,6 +522,7 @@
     if (render_chat_picture(text, message_id, from)) {
       return;
     }
+
     int plain_part = 0;
     auto plain = [&](std::string part) {
       while (!part.empty() && (part.back() == '\n' || part.back() == '\r')) {
@@ -519,6 +578,7 @@
       }
       at = close == std::string::npos ? text.size() : close + 3;
     }
+    render_chat_file_actions(text, message_id, from);
   }
 
   // ---- the side panel of the stream view: the settings or the chat, picked by the two icons under the stream
@@ -662,17 +722,20 @@
       if (!std::filesystem::is_regular_file(path, ec)) {
         continue;
       }
+      // the line first: the others take an offer without asking when its line is in the chat
+      std::string name = ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(path).filename());
+      chat_sent_files[name] = path;
+      std::string line = "[file] " + name + " (" +
+        chat_size_label(std::filesystem::file_size(ecps_backend_t::file_fs_path(path), ec)) + ")" +
+        (peers.empty() ? "  - nobody else here to send it to" : "");
+      backend_queue([channel_id, line]() -> fan::event::task_t {
+        return ecps_backend.send_chat(channel_id, line);
+      });
       for (const auto& peer : peers) {
         backend_queue([channel_id, peer = peer.session_id, path]() -> fan::event::task_t {
           return ecps_backend.send_file(channel_id, peer, path);
         });
       }
-      chat_sent_files[std::filesystem::path(path).filename().string()] = path;
-      std::string line = "[file] " + std::filesystem::path(path).filename().string() + " (" +
-        chat_size_label(std::filesystem::file_size(path, ec)) + ")" + (peers.empty() ? "  - nobody else here to send it to" : "");
-      backend_queue([channel_id, line]() -> fan::event::task_t {
-        return ecps_backend.send_chat(channel_id, line);
-      });
     }
   }
 
@@ -789,7 +852,10 @@
       }
       // new messages, or another channel opened: down to the newest
       std::uint64_t revision = ecps_backend.chat_revision.load();
-      if (revision != chat_seen_revision || chat_seen_channel != (std::uint32_t)channel_id.i) {
+      // a picture that came in grows the log: followed down only when the log was near the bottom already
+      bool picture_down = chat_scroll_down && gui::get_scroll_y() >= gui::get_scroll_max_y() - 700.f;
+      chat_scroll_down = false;
+      if (picture_down || revision != chat_seen_revision || chat_seen_channel != (std::uint32_t)channel_id.i) {
         chat_seen_revision = revision;
         chat_seen_channel = (std::uint32_t)channel_id.i;
         gui::set_scroll_here_y();
