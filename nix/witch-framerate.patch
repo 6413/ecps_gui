@@ -1,0 +1,24 @@
+--- a/MD/SCR/backend/wayland/wayland.h
++++ b/MD/SCR/backend/wayland/wayland.h
+@@ -993,6 +993,11 @@
+     struct spa_fraction def_fps = SPA_FRACTION(25, 1);
+     struct spa_fraction min_fps = SPA_FRACTION(0, 1);
+     struct spa_fraction max_fps = SPA_FRACTION(1000, 1);
++    // GNOME sends a frame only when 1/maxFramerate has passed since the last one. Without one asked for it takes a
++    // lower default, and on a 100 Hz screen (a paint every 10 ms) a 60 fps cap lets every second paint through: 50 fps.
++    // Asking for up to 240 leaves it at what the screen does
++    struct spa_fraction max_rate = SPA_FRACTION(240, 1);
++    struct spa_fraction min_rate = SPA_FRACTION(1, 1);
+ 
+     params[0] = (const struct spa_pod*)spa_pod_builder_add_object(&b,
+       SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
+@@ -1003,7 +1008,8 @@
+         SPA_VIDEO_FORMAT_BGRx,
+         SPA_VIDEO_FORMAT_RGBx),
+       SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(&def_size, &min_size, &max_size),
+-      SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(&def_fps, &min_fps, &max_fps));
++      SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(&def_fps, &min_fps, &max_fps),
++      SPA_FORMAT_VIDEO_maxFramerate, SPA_POD_CHOICE_RANGE_Fraction(&max_rate, &min_rate, &max_rate));
+ 
+   } else {
+     // Use flexible parameters for COSMIC and others

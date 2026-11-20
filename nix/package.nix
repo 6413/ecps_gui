@@ -136,6 +136,9 @@ clangStdenv.mkDerivation {
 
     # let the portal offer windows as well as screens, it asks which one to share
     patch -p1 -d $inc/WITCH < ${./witch-window.patch}
+
+    # ask GNOME for up to 240 fps: its default cap gives 50 fps on a 100 Hz screen
+    patch -p1 -d $inc/WITCH < ${./witch-framerate.patch}
     runHook postPatch
   '';
 

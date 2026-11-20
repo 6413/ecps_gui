@@ -124,6 +124,8 @@ build() {
   # the mouse pointer in the portal's picture, and windows as well as screens to pick from
   patch -p1 -d "$inc/WITCH" < ecps_gui/nix/witch-cursor.patch
   patch -p1 -d "$inc/WITCH" < ecps_gui/nix/witch-window.patch
+  # GNOME's default frame-rate cap gives 50 fps on a 100 Hz screen, up to 240 is asked for
+  patch -p1 -d "$inc/WITCH" < ecps_gui/nix/witch-framerate.patch
 
   # the Vulkan headers that match the pinned utility headers go before the system's newer ones
   export ECPS_EXTRA_CFLAGS="-isystem$srcdir/VulkanHeaders/include -I$srcdir/lunasvg/include -I$srcdir/box2d/include"
