@@ -14,6 +14,189 @@
 
   // longer text than this goes as a .txt file, a message holds Protocol::ChatTextMax bytes
   static constexpr std::size_t chat_inline_max = 1000;
+  // the whole chat as one plain text field, to mark and copy any part of it
+  bool chat_select_mode = false;
+  std::string chat_select_text;
+
+  // a message's text: plain parts wrapped, ```code``` in a box of its own (monospace, not wrapped) with a Copy button.
+  // A first line like ```cpp names the language and is not shown
+  // Text that can be marked with the mouse: a read-only text field without a frame. Text fields don't wrap, so the
+  // text is wrapped here for showing, and Ctrl+C copies the original (without those line breaks)
+  struct chat_wrapped_t {
+    f32_t width = -1.f;
+    std::string source;
+    std::string shown;
+    std::vector<std::size_t> soft_breaks; // positions in shown of the line breaks added here
+    std::size_t lines = 1;
+  };
+  std::unordered_map<std::string, chat_wrapped_t> chat_wrap_cache;
+  struct chat_selection_t {
+    int start = 0;
+    int end = 0;
+  };
+  std::unordered_map<std::string, chat_selection_t> chat_selections;
+
+  static void chat_wrap(chat_wrapped_t& wrapped, const std::string& text, f32_t width) {
+    wrapped.width = width;
+    wrapped.source = text;
+    wrapped.shown.clear();
+    wrapped.soft_breaks.clear();
+    wrapped.lines = 1;
+    std::string line;
+    auto fits = [&](const std::string& candidate) { return gui::calc_text_size(candidate).x <= width; };
+    auto soft_break = [&]() {
+      wrapped.shown += line;
+      wrapped.soft_breaks.push_back(wrapped.shown.size());
+      wrapped.shown += '\n';
+      ++wrapped.lines;
+      line.clear();
+    };
+    std::size_t at = 0;
+    while (at < text.size()) {
+      if (text[at] == '\n') {
+        wrapped.shown += line + '\n';
+        ++wrapped.lines;
+        line.clear();
+        ++at;
+        continue;
+      }
+      // the next word with the spaces after it
+      std::size_t end = at;
+      while (end < text.size() && text[end] != ' ' && text[end] != '\n') {
+        ++end;
+      }
+      while (end < text.size() && text[end] == ' ') {
+        ++end;
+      }
+      std::string word = text.substr(at, end - at);
+      if (!line.empty() && !fits(line + word)) {
+        soft_break();
+      }
+      // a word longer than the line is cut where it no longer fits
+      while (!fits(word) && word.size() > 1) {
+        std::size_t cut = word.size() - 1;
+        while (cut > 1 && !fits(line + word.substr(0, cut))) {
+          --cut;
+        }
+        // not inside a UTF-8 character
+        while (cut > 1 && ((unsigned char)word[cut] & 0xC0) == 0x80) {
+          --cut;
+        }
+        line += word.substr(0, cut);
+        word = word.substr(cut);
+        soft_break();
+      }
+      line += word;
+      at = end;
+    }
+    wrapped.shown += line;
+  }
+
+  // a position in the shown text to the same place in the original
+  static std::size_t chat_unwrap_position(const chat_wrapped_t& wrapped, std::size_t shown_position) {
+    std::size_t added = 0;
+    for (std::size_t at : wrapped.soft_breaks) {
+      if (at < shown_position) {
+        ++added;
+      }
+    }
+    return shown_position - added;
+  }
+
+  void render_selectable_text(const std::string& text, const std::string& id, const std::string& whole_message) {
+    f32_t width = std::max(gui::get_content_region_avail().x - 4.f, 50.f);
+    auto& wrapped = chat_wrap_cache[id];
+    if (wrapped.width != width || wrapped.source != text) {
+      chat_wrap(wrapped, text, width);
+    }
+    auto& selection = chat_selections[id];
+    gui::input_text_callback_t remember_selection = [](auto* data) -> int {
+      auto* out = (chat_selection_t*)data->UserData;
+      out->start = data->SelectionStart;
+      out->end = data->SelectionEnd;
+      return 0;
+    };
+    gui::push_style_color(gui::col_frame_bg, fan::color(0.f, 0.f, 0.f, 0.f));
+    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(0.f, 0.f));
+    f32_t height = wrapped.lines * gui::get_text_line_height() + 2.f;
+    gui::input_text_multiline("##chat_text" + id, &wrapped.shown, fan::vec2(width + 4.f, height),
+      gui::input_text_flags_read_only | gui::input_text_flags_no_horizontal_scroll | gui::input_text_flags_callback_always,
+      remember_selection, &selection);
+    bool active = gui::is_item_active();
+    bool hovered = gui::is_item_hovered();
+    gui::pop_style_var();
+    gui::pop_style_color();
+    // the field copied what it shows, with the line breaks added for wrapping: the original replaces it
+    bool ctrl = engine.window.is_key_down(fan::key_left_control) || engine.window.is_key_down(fan::key_right_control);
+    if (active && ctrl && engine.window.is_key_clicked(fan::key_c) && selection.start != selection.end) {
+      std::size_t a = chat_unwrap_position(wrapped, (std::size_t)std::min(selection.start, selection.end));
+      std::size_t b = chat_unwrap_position(wrapped, (std::size_t)std::max(selection.start, selection.end));
+      if (a < text.size()) {
+        engine.window.set_clipboard(text.substr(a, std::min(b, text.size()) - a));
+      }
+    }
+    // right click copies the whole message
+    if (hovered && fan::window::is_mouse_clicked(1)) {
+      engine.window.set_clipboard(whole_message);
+    }
+  }
+
+  void render_chat_text(const std::string& text, std::uint32_t message_id) {
+    int plain_part = 0;
+    auto plain = [&](std::string part) {
+      while (!part.empty() && (part.back() == '\n' || part.back() == '\r')) {
+        part.pop_back();
+      }
+      std::size_t first = part.find_first_not_of("\r\n");
+      if (first == std::string::npos) {
+        return;
+      }
+      part = part.substr(first);
+      render_selectable_text(part, std::to_string(message_id) + "_t" + std::to_string(plain_part++), text);
+    };
+    std::size_t at = 0;
+    int block = 0;
+    while (at < text.size()) {
+      std::size_t open = text.find("```", at);
+      if (open == std::string::npos) {
+        plain(text.substr(at));
+        break;
+      }
+      plain(text.substr(at, open - at));
+      std::size_t close = text.find("```", open + 3);
+      std::size_t code_end = close == std::string::npos ? text.size() : close;
+      std::string code = text.substr(open + 3, code_end - open - 3);
+      // ```cpp: the language, one word on the first line
+      std::size_t first_break = code.find('\n');
+      if (first_break != std::string::npos && code.substr(0, first_break).find_first_of(" \t") == std::string::npos) {
+        code = code.substr(first_break + 1);
+      }
+      while (!code.empty() && (code.back() == '\n' || code.back() == '\r')) {
+        code.pop_back();
+      }
+      if (code.find_first_not_of(" \t\r\n") == std::string::npos) {
+        at = close == std::string::npos ? text.size() : close + 3;
+        continue;
+      }
+      std::size_t lines = 1 + (std::size_t)std::count(code.begin(), code.end(), '\n');
+      std::string id = std::to_string(message_id) + "_" + std::to_string(block++);
+      {
+        gui::font_scope_t mono(gui::get_font_size(), gui::font::mono);
+        f32_t height = lines * gui::get_text_line_height_with_spacing() + gui::get_style().WindowPadding.y * 2 +
+          gui::get_style().ScrollbarSize;
+        gui::push_style_color(gui::col_child_bg, fan::color(0.f, 0.f, 0.f, 0.35f));
+        if (gui::begin_child("##chat_code" + id, fan::vec2(0, std::min(height, 400.f)), 1, gui::window_flags_horizontal_scrollbar)) {
+          gui::text(code);
+        }
+        gui::end_child();
+        gui::pop_style_color();
+      }
+      if (gui::button("Copy##chat_code_copy" + id)) {
+        engine.window.set_clipboard(code);
+      }
+      at = close == std::string::npos ? text.size() : close + 3;
+    }
+  }
 
   bool chat_showing() const {
     return std::chrono::steady_clock::now() - chat_tab_seen_at < std::chrono::milliseconds(250);
@@ -144,9 +327,24 @@
     }
 
     auto messages = ecps_backend.chat_of(channel_id);
-    f32_t input_height = gui::get_frame_height() + gui::get_style().ItemSpacing.y * 2;
+    gui::checkbox("Select text##chat_select", &chat_select_mode);
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Shows the chat as plain text: mark any part of it and copy it with Ctrl+C");
+    }
+    // the input grows with its lines, up to six
+    std::size_t input_lines = std::clamp<std::size_t>(1 + (std::size_t)std::count(chat_input.begin(), chat_input.end(), '\n'), 1, 6);
+    f32_t input_box = input_lines * gui::get_text_line_height() + gui::get_style().FramePadding.y * 2;
+    f32_t input_height = input_box + gui::get_style().ItemSpacing.y * 2;
     fan::vec2 avail = gui::get_content_region_avail();
-    if (gui::begin_child("##chat_log", fan::vec2(0, std::max(avail.y - input_height, 80.f)), true)) {
+    if (chat_select_mode) {
+      chat_select_text.clear();
+      for (const auto& message : messages) {
+        chat_select_text += message.name + "  " + chat_time_label(message.time) + "\n" + message.text + "\n\n";
+      }
+      gui::input_text_multiline("##chat_select_text", &chat_select_text, fan::vec2(-1, std::max(avail.y - input_height, 80.f)),
+        gui::input_text_flags_read_only);
+    }
+    else if (gui::begin_child("##chat_log", fan::vec2(0, std::max(avail.y - input_height, 80.f)), true)) {
       if (messages.empty()) {
         text_wrapped_disabled("No messages yet. Text, pasted text and files go to everyone in this channel.");
       }
@@ -163,11 +361,7 @@
         }
         last_from = message.from;
         last_time = message.time;
-        gui::text_wrapped(message.text);
-        // right click copies the message
-        if (gui::is_item_hovered() && fan::window::is_mouse_clicked(1)) {
-          engine.window.set_clipboard(message.text);
-        }
+        render_chat_text(message.text, message.id);
       }
       // new messages, or another channel opened: down to the newest
       std::uint64_t revision = ecps_backend.chat_revision.load();
@@ -177,7 +371,9 @@
         gui::set_scroll_here_y();
       }
     }
-    gui::end_child();
+    if (!chat_select_mode) {
+      gui::end_child();
+    }
 
     // ---- the input: attach, text, send
     if (icon_button("##chat_attach", icon_e::send_file, "Send a file to everyone here", 0.f)) {
@@ -199,11 +395,16 @@
       gui::set_keyboard_focus_here();
       chat_focus_input = false;
     }
-    bool enter = gui::input_text("##chat_input", &chat_input, gui::input_text_flags_enter_returns_true);
+    // Enter sends, Shift+Enter is a new line: with Shift held the field takes Enter as a line of its own
+    bool shift = engine.window.is_key_down(fan::key_left_shift) || engine.window.is_key_down(fan::key_right_shift);
+    gui::input_text_flags_t input_flags = shift ? 0 :
+      (gui::input_text_flags_enter_returns_true | gui::input_text_flags_ctrl_enter_for_new_line);
+    // with Shift held the field returns true for any change (Enter-returns-true is off then): only without it is it a send
+    bool enter = gui::input_text_multiline("##chat_input", &chat_input, fan::vec2(0, input_box), input_flags) && !shift;
     chat_input_active = gui::is_item_active();
     gui::pop_item_width();
     if (gui::is_item_hovered() && chat_input.empty()) {
-      gui::set_tooltip("Enter sends. Long text and pasted files go as files");
+      gui::set_tooltip("Enter sends, Shift+Enter starts a new line. ```code``` shows as code. Long text and pasted files go as files");
     }
 
     if (!pasted_files.empty()) {
