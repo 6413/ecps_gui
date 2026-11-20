@@ -583,6 +583,112 @@
 
   // ---- the side panel of the stream view: the settings or the chat, picked by the two icons under the stream
   bool side_panel_chat = false;
+  // where the panel is: 0 right, 1 bottom, 2 left. Its width (stream_settings.settings_panel_width) for the right and
+  // the left, its height at the bottom. Kept in the config
+  int side_panel_side = 0;
+  f32_t side_panel_height = 300.f;
+  bool side_panel_loaded = false;
+  // the stream view with the panel, this frame: where a dragged tab can be dropped
+  fan::vec2 side_view_min = 0;
+  fan::vec2 side_view_max = 0;
+  // a tab of the panel is being dragged, and the side it would go to (-1 none)
+  bool side_panel_moving = false;
+  int side_panel_drop = -1;
+  bool side_panel_resizing = false;
+
+  void load_side_panel_layout() {
+    if (side_panel_loaded) {
+      return;
+    }
+    side_panel_loaded = true;
+    if (config.contains("side_panel")) {
+      fan::json layout = config["side_panel"];
+      side_panel_side = std::clamp(layout.value("side", 0), 0, 2);
+      side_panel_height = layout.value("height", side_panel_height);
+      stream_settings.settings_panel_width = layout.value("width", stream_settings.settings_panel_width);
+    }
+  }
+
+  void save_side_panel_layout() {
+    fan::json layout;
+    layout["side"] = side_panel_side;
+    layout["height"] = side_panel_height;
+    layout["width"] = stream_settings.settings_panel_width;
+    write_to_config("side_panel", layout);
+  }
+
+  // the line between the stream and the panel: dragged, it makes the panel bigger or smaller
+  void render_side_panel_handle(fan::vec2 size, int side) {
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::invisible_button("##side_panel_handle", size);
+    bool hot = gui::is_item_hovered() || gui::is_item_active();
+    if (hot) {
+      gui::set_mouse_cursor(side == 1 ? gui::mouse_cursor_resize_ns : gui::mouse_cursor_resize_ew);
+    }
+    if (gui::is_item_active()) {
+      fan::vec2 delta = gui::get_io().MouseDelta;
+      fan::vec2 area = side_view_max - side_view_min;
+      if (side == 1) {
+        side_panel_height = std::clamp(side_panel_height - delta.y, 150.f, area.y * 0.7f);
+      }
+      else {
+        stream_settings.settings_panel_width = std::clamp(stream_settings.settings_panel_width + (side == 0 ? -delta.x : delta.x),
+          250.f, area.x * 0.6f);
+      }
+      side_panel_resizing = true;
+    }
+    else if (side_panel_resizing) {
+      side_panel_resizing = false;
+      save_side_panel_layout();
+    }
+    std::uint32_t color = hot ? 0xffff7a33u : 0x30ffffffu;
+    fan::vec2 c = at + size * 0.5f;
+    if (side == 1) {
+      gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), color, 3.f);
+    }
+    else {
+      gui::get_window_draw_list()->AddLine(fan::vec2(c.x, c.y - 24.f), fan::vec2(c.x, c.y + 24.f), color, 3.f);
+    }
+  }
+
+  // while a tab is dragged: where it would go, and on release it goes there
+  void render_side_panel_drop() {
+    if (!side_panel_moving) {
+      return;
+    }
+    if (!fan::window::is_mouse_down(0)) {
+      side_panel_moving = false;
+      if (side_panel_drop >= 0 && side_panel_drop != side_panel_side) {
+        side_panel_side = side_panel_drop;
+        save_side_panel_layout();
+      }
+      side_panel_drop = -1;
+      return;
+    }
+    fan::vec2 m = gui::get_io().MousePos;
+    fan::vec2 min = side_view_min;
+    fan::vec2 max = side_view_max;
+    fan::vec2 size = max - min;
+    // the nearest of the right, bottom and left edges
+    f32_t to_right = (max.x - m.x) / size.x;
+    f32_t to_bottom = (max.y - m.y) / size.y;
+    f32_t to_left = (m.x - min.x) / size.x;
+    side_panel_drop = to_right <= to_bottom && to_right <= to_left ? 0 : to_bottom <= to_left ? 1 : 2;
+    fan::vec2 a, b;
+    const char* where = "";
+    switch (side_panel_drop) {
+      case 0: a = fan::vec2(max.x - size.x * 0.28f, min.y); b = max; where = "Dock on the right"; break;
+      case 1: a = fan::vec2(min.x, max.y - size.y * 0.35f); b = max; where = "Dock at the bottom"; break;
+      default: a = min; b = fan::vec2(min.x + size.x * 0.28f, max.y); where = "Dock on the left"; break;
+    }
+    auto* list = gui::get_foreground_draw_list();
+    list->AddRectFilled(min, max, 0x40000000u, 8.f);
+    list->AddRectFilled(a, b, 0x50ff7a33u, 8.f);
+    list->AddRect(a, b, 0xffff7a33u, 8.f, 0, 2.f);
+    fan::vec2 text_size = gui::calc_text_size(where);
+    list->AddText((a + b) * 0.5f - text_size * 0.5f, 0xffffffffu, where);
+    gui::set_mouse_cursor(gui::mouse_cursor_resize_all);
+  }
 
   // something came in that the chat hasn't shown yet
   bool chat_unread() const {
@@ -648,7 +754,14 @@
       if (dot) {
         list->AddCircleFilled(start + fan::vec2(content + 7.f, height * 0.3f), 3.5f, 0xff4040ffu, 12);
       }
-      return clicked;
+      // dragging a tab moves the panel (not in full screen, where it stays on the right)
+      if (!is_fullscreen_stream && gui::is_item_active() && gui::is_mouse_dragging(0, 6.f)) {
+        side_panel_moving = true;
+      }
+      if (hovered && !side_panel_moving && !is_fullscreen_stream) {
+        gui::set_tooltip("Drag to move the panel to the right, the bottom or the left");
+      }
+      return clicked && !side_panel_moving;
     };
     if (tab("##side_tab_settings", icon_e::gear, "Settings", !side_panel_chat, false)) {
       side_panel_chat = false;

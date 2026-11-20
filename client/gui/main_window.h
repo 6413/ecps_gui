@@ -802,51 +802,55 @@
       }
     }
 
-    // The stream and the side panel (settings or chat) are two windows in a dock space: the panel starts docked on
-    // the right, and dragging its tab docks it at the bottom, the left, the top, or lets it float. The layout is
-    // kept in imgui.ini
+    // The stream and the side panel (settings or chat). The panel sits on the right, at the bottom or on the left:
+    // drag its Settings or Chat tab over the stream and drop it near an edge. The line between them resizes it
     void process_stream_settings() {
-      fan::vec2 avail_size = gui::get_content_region_avail();
-      f32_t content_height = avail_size.y - gui::get_style().ItemSpacing.y;
-      f32_t left_window_padding = 8.0f;
-      f32_t right_window_padding = 12.0f;
-      fan::vec2 size(avail_size.x - left_window_padding - right_window_padding, content_height);
-      if (size.x < 50.f || size.y < 50.f) {
+      This->load_side_panel_layout();
+      fan::vec2 avail = gui::get_content_region_avail();
+      f32_t left_padding = 8.f;
+      f32_t right_padding = 12.f;
+      f32_t handle = 14.f;
+      fan::vec2 origin = gui::get_cursor_screen_pos() + fan::vec2(left_padding, 0);
+      fan::vec2 area(avail.x - left_padding - right_padding, avail.y - gui::get_style().ItemSpacing.y);
+      if (area.x < 100.f || area.y < 100.f) {
         return;
       }
-      gui::dummy(fan::vec2(left_window_padding, 0));
-      gui::same_line(0, 0);
-
-      static constexpr const char* stream_window = "Stream###ecps_stream_window";
-      static constexpr const char* panel_window = "###ecps_side_panel";
-      gui::id_t dock_id = gui::get_id("##ecps_stream_dock");
-      gui::dock_space_split_once(dock_id, size, gui::dir_right, std::clamp(This->stream_settings.settings_panel_width / size.x, 0.15f, 0.6f),
-        stream_window, panel_window);
-      gui::dock_space_in_window(dock_id, size, gui::dock_node_flags_passthru_central_node);
-
-      // the stream: no tab of its own, nothing docks over it as a tab
-      gui::class_t stream_class;
-      stream_class.DockNodeFlagsOverrideSet = gui::dock_no_tab_bar | gui::dock_no_docking_over_me;
-      gui::set_next_window_class(&stream_class);
-      gui::set_next_window_bg_alpha(0.f);
-      gui::push_style_var(gui::style_var_window_padding, fan::vec2(0, 0));
-      if (gui::begin(stream_window, nullptr, gui::window_flags_no_collapse | gui::window_flags_no_scrollbar |
-        gui::window_flags_no_scroll_with_mouse | gui::window_flags_no_title_bar)) {
-        gui::pop_style_var();
-        render_stream_area("##stream_display_split", gui::get_content_region_avail());
+      This->side_view_min = origin;
+      This->side_view_max = origin + area;
+      int side = This->side_panel_side;
+      fan::vec2 stream_at, stream_size, handle_at, handle_size, panel_at, panel_size;
+      if (side == 1) {
+        f32_t height = std::clamp(This->side_panel_height, 150.f, area.y * 0.7f);
+        stream_at = origin;
+        stream_size = fan::vec2(area.x, area.y - height - handle);
+        handle_at = origin + fan::vec2(0, stream_size.y);
+        handle_size = fan::vec2(area.x, handle);
+        panel_at = origin + fan::vec2(0, stream_size.y + handle);
+        panel_size = fan::vec2(area.x, height);
       }
       else {
-        gui::pop_style_var();
+        f32_t width = std::clamp(This->stream_settings.settings_panel_width, 250.f, area.x * 0.6f);
+        f32_t stream_width = area.x - width - handle;
+        stream_at = side == 0 ? origin : origin + fan::vec2(width + handle, 0);
+        stream_size = fan::vec2(stream_width, area.y);
+        handle_at = origin + fan::vec2(side == 0 ? stream_width : width, 0);
+        handle_size = fan::vec2(handle, area.y);
+        panel_at = side == 0 ? origin + fan::vec2(stream_width + handle, 0) : origin;
+        panel_size = fan::vec2(width, area.y);
       }
-      gui::end();
 
-      // the panel: its tab is what you drag to move it
-      gui::set_next_window_size(fan::vec2(This->stream_settings.settings_panel_width, content_height), gui::cond_first_use_ever);
-      std::string title = std::string(This->side_panel_chat ? "Chat" : "Settings") + panel_window;
-      if (gui::begin(title, nullptr, gui::window_flags_no_collapse)) {
-        This->render_side_panel_content();
-      }
-      gui::end();
+      gui::set_cursor_screen_pos(stream_at);
+      render_stream_area("##stream_display_split", stream_size);
+
+      gui::set_cursor_screen_pos(handle_at);
+      This->render_side_panel_handle(handle_size, side);
+
+      gui::set_cursor_screen_pos(panel_at);
+      gui::begin_child("##stream_settings_panel", panel_size, true);
+      This->render_side_panel_content();
+      gui::end_child();
+
+      This->render_side_panel_drop();
     }
 
     void process_no_stream_settings() {
