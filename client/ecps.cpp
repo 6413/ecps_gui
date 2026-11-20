@@ -24,6 +24,8 @@
 #include <memory>
 #include <cmath>
 #include <fstream>
+#include <sstream>
+#include <ctime>
 #include <filesystem>
 #include <random>
 #include <cstdio>
@@ -251,6 +253,32 @@ struct worker_thread_scope_t {
 // lets go of the screen capture, the next read opens it again (on Wayland: asks which screen or window).
 // A fan older than close_screen() still builds, it just keeps the old capture until restart. The generic lambda
 // makes the requires check dependent, so a missing member is not an error
+#if defined(_WIN32)
+// the files Explorer put on the clipboard (Ctrl+C on files), for pasting them into the chat
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+static std::vector<std::string> clipboard_file_paths() {
+  std::vector<std::string> paths;
+  if (!IsClipboardFormatAvailable(CF_HDROP) || !OpenClipboard(nullptr)) {
+    return paths;
+  }
+  if (HANDLE data = GetClipboardData(CF_HDROP)) {
+    if (auto drop = (HDROP)GlobalLock(data)) {
+      UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      for (UINT i = 0; i < count; ++i) {
+        UINT length = DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring path(length, L'\0');
+        DragQueryFileW(drop, i, path.data(), length + 1);
+        paths.push_back(std::filesystem::path(path).string());
+      }
+      GlobalUnlock(data);
+    }
+  }
+  CloseClipboard();
+  return paths;
+}
+#endif
+
 static void close_capture(auto& encoder) {
   if constexpr (requires { encoder.close_screen(); }) {
     encoder.close_screen();
@@ -1160,6 +1188,29 @@ ecps_backend_t::ecps_backend_t() {
     }
     std::lock_guard<std::mutex> lock(backend.voice_mutex);
     backend.voice_members[(std::uint32_t)msg->ChannelID.i] = std::move(members);
+    co_return;
+  };
+
+  s2c(Channel_Chat_Message) {
+    s2c_read(Channel_Chat_Message);
+    if (!backend.is_channel_joined(msg->ChannelID)) {
+      co_return;
+    }
+    ecps_backend_t::chat_message_t message;
+    message.id = msg->Id;
+    message.from = (std::uint32_t)msg->From.i;
+    message.name = std::string(msg->Name, strnlen(msg->Name, sizeof(msg->Name)));
+    message.time = msg->Time;
+    message.text = std::string(msg->Text, std::min<std::size_t>(msg->Length, sizeof(msg->Text)));
+    backend.on_chat_message(msg->ChannelID, std::move(message));
+    co_return;
+  };
+
+  s2c(Channel_Chat_History_End) {
+    s2c_read(Channel_Chat_History_End);
+    if (backend.is_channel_joined(msg->ChannelID)) {
+      backend.on_chat_known(msg->ChannelID);
+    }
     co_return;
   };
 

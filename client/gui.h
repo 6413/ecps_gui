@@ -29,6 +29,11 @@ struct ecps_gui_t {
 
     // dropping files on the window sends them, the next frame asks to whom if it isn't obvious
     file_drop_handle = engine.window.on_drop([this](const fan::window_t::drop_data_t& d) {
+      // the chat showing: the files go into it, to everyone in the channel
+      if (chat_showing()) {
+        chat_dropped_files.insert(chat_dropped_files.end(), d.paths.begin(), d.paths.end());
+        return;
+      }
       dropped_files = d.paths;
       drop_popup_requested = !dropped_files.empty();
     });
@@ -160,6 +165,7 @@ struct ecps_gui_t {
   #include "gui/stream_window.h"
 
   #include "gui/files.h"
+  #include "gui/chat.h"
 
   #include "gui/audio.h"
 

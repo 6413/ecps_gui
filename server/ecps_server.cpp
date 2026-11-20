@@ -1,6 +1,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <deque>
 #include <functional>
 #include <set>
 #include <algorithm>
@@ -545,6 +547,18 @@ static bool udp_read_one() {
     }
     auto VoiceData = (uint8_t*)&RestPacket[1];
     ScreenShare_VoicePacket(RestPacket->ChannelID, SessionID, VoiceData, size - (VoiceData - buffer));
+    break;
+  }
+  case ProtocolUDP::C2S_t::Channel_Chat_Probe: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_Chat_Probe_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    ScreenShare_ChatProbe(RestPacket->ChannelID, SessionID);
     break;
   }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {

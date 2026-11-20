@@ -178,6 +178,11 @@ struct Channel_ScreenShare_Data_t{
   std::vector<uint32_t> Announced;
   std::vector<uint32_t> Voice;
   std::vector<uint32_t> VoiceAware;
+  /* the chat: the last ChatHistoryMax messages, for those who join later, and the sessions that asked for it
+     (Channel_Chat_Probe). Only those get chat, an older client would not know the messages */
+  std::deque<Protocol_S2C_t::Channel_Chat_Message_t> ChatHistory;
+  std::vector<uint32_t> ChatAware;
+  uint32_t ChatNextId = 1;
   /* the channel's password is not kept, only a keyed hash of it */
   bool HasPassword = false;
   std::array<uint8_t, 32> PasswordHash{};

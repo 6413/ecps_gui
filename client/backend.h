@@ -1044,6 +1044,11 @@ struct ecps_backend_t {
       [&](const auto& channel) { return channel.channel_id.i == channel_id.i; }), channel_info.end());
     channel_sessions.erase(channel_id.i);
     {
+      std::lock_guard<std::mutex> lock(chat_mutex);
+      chat_messages.erase((std::uint32_t)channel_id.i);
+      chat_channels.erase((std::uint32_t)channel_id.i);
+    }
+    {
       std::lock_guard<std::mutex> lock(voice_mutex);
       voice_members.erase((std::uint32_t)channel_id.i);
     }
@@ -1098,6 +1103,83 @@ struct ecps_backend_t {
     for (auto channel_id : unanswered) {
       co_await write_voice(channel_id, nullptr, 0);
     }
+    // the chat is asked for the same way: a server without it ignores the probe, one with it answers with the history
+    std::vector<std::pair<Protocol_ChannelID_t, Protocol_ChannelSessionID_t>> chat_unanswered;
+    for (auto& channel : channel_info) {
+      if (channel.join_confirmed && channel.chat_probes < 5 && !chat_known(channel.channel_id)) {
+        ++channel.chat_probes;
+        chat_unanswered.emplace_back(channel.channel_id, channel.session_id);
+      }
+    }
+    for (auto [channel_id, channel_session] : chat_unanswered) {
+      ProtocolUDP::C2S_t::Channel_Chat_Probe_t rest;
+      rest.ChannelID = channel_id;
+      rest.ChannelSessionID = channel_session;
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Chat_Probe, rest, nullptr, 0);
+    }
+  }
+
+  // ---- chat -----------------------------------------------------------------------------------------------------
+  // per channel, the messages the server sent (its history first). Written by the network thread, read by the gui
+  struct chat_message_t {
+    std::uint32_t id = 0;
+    std::uint32_t from = 0;
+    std::string name;
+    std::int64_t time = 0;
+    std::string text;
+  };
+  mutable std::mutex chat_mutex;
+  std::unordered_map<std::uint32_t, std::vector<chat_message_t>> chat_messages;
+  std::unordered_map<std::uint32_t, bool> chat_channels;
+  // goes up with every message, the gui scrolls down when it changed
+  std::atomic<std::uint64_t> chat_revision{0};
+
+  bool chat_known(Protocol_ChannelID_t channel_id) const {
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    return chat_channels.contains((std::uint32_t)channel_id.i);
+  }
+  std::vector<chat_message_t> chat_of(Protocol_ChannelID_t channel_id) const {
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    auto it = chat_messages.find((std::uint32_t)channel_id.i);
+    return it == chat_messages.end() ? std::vector<chat_message_t>() : it->second;
+  }
+  void on_chat_message(Protocol_ChannelID_t channel_id, chat_message_t message) {
+    {
+      std::lock_guard<std::mutex> lock(chat_mutex);
+      chat_channels[(std::uint32_t)channel_id.i] = true;
+      auto& list = chat_messages[(std::uint32_t)channel_id.i];
+      // the history after a reconnect repeats what is here already
+      for (const auto& have : list) {
+        if (have.id == message.id) {
+          return;
+        }
+      }
+      list.push_back(std::move(message));
+      std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+      if (list.size() > 500) {
+        list.erase(list.begin(), list.begin() + (list.size() - 500));
+      }
+    }
+    chat_revision.fetch_add(1);
+  }
+  void on_chat_known(Protocol_ChannelID_t channel_id) {
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    chat_channels[(std::uint32_t)channel_id.i] = true;
+  }
+  // only into a channel whose server answered the probe, an older one would close the connection
+  fan::event::task_t send_chat(Protocol_ChannelID_t channel_id, std::string text) {
+    auto* channel = find_channel(channel_id);
+    if (!channel || !chat_known(channel_id) || text.empty()) {
+      co_return;
+    }
+    Protocol_C2S_t::Channel_Chat_Send_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel->channel_id;
+    rest.ChannelSessionID = channel->session_id;
+    std::size_t length = std::min(text.size(), sizeof(rest.Text));
+    rest.Length = (std::uint16_t)length;
+    std::memcpy(rest.Text, text.data(), length);
+    co_await tcp_write(Protocol_C2S_t::Channel_Chat_Send, &rest, sizeof(rest));
   }
 
   bool is_channel_id_valid(Protocol_ChannelID_t channel_id) const {
@@ -1287,6 +1369,7 @@ struct ecps_backend_t {
     uint32_t join_request_id = (uint32_t)-1;
     bool join_confirmed = false;
     uint8_t voice_probes = 0;
+    uint8_t chat_probes = 0;
     std::string password; // sent with the join, kept when the server lets us in
     fan::time::timer joined_at;
     int flag = 0;

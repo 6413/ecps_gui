@@ -149,6 +149,10 @@ struct Protocol {
     "WrongPassword"
   };
   static constexpr std::size_t ChannelPasswordMax = 64;
+  // a chat message's text, UTF-8. Longer text goes as a file
+  static constexpr std::size_t ChatTextMax = 1024;
+  // the messages a channel keeps for those who join later
+  static constexpr std::size_t ChatHistoryMax = 100;
   enum class LoginType_t : uint8_t {
     Anonymous
   };
@@ -183,6 +187,13 @@ struct ProtocolUDP {
       Protocol_ChannelSessionID_t ChannelSessionID;
     );
     __dme(Channel_Voice_Data,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+    );
+    /* asks for the channel's chat: the server answers over tcp with its history and Channel_Chat_History_End, and
+       sends the chat to this session from then on. A server without chat ignores it, so a client asks this first
+       and only sends chat to a server that answered */
+    __dme(Channel_Chat_Probe,
       Protocol_ChannelID_t ChannelID;
       Protocol_ChannelSessionID_t ChannelSessionID;
     );
@@ -408,6 +419,13 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     Protocol_ChannelID_t ChannelID;
     char Password[Protocol::ChannelPasswordMax]; /* empty removes the password, only the host may */
   );
+  /* a chat message into the channel. Sent only after the server answered Channel_Chat_Probe */
+  __dme(Channel_Chat_Send,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_ChannelSessionID_t ChannelSessionID;
+    uint16_t Length;
+    char Text[Protocol::ChatTextMax];
+  );
 }Protocol_C2S;
 
 #ifndef __ecps_client
@@ -627,6 +645,20 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     Protocol_ChannelID_t ChannelID;
     uint8_t Count;
     Protocol_SessionID_t Members[16];
+  );
+  /* chat, only to sessions that sent Channel_Chat_Probe. Id counts up per channel, a client drops one it has */
+  __dme(Channel_Chat_Message,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t From;
+    char Name[32];
+    uint32_t Id;
+    int64_t Time; /* unix seconds */
+    uint16_t Length;
+    char Text[Protocol::ChatTextMax];
+  );
+  /* after the history: the server has chat */
+  __dme(Channel_Chat_History_End,
+    Protocol_ChannelID_t ChannelID;
   );
 }Protocol_S2C;
 

@@ -170,6 +170,8 @@ void ScreenShare_SetVoice(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t S
 void ScreenShare_VoiceQuit(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
   auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
   uint32_t Id = (uint32_t)SessionID.i;
+  /* leaving the channel ends its chat for this session too */
+  std::erase(ChannelData->ChatAware, Id);
   std::erase(ChannelData->VoiceAware, Id);
   if(std::erase(ChannelData->Voice, Id) != 0){
     ScreenShare_SendVoiceMembers(ChannelID);
@@ -473,5 +475,69 @@ ScreenShare_FlagIsChanged
       continue;
     }
     ScreenShare_SendFlagTo(ChannelID, n->data.SessionID);
+  }
+}
+
+/* ---- chat ---- */
+
+/* a session asks for the channel's chat: it gets the history and the end marker, and the chat from then on */
+void ScreenShare_ChatProbe(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  uint32_t Id = (uint32_t)SessionID.i;
+  if(std::find(ChannelData->ChatAware.begin(), ChannelData->ChatAware.end(), Id) == ChannelData->ChatAware.end()){
+    ChannelData->ChatAware.push_back(Id);
+  }
+  for(const auto &Message : ChannelData->ChatHistory){
+    Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_Chat_Message, Message);
+  }
+  Protocol_S2C_t::Channel_Chat_History_End_t End;
+  End.ChannelID = ChannelID;
+  Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_Chat_History_End, End);
+}
+
+/* a message into the channel: kept, and sent to everyone in it who asked for the chat, the sender included */
+void ScreenShare_ChatSend(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, const char *Text, uint16_t Length){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return;
+  }
+  if(Length == 0){
+    return;
+  }
+  if(Length > Protocol::ChatTextMax){
+    Length = Protocol::ChatTextMax;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  /* the sender is in the chat, also when its probe was lost */
+  uint32_t SenderId = (uint32_t)SessionID.i;
+  if(std::find(ChannelData->ChatAware.begin(), ChannelData->ChatAware.end(), SenderId) == ChannelData->ChatAware.end()){
+    ChannelData->ChatAware.push_back(SenderId);
+  }
+
+  Protocol_S2C_t::Channel_Chat_Message_t Message;
+  __builtin_memset(&Message, 0, sizeof(Message));
+  Message.ChannelID = ChannelID;
+  Message.From = SessionID;
+  snprintf(Message.Name, sizeof(Message.Name), "%s", GetSessionUsername(SessionID));
+  Message.Id = ChannelData->ChatNextId++;
+  Message.Time = (int64_t)std::time(nullptr);
+  Message.Length = Length;
+  __builtin_memcpy(Message.Text, Text, Length);
+
+  ChannelData->ChatHistory.push_back(Message);
+  while(ChannelData->ChatHistory.size() > Protocol::ChatHistoryMax){
+    ChannelData->ChatHistory.pop_front();
+  }
+
+  for(uint32_t Member : ChannelData->ChatAware){
+    Protocol_SessionID_t Target((Protocol_SessionID_t::Type)Member);
+    if(Session::IsInvalid(Target) || !ScreenShare_IsMember(Target, ChannelID)){
+      continue;
+    }
+    Session::WriteCommand(Target, 0, Protocol_S2C_t::Channel_Chat_Message, Message);
   }
 }

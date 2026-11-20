@@ -253,6 +253,15 @@ case Protocol_C2S_t::JoinChannel:{
 
   goto StateDone_gt;
 }
+case Protocol_C2S_t::Channel_Chat_Send:{
+  auto Request = (Protocol_C2S_t::Channel_Chat_Send_t *)RestPacket;
+  Protocol_ChannelID_t ChannelID = Request->ChannelID;
+  if(IsAnythingInvalid(SessionID, ChannelID, Request->ChannelSessionID) == true){
+    goto StateDone_gt;
+  }
+  ScreenShare_ChatSend(ChannelID, SessionID, Request->Text, Request->Length);
+  goto StateDone_gt;
+}
 case Protocol_C2S_t::SetChannelPassword:{
   auto Request = (Protocol_C2S_t::SetChannelPassword_t *)RestPacket;
   Protocol_ChannelID_t ChannelID = Request->ChannelID;

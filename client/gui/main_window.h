@@ -481,6 +481,11 @@
               gui::end_tab_item();
             }
 
+            if (gui::begin_tab_item("Chat", nullptr, 0)) {
+              This->render_chat_tab(This->selected_channel_id);
+              gui::end_tab_item();
+            }
+
             if (gui::begin_tab_item("Files", nullptr, 0)) {
               This->render_file_transfers();
               gui::end_tab_item();
