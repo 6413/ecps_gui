@@ -460,14 +460,14 @@ static std::filesystem::path file_unique_path(const std::filesystem::path& dir, 
   return candidate;
 }
 
-fan::event::task_t accept_file(uint32_t id, Protocol_SessionID_t peer) {
+fan::event::task_t accept_file(uint32_t id, Protocol_SessionID_t peer, std::string folder = std::string()) {
   auto t = find_file_transfer(id, peer, false);
   if (!t || t->state != file_transfer_t::state_e::offered) {
     co_return;
   }
   std::string error;
   std::error_code ec;
-  auto dir = std::filesystem::path("ecps_downloads");
+  auto dir = folder.empty() ? std::filesystem::path("ecps_downloads") : file_fs_path(folder);
   std::filesystem::create_directories(dir, ec);
   if (ec) {
     error = "can't create the downloads folder";
