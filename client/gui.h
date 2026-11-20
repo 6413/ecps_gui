@@ -198,6 +198,7 @@ struct ecps_gui_t {
     }
     if (is_fullscreen_stream) {
       render_fullscreen_stream();
+      render_chat_viewer();
       update_input_control();
       return;
     }
@@ -231,6 +232,7 @@ struct ecps_gui_t {
 
 
     gui::end();
+    render_chat_viewer();
 
     update_input_control();
   }

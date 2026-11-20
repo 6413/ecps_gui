@@ -408,6 +408,120 @@
   #endif
   }
 
+  // a copy of a file where the user picks
+  static void chat_save_copy(const std::string& source) {
+    std::string name = ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(source).filename());
+    fan::graphics::save_file("", [source, name](std::string_view target) {
+      std::error_code ec;
+      std::filesystem::path to = ecps_backend_t::file_fs_path(std::string(target));
+      if (!to.has_extension()) {
+        to += std::filesystem::path(name).extension();
+      }
+      std::filesystem::copy_file(ecps_backend_t::file_fs_path(source), to, std::filesystem::copy_options::overwrite_existing, ec);
+    });
+  }
+
+  // ---- the picture viewer: a clicked chat picture over the whole window. The wheel (with or without Ctrl) zooms
+  // at the mouse, dragging moves it, a double click goes back to fitting, Esc or a click beside it closes it
+  std::string chat_viewer_path;
+  f32_t chat_viewer_zoom = 1.f; // times the size that fits the window
+  fan::vec2 chat_viewer_offset = 0;
+  bool chat_viewer_dragged = false;
+
+  void render_chat_viewer() {
+    if (chat_viewer_path.empty()) {
+      return;
+    }
+    auto found = chat_pictures.find(chat_viewer_path);
+    if (found == chat_pictures.end() || !found->second.ready || engine.window.is_key_clicked(fan::key_escape)) {
+      chat_viewer_path.clear();
+      return;
+    }
+    auto& picture = found->second;
+    auto* viewport = gui::get_main_viewport();
+    fan::vec2 pos(viewport->WorkPos.x, viewport->WorkPos.y);
+    fan::vec2 area(viewport->WorkSize.x, viewport->WorkSize.y);
+    gui::set_next_window_pos(pos);
+    gui::set_next_window_size(area);
+    gui::set_next_window_focus();
+    gui::push_style_var(gui::style_var_window_padding, fan::vec2(0, 0));
+    gui::push_style_var(gui::style_var_window_border_size, 0.f);
+    gui::push_style_var(gui::style_var_window_rounding, 0.f);
+    gui::push_style_color(gui::col_window_bg, fan::color(0.f, 0.f, 0.f, 0.9f));
+    bool open = gui::begin("##chat_picture_viewer", nullptr, gui::window_flags_no_title_bar | gui::window_flags_no_resize |
+      gui::window_flags_no_move | gui::window_flags_no_collapse | gui::window_flags_no_docking | gui::window_flags_no_saved_settings |
+      gui::window_flags_no_scrollbar | gui::window_flags_no_scroll_with_mouse);
+    gui::pop_style_color();
+    gui::pop_style_var(3);
+    if (!open) {
+      gui::end();
+      return;
+    }
+    auto& io = gui::get_io();
+    fan::vec2 middle = pos + area * 0.5f;
+    f32_t fit = std::min({1.f, area.x * 0.9f / std::max(picture.size.x, 1.f), area.y * 0.85f / std::max(picture.size.y, 1.f)});
+
+    // the wheel zooms at the mouse: the point under it stays there
+    if (gui::is_window_hovered() && io.MouseWheel != 0.f) {
+      f32_t old_zoom = chat_viewer_zoom;
+      chat_viewer_zoom = std::clamp(chat_viewer_zoom * std::pow(1.2f, io.MouseWheel), 0.2f, 40.f / std::max(fit, 0.01f));
+      fan::vec2 center = middle + chat_viewer_offset;
+      fan::vec2 mouse = io.MousePos;
+      center = mouse + (center - mouse) * (chat_viewer_zoom / old_zoom);
+      chat_viewer_offset = center - middle;
+    }
+    fan::vec2 shown = picture.size * fit * chat_viewer_zoom;
+    fan::vec2 image_min = middle + chat_viewer_offset - shown * 0.5f;
+    gui::set_cursor_screen_pos(image_min);
+    gui::image(picture.image, shown);
+
+    // the buttons, before the background so they get the clicks
+    std::string name = ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(chat_viewer_path).filename());
+    f32_t button = gui::get_frame_height() * 1.3f;
+    gui::set_cursor_screen_pos(pos + fan::vec2(area.x - (button + 10.f) * 3.f, 14.f));
+    if (icon_button("##viewer_save", icon_e::send_file, "Save a copy", button, icon_style_e::overlay)) {
+      chat_save_copy(chat_viewer_path);
+    }
+    gui::same_line(0, 10.f);
+    if (icon_button("##viewer_open", icon_e::fullscreen, "Open in another program", button, icon_style_e::overlay)) {
+      chat_open_path(chat_viewer_path);
+    }
+    gui::same_line(0, 10.f);
+    bool close = icon_button("##viewer_close", icon_e::stop, "Close (Esc)", button, icon_style_e::overlay);
+
+    // the background: dragging moves the picture, a click beside it closes the viewer
+    gui::set_cursor_screen_pos(pos);
+    bool clicked = gui::invisible_button("##viewer_background", area);
+    if (gui::is_item_hovered() && fan::window::is_mouse_clicked(0)) {
+      chat_viewer_dragged = false;
+    }
+    if (gui::is_item_active() && gui::is_mouse_dragging(0, 3.f)) {
+      chat_viewer_offset += fan::vec2(io.MouseDelta);
+      chat_viewer_dragged = true;
+    }
+    bool on_picture = io.MousePos.x >= image_min.x && io.MousePos.y >= image_min.y &&
+      io.MousePos.x <= image_min.x + shown.x && io.MousePos.y <= image_min.y + shown.y;
+    if (gui::is_item_hovered() && gui::is_mouse_double_clicked(0)) {
+      chat_viewer_zoom = 1.f;
+      chat_viewer_offset = 0;
+    }
+    else if (clicked && !chat_viewer_dragged && !on_picture) {
+      close = true;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_mouse_cursor(on_picture ? gui::mouse_cursor_resize_all : gui::mouse_cursor_arrow);
+    }
+
+    std::string info = name + "   " + std::to_string((int)picture.size.x) + " x " + std::to_string((int)picture.size.y) +
+      "   " + std::to_string((int)std::round(fit * chat_viewer_zoom * 100.f)) + "%   Wheel zooms, drag moves, double click fits";
+    fan::vec2 info_size = gui::calc_text_size(info);
+    gui::get_window_draw_list()->AddText(pos + fan::vec2((area.x - info_size.x) * 0.5f, area.y - info_size.y - 16.f), 0xffc8c8c8u, info.c_str());
+    gui::end();
+    if (close) {
+      chat_viewer_path.clear();
+    }
+  }
+
   // the picture of a file line, or false to show the line as text
   bool render_chat_picture(const std::string& text, std::uint32_t message_id, std::uint32_t from) {
     static const std::string prefix = "[file] ";
@@ -499,22 +613,16 @@
     chat_add_line(text, "\n", true, gui::get_item_rect_min(), gui::get_item_rect_max());
     gui::set_cursor_screen_pos(at);
     if (gui::invisible_button("##chat_picture" + id, size)) {
-      chat_open_path(path);
+      chat_viewer_path = path;
+      chat_viewer_zoom = 1.f;
+      chat_viewer_offset = 0;
     }
     if (gui::is_item_hovered()) {
-      gui::set_tooltip("Click to open " + name);
+      gui::set_tooltip("Click to view " + name);
       gui::get_window_draw_list()->AddRect(at, at + size, 0x80ffffffu, 4.f);
     }
     if (gui::button("Save##chat_picture_save" + id)) {
-      std::string source = path;
-      fan::graphics::save_file("", [source, name](std::string_view target) {
-        std::error_code ec;
-        std::filesystem::path to = ecps_backend_t::file_fs_path(std::string(target));
-        if (!to.has_extension()) {
-          to += std::filesystem::path(name).extension();
-        }
-        std::filesystem::copy_file(ecps_backend_t::file_fs_path(source), to, std::filesystem::copy_options::overwrite_existing, ec);
-      });
+      chat_save_copy(path);
     }
     gui::same_line();
     text_wrapped_disabled(name + "  " + text.substr(paren + 2, text.size() - paren - 3));
