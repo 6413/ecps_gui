@@ -198,6 +198,109 @@
     }
   }
 
+  // ---- the side panel of the stream view: the settings or the chat, picked by the two icons under the stream
+  bool side_panel_chat = false;
+
+  // something came in that the chat hasn't shown yet
+  bool chat_unread() const {
+    return !chat_showing() && ecps_backend.chat_revision.load() != chat_seen_revision &&
+      ecps_backend.chat_revision.load() != ecps_backend.chat_history_revision.load() &&
+      ecps_backend.chat_known(selected_channel_id);
+  }
+
+  // the gear and the chat icon: one opens its panel, the same again closes it, the other one switches to its own
+  void toggle_side_panel(bool chat) {
+    if (stream_settings.show_in_stream_view && side_panel_chat == chat) {
+      stream_settings.show_in_stream_view = false;
+      return;
+    }
+    stream_settings.show_in_stream_view = true;
+    side_panel_chat = chat;
+    if (chat) {
+      chat_focus_input = true;
+    }
+  }
+
+  // the chat icon of the stream toolbars, with a dot while there is something unread
+  void render_side_chat_button(const char* id, f32_t size) {
+    bool open = stream_settings.show_in_stream_view && side_panel_chat;
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    if (icon_button(id, icon_e::chat, open ? "Hide chat" : "Chat", size, icon_style_e::overlay)) {
+      toggle_side_panel(true);
+    }
+    if (chat_unread()) {
+      gui::get_window_draw_list()->AddCircleFilled(at + fan::vec2(size * 0.86f, size * 0.14f), size * 0.16f, 0xff4040ffu, 16);
+    }
+  }
+
+  // the gear of the stream toolbars
+  void render_side_settings_button(const char* id, f32_t size) {
+    bool open = stream_settings.show_in_stream_view && !side_panel_chat;
+    if (icon_button(id, icon_e::gear, open ? "Hide settings" : "Settings", size, icon_style_e::overlay)) {
+      toggle_side_panel(false);
+    }
+  }
+
+  // two tabs at the top of the side panel, Settings and Chat, with an X that closes it
+  void render_side_panel_header() {
+    f32_t height = gui::get_frame_height();
+    f32_t close_width = height;
+    f32_t width = (gui::get_content_region_avail().x - close_width - 8.f) * 0.5f;
+    auto tab = [&](const char* id, icon_e icon, const char* text, bool selected, bool dot) {
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      bool clicked = gui::invisible_button(id, fan::vec2(width, height));
+      bool hovered = gui::is_item_hovered();
+      auto* list = gui::get_window_draw_list();
+      std::uint32_t fill = selected ? 0xff3a170cu : hovered ? 0xff1c0f09u : 0x00000000u;
+      list->AddRectFilled(at, at + fan::vec2(width, height), fill, height * 0.3f);
+      if (selected) {
+        list->AddRectFilled(at + fan::vec2(6.f, height - 2.f), at + fan::vec2(width - 6.f, height), 0xffff7a33u, 1.f);
+      }
+      f32_t icon_size = height * 0.55f;
+      f32_t content = icon_size + 6.f + gui::calc_text_size(text).x;
+      fan::vec2 start = at + fan::vec2((width - content) * 0.5f, 0);
+      std::uint32_t ink = selected || hovered ? 0xffffffffu : 0xffa0a0a0u;
+      draw_icon(list, icon, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size, ink);
+      list->AddText(start + fan::vec2(icon_size + 6.f, (height - gui::get_font_size()) * 0.5f), ink, text);
+      if (dot) {
+        list->AddCircleFilled(start + fan::vec2(content + 7.f, height * 0.3f), 3.5f, 0xff4040ffu, 12);
+      }
+      return clicked;
+    };
+    if (tab("##side_tab_settings", icon_e::gear, "Settings", !side_panel_chat, false)) {
+      side_panel_chat = false;
+    }
+    gui::same_line(0, 4.f);
+    if (tab("##side_tab_chat", icon_e::chat, "Chat", side_panel_chat, chat_unread())) {
+      side_panel_chat = true;
+      chat_focus_input = true;
+    }
+    gui::same_line(0, 4.f);
+    if (gui::button("x##side_panel_close", fan::vec2(close_width, height))) {
+      stream_settings.show_in_stream_view = false;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Close the panel");
+    }
+    gui::spacing();
+  }
+
+  // what the side panel shows under its tabs
+  void render_side_panel_content() {
+    render_side_panel_header();
+    if (side_panel_chat) {
+      if (ecps_backend.channel_info.empty()) {
+        text_wrapped_disabled("Join a channel to chat");
+      }
+      else {
+        render_chat_tab(selected_channel_id);
+      }
+    }
+    else {
+      window_handler.render_stream_settings_content_compact();
+    }
+  }
+
   bool chat_showing() const {
     return std::chrono::steady_clock::now() - chat_tab_seen_at < std::chrono::milliseconds(250);
   }

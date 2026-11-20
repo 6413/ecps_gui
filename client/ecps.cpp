@@ -162,29 +162,42 @@ static void request_precise_timers() {
 #endif
 }
 
-// only the newest decoded frame is worth showing. frames swap in and out so the
-// plane buffers get reused, a new 1080p frame would page fault 3 mb of memory
+// the decoded frames waiting to be shown, oldest first. Two fit: frames often arrive in pairs (network, the sharer's
+// timing), and with one slot the first of a pair was overwritten before a draw took it, so 60 decoded showed as ~50.
+// With two, the second is shown one draw later instead of lost. When full, the oldest is dropped so the delay
+// can't grow. Frames swap in and out so the plane buffers get reused, a new 1080p frame would page fault 3 mb
 struct latest_frame_t {
   using frame_t = fan::graphics::screen_decode_t::decode_data_t;
+  static constexpr std::size_t slot_count = 2;
 
   void publish(frame_t& frame) {
     std::lock_guard<std::mutex> lock(mutex);
-    std::swap(latest, frame);
-    fresh = true;
+    if (count == slot_count) {
+      // the oldest goes back to the caller to be reused, the new one takes its place as the newest
+      std::swap(slots[head], frame);
+      head = (head + 1) % slot_count;
+      ++dropped;
+      return;
+    }
+    std::swap(slots[(head + count) % slot_count], frame);
+    ++count;
   }
   bool take(frame_t& frame) {
     std::lock_guard<std::mutex> lock(mutex);
-    if (!fresh) {
+    if (count == 0) {
       return false;
     }
-    std::swap(latest, frame);
-    fresh = false;
+    std::swap(slots[head], frame);
+    head = (head + 1) % slot_count;
+    --count;
     return true;
   }
 
   std::mutex mutex;
-  frame_t latest;
-  bool fresh = false;
+  std::array<frame_t, slot_count> slots;
+  std::size_t head = 0;
+  std::size_t count = 0;
+  std::uint64_t dropped = 0;
 };
 
 // ms per frame, smoothed. the stream stats show these to tell what limits the frame rate
@@ -519,6 +532,8 @@ struct voice_chat_t {
     std::uint16_t expected_sequence = 0;
     bool receiving = false;
     std::int64_t heard_at_ms = 0;
+    // the peak of the last decoded packet
+    f32_t level = 0.f;
   };
 
   static std::int64_t now_ms() {
@@ -716,6 +731,11 @@ struct voice_chat_t {
     if (frames > 0) {
       mixer.push(session, pcm.data(), frames);
       speaker->heard_at_ms = now_ms();
+      f32_t peak = 0.f;
+      for (std::int32_t i = 0; i < frames * (std::int32_t)fan::audio::stream_channels; ++i) {
+        peak = std::max(peak, std::abs(pcm[i]));
+      }
+      speaker->level = peak;
     }
   }
 
@@ -727,6 +747,28 @@ struct voice_chat_t {
     std::lock_guard<std::mutex> lock(speakers_mutex);
     auto it = speakers.find(session);
     return it != speakers.end() && now - it->second->heard_at_ms <= hold_ms;
+  }
+
+  // how loud someone is right now, 0..1 on a dB scale (-50 dB..0 dB). Only what is sent or heard: 0 when silent
+  f32_t talk_level(std::uint32_t session) {
+    std::int64_t now = now_ms();
+    f32_t peak = 0.f;
+    if (session == (std::uint32_t)ecps_backend.session_id.i) {
+      if (capture.is_running() && now - loud_at_ms.load(std::memory_order_relaxed) <= hold_ms) {
+        peak = level.load(std::memory_order_relaxed);
+      }
+    }
+    else {
+      std::lock_guard<std::mutex> lock(speakers_mutex);
+      auto it = speakers.find(session);
+      if (it != speakers.end() && now - it->second->heard_at_ms <= 150) {
+        peak = it->second->level;
+      }
+    }
+    if (peak <= 0.f) {
+      return 0.f;
+    }
+    return std::clamp((20.f * std::log10(peak) + 50.f) / 50.f, 0.f, 1.f);
   }
 
   static constexpr std::int32_t voice_bitrate = 40000;

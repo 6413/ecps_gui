@@ -54,19 +54,26 @@
       gui::pop_style_var(5);
 
       if (This->stream_settings.show_in_stream_view) {
+        // the left edge of the panel can be dragged to make it wider or narrower
+        gui::set_cursor_pos(fan::vec2(stream_area.x - 3.f, 0));
+        gui::invisible_button("##fullscreen_panel_edge", fan::vec2(6.f, window_content_size.y));
+        if (gui::is_item_hovered() || gui::is_item_active()) {
+          gui::set_mouse_cursor(gui::mouse_cursor_resize_ew);
+        }
+        if (gui::is_item_active()) {
+          This->stream_settings.settings_panel_width = std::clamp(This->stream_settings.settings_panel_width - gui::get_io().MouseDelta.x,
+            250.f, window_content_size.x * 0.6f);
+        }
         gui::set_cursor_pos(fan::vec2(stream_area.x, 0));
+        gui::push_style_var(gui::style_var_window_padding, fan::vec2(10.f, 10.f));
+        gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 4.f));
+        gui::push_style_var(gui::style_var_frame_padding, fan::vec2(6.f, 4.f));
         gui::begin_child("##fullscreen_settings_panel",
           fan::vec2(This->stream_settings.settings_panel_width, window_content_size.y),
           true);
-
-        gui::dummy(fan::vec2(12, 0));
-        gui::same_line(0, 0);
-        gui::begin_group();
-
-        window_handler.render_stream_settings_content_compact();
-
-        gui::end_group();
+        This->render_side_panel_content();
         gui::end_child();
+        gui::pop_style_var(3);
       }
 
       auto& io = gui::get_io();
@@ -76,7 +83,7 @@
       bool mouse_near = io.MousePos.x >= window_pos.x && io.MousePos.x <= window_pos.x + window_size.x &&
         io.MousePos.y >= window_pos.y + window_size.y - zone && io.MousePos.y <= window_pos.y + window_size.y;
       bool has_picture = rt->network_frame.get_image() != engine.default_texture;
-      if (mouse_near || !has_picture) {
+      if (mouse_near || !has_picture || This->chat_unread()) {
         fullscreen_toolbar_visible_until = now + std::chrono::milliseconds(1500);
       }
       f32_t target = now < fullscreen_toolbar_visible_until ? 1.f : 0.f;
@@ -97,16 +104,15 @@
         f32_t button_spacing = 10.0f;
         f32_t margin = 20.0f;
 
-        f32_t settings_x = stream_area.x - (icon_size * 2) - button_spacing - margin;
+        f32_t settings_x = stream_area.x - (icon_size + 12.f) * 3 - button_spacing * 2 - margin;
         f32_t settings_y = window_size.y - icon_size - margin;
         gui::set_cursor_pos(fan::vec2(settings_x, settings_y));
 
-        if (icon_button("##btn_fullscreen_settings", icon_e::gear,
-          This->stream_settings.show_in_stream_view ? "Hide settings" : "Settings", icon_size + 12.f, icon_style_e::overlay)) {
-          This->stream_settings.show_in_stream_view = !This->stream_settings.show_in_stream_view;
-        }
+        This->render_side_chat_button("##btn_fullscreen_chat", icon_size + 12.f);
+        gui::same_line(0, button_spacing);
+        This->render_side_settings_button("##btn_fullscreen_settings", icon_size + 12.f);
 
-        gui::same_line();
+        gui::same_line(0, button_spacing);
 
         if (icon_button("##btn_exit_fullscreen", icon_e::exit_fullscreen, "Leave full screen", icon_size + 12.f, icon_style_e::overlay)) {
           is_fullscreen_stream = false;

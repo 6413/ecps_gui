@@ -419,9 +419,14 @@
                       badge("live", 0x600a0affu, 0xff6a6affu);
                     }
                     if (std::find(in_voice.begin(), in_voice.end(), (std::uint32_t)session.session_id.i) != in_voice.end()) {
-                      bool talking = voice_chat.is_talking((std::uint32_t)session.session_id.i);
+                      std::uint32_t speaker = (std::uint32_t)session.session_id.i;
+                      // fast up, slow down, so the meter doesn't flicker between packets
+                      f32_t target = voice_chat.talk_level(speaker);
+                      f32_t& shown = This->voice_meter_levels[speaker];
+                      f32_t dt = std::min(gui::get_io().DeltaTime, 0.1f);
+                      shown = target > shown ? shown + (target - shown) * std::min(dt * 30.f, 1.f) : std::max(target, shown - dt * 2.5f);
                       gui::same_line(0, 8.f);
-                      badge("voice", talking ? 0x8030b040u : 0x40909090u, talking ? 0xff90ff90u : 0xffb0b0b0u);
+                      level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
                     }
                     gui::same_line(0, 10.f);
                     gui::text(fan::color(0.3f, 0.3f, 0.34f, 1.f), "#" + std::to_string(session.session_id.i));
@@ -834,14 +839,7 @@
       gui::same_line(0, splitter_spacing);
 
       gui::begin_child("##stream_settings_panel", fan::vec2(This->stream_settings.settings_panel_width, content_height), true);
-
-      gui::dummy(fan::vec2(12, 0));
-      gui::same_line(0, 0);
-      gui::begin_group();
-
-      render_stream_settings_content_compact();
-
-      gui::end_group();
+      This->render_side_panel_content();
       gui::end_child();
     }
 

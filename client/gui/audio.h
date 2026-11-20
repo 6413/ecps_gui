@@ -331,6 +331,8 @@
 
   static constexpr f32_t voice_meter_range = 0.5f;
   bool voice_settings_open = false;
+  // the voice badges in the member list, shown level per session
+  std::unordered_map<std::uint32_t, f32_t> voice_meter_levels;
   std::vector<fan::audio::loopback_device_t> voice_inputs;
   std::vector<fan::audio::loopback_device_t> voice_outputs;
   bool voice_combo_open[2] = {};

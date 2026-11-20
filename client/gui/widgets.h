@@ -121,7 +121,7 @@
 
   // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
   // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
-  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop };
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat };
 
   // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
   static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
@@ -218,6 +218,15 @@
       case icon_e::stop:
         list->AddRectFilled(P(-0.5f, -0.5f), P(0.5f, 0.5f), color, h * 0.12f);
         break;
+      case icon_e::chat:
+        // a speech bubble with its tail down-left and three dots
+        list->AddRect(P(-0.85f, -0.72f) - fan::vec2(grow, grow), P(0.85f, 0.42f) + fan::vec2(grow, grow), color, h * 0.32f, 0, t);
+        line(P(-0.42f, 0.42f), P(-0.62f, 0.86f));
+        line(P(-0.62f, 0.86f), P(-0.02f, 0.42f));
+        dot(P(-0.4f, -0.15f), h * 0.1f);
+        dot(P(0.f, -0.15f), h * 0.1f);
+        dot(P(0.4f, -0.15f), h * 0.1f);
+        break;
     }
   }
 
@@ -309,6 +318,23 @@
     fan::vec2 box = size + fan::vec2(14.f, 2.f);
     gui::get_window_draw_list()->AddRectFilled(at, at + box, fill, box.y * 0.5f);
     gui::get_window_draw_list()->AddText(at + fan::vec2(7.f, 1.f), ink, label.c_str());
+    gui::dummy(box - fan::vec2(0, 2.f));
+  }
+
+  // a badge whose fill is a level meter: level (0..1) of its width is filled with the meter colour
+  static void level_badge(std::string_view text, f32_t level, std::uint32_t fill, std::uint32_t meter, std::uint32_t ink) {
+    std::string label(text);
+    fan::vec2 size = gui::calc_text_size(label);
+    fan::vec2 at = gui::get_cursor_screen_pos() + fan::vec2(0, -1.f);
+    fan::vec2 box = size + fan::vec2(14.f, 2.f);
+    auto* list = gui::get_window_draw_list();
+    list->AddRectFilled(at, at + box, fill, box.y * 0.5f);
+    if (level > 0.f) {
+      list->PushClipRect(at, at + fan::vec2(box.x * std::min(level, 1.f), box.y), true);
+      list->AddRectFilled(at, at + box, meter, box.y * 0.5f);
+      list->PopClipRect();
+    }
+    list->AddText(at + fan::vec2(7.f, 1.f), ink, label.c_str());
     gui::dummy(box - fan::vec2(0, 2.f));
   }
 

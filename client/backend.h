@@ -1163,9 +1163,14 @@ struct ecps_backend_t {
     chat_revision.fetch_add(1);
   }
   void on_chat_known(Protocol_ChannelID_t channel_id) {
-    std::lock_guard<std::mutex> lock(chat_mutex);
-    chat_channels[(std::uint32_t)channel_id.i] = true;
+    {
+      std::lock_guard<std::mutex> lock(chat_mutex);
+      chat_channels[(std::uint32_t)channel_id.i] = true;
+    }
+    // the history that came with joining isn't new: it doesn't count as unread
+    chat_history_revision.store(chat_revision.load());
   }
+  std::atomic<std::uint64_t> chat_history_revision{0};
   // only into a channel whose server answered the probe, an older one would close the connection
   fan::event::task_t send_chat(Protocol_ChannelID_t channel_id, std::string text) {
     auto* channel = find_channel(channel_id);

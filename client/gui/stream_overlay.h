@@ -17,8 +17,9 @@
     auto* rt = get_render_thread();
     bool has_picture = rt && rt->network_frame.get_image() != engine.default_texture;
     auto now = std::chrono::steady_clock::now();
-    // also while the settings panel is open: its gear is down there, the bar stays to close it again
-    if (mouse_near || !has_picture || stream_settings.show_in_stream_view) {
+    // also while the side panel is open (its icons are down there, the bar stays to close it again), and while a
+    // chat message waits unread, so its dot is seen
+    if (mouse_near || !has_picture || stream_settings.show_in_stream_view || chat_unread()) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
@@ -36,12 +37,10 @@
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
     gui::same_line();
-    gui::set_cursor_pos_x(area_size.x - (frame_height * 2) - 14.f);
-
-    if (icon_button("##btn_settings", icon_e::gear, stream_settings.show_in_stream_view ? "Hide settings" : "Settings",
-      frame_height, icon_style_e::overlay)) {
-      stream_settings.show_in_stream_view = !stream_settings.show_in_stream_view;
-    }
+    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f);
+    render_side_chat_button("##btn_chat", frame_height);
+    gui::same_line(0, 8.f);
+    render_side_settings_button("##btn_settings", frame_height);
 
     gui::same_line(area_size.x - frame_height - 4.f);
     if (icon_button("##btn_fullscreen", icon_e::fullscreen, "Full screen", frame_height, icon_style_e::overlay)) {
