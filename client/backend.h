@@ -880,7 +880,25 @@ struct ecps_backend_t {
     if (!is_channel_id_valid(channel_id)) {
       throw std::runtime_error("the server refused to create the channel");
     }
+    // a new channel of ours (after a server restart, say) gets the password ours had again
+    if (std::string password = own_saved_password(); !password.empty()) {
+      Protocol_C2S_t::SetChannelPassword_t password_rest;
+      std::memset(&password_rest, 0, sizeof(password_rest));
+      password_rest.ChannelID = channel_id;
+      std::memcpy(password_rest.Password, password.data(), std::min(password.size(), sizeof(password_rest.Password) - 1));
+      co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &password_rest, sizeof(password_rest));
+    }
     co_return channel_id;
+  }
+  // the password saved for our own channel, which is named after us
+  std::string own_saved_password() {
+    std::string name = get_current_username();
+    if (name.empty()) {
+      return {};
+    }
+    std::lock_guard<std::mutex> lock(password_mutex);
+    auto it = channel_passwords.find(password_key(name));
+    return it == channel_passwords.end() ? std::string() : it->second;
   }
   // answers the coroutine waiting in channel_create
   void finish_request(uint32_t request_id, Protocol_ChannelID_t channel_id) {
@@ -994,6 +1012,17 @@ struct ecps_backend_t {
     rest.ChannelID = channel_id;
     std::memcpy(rest.Password, password.data(), std::min(password.size(), sizeof(rest.Password) - 1));
     co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &rest, sizeof(rest));
+    // kept like a channel joined with it: coming back to our own channel, or making it again, needs it
+    std::string name = channel_name_of(channel_id);
+    if (name.empty()) {
+      name = get_current_username();
+    }
+    if (password.empty()) {
+      forget_password(name);
+    }
+    else {
+      remember_password(name, password);
+    }
     co_await request_channel_list();
   }
 

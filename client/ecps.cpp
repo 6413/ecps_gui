@@ -1006,7 +1006,14 @@ ecps_backend_t::ecps_backend_t() {
 
   s2c(JoinChannel_OK) {
     s2c_read(JoinChannel_OK);
-    if (auto* channel = backend.find_channel(msg->ChannelID)) {
+    // the join this answers, by its request: an auto join without a password can be on its way next to the one with it
+    ecps_backend_t::channel_info_t* answered = nullptr;
+    for (auto& entry : backend.channel_info) {
+      if (entry.join_request_id == base.ID && entry.channel_id.i == msg->ChannelID.i) {
+        answered = &entry;
+      }
+    }
+    if (auto* channel = answered ? answered : backend.find_channel(msg->ChannelID)) {
       channel->session_id = msg->ChannelSessionID;
       channel->join_confirmed = true;
       // the password worked, it is not asked for again
@@ -1028,6 +1035,16 @@ ecps_backend_t::ecps_backend_t() {
         backend.did_just_join = false;
         auto channel_id = channel.channel_id;
         std::string name = backend.channel_name_of(channel_id);
+        // only this join goes: another one for the same channel (the password typed in) may still be on its way
+        bool other_join = std::any_of(backend.channel_info.begin(), backend.channel_info.end(), [&](const auto& entry) {
+          return entry.channel_id.i == channel_id.i && entry.join_request_id != base.ID;
+        });
+        if (other_join) {
+          auto request = base.ID;
+          backend.channel_info.erase(std::remove_if(backend.channel_info.begin(), backend.channel_info.end(),
+            [&](const auto& entry) { return entry.join_request_id == request; }), backend.channel_info.end());
+          break;
+        }
         backend.forget_channel(channel_id);
         if (msg->Reason == Protocol::JoinChannel_Error_Reason_t::PasswordRequired ||
           msg->Reason == Protocol::JoinChannel_Error_Reason_t::WrongPassword) {

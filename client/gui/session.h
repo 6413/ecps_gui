@@ -267,6 +267,16 @@
     if (auto_join_host.empty() && resume_join.empty() && resume_select.empty()) {
       return;
     }
+    // a channel asked for its password: no joins without it meanwhile, their failures would cancel the one with it
+    if (password_popup_open) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(ecps_backend.password_mutex);
+      if (ecps_backend.password_prompt.wanted) {
+        return;
+      }
+    }
     if (!ecps_backend.connected || ecps_backend.session_id.i == 0) {
       return;
     }
