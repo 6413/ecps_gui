@@ -285,6 +285,8 @@ static std::vector<std::string> clipboard_file_paths() {
 // 32 bit pixels, and stb writes them as a PNG
 static std::string clipboard_image_file() {
   static UINT png_format = RegisterClipboardFormatW(L"PNG");
+  bool has_png = png_format && IsClipboardFormatAvailable(png_format);
+  bool has_bitmap = IsClipboardFormatAvailable(CF_BITMAP) || IsClipboardFormatAvailable(CF_DIB) ||
     IsClipboardFormatAvailable(CF_DIBV5);
   if (!has_png && !has_bitmap) {
     return {};
