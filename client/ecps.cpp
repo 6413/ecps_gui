@@ -53,6 +53,7 @@ import fan;
 import fan.fmt;
 
 import fan.graphics.video.screen;
+import fan.graphics.stb;
 using namespace fan::graphics;
 
 #include <fan/graphics/types.h>
@@ -276,6 +277,81 @@ static std::vector<std::string> clipboard_file_paths() {
   }
   CloseClipboard();
   return paths;
+}
+
+// an image on the clipboard (a screenshot, an image copied in a browser or an editor) saved as a .png for the chat,
+// empty if there is none. A PNG copy (browsers and the Snipping Tool put one there) is kept as it is. Any other image
+// Windows gives as a bitmap: GetDIBits turns whatever it is (palette, 16, 24 or 32 bit, bitfields, bottom-up) into
+// 32 bit pixels, and stb writes them as a PNG
+static std::string clipboard_image_file() {
+  static UINT png_format = RegisterClipboardFormatW(L"PNG");
+    IsClipboardFormatAvailable(CF_DIBV5);
+  if (!has_png && !has_bitmap) {
+    return {};
+  }
+  std::error_code ec;
+  auto folder = std::filesystem::temp_directory_path(ec) / "ecps";
+  std::filesystem::create_directories(folder, ec);
+  auto path = folder / ("image-" + std::to_string((long long)std::time(nullptr)) + ".png");
+  if (!OpenClipboard(nullptr)) {
+    return {};
+  }
+  bool written = false;
+  if (has_png) {
+    if (HANDLE data = GetClipboardData(png_format)) {
+      if (auto* memory = (const std::uint8_t*)GlobalLock(data)) {
+        std::size_t size = GlobalSize(data);
+        static const std::uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+        if (size > 8 && std::memcmp(memory, signature, 8) == 0) {
+          std::ofstream out(path, std::ios::binary);
+          out.write((const char*)memory, (std::streamsize)size);
+          written = (bool)out;
+        }
+        GlobalUnlock(data);
+      }
+    }
+  }
+  if (!written && has_bitmap) {
+    // Windows makes a CF_BITMAP from a DIB on the clipboard by itself
+    if (auto bitmap = (HBITMAP)GetClipboardData(CF_BITMAP)) {
+      BITMAP description{};
+      if (GetObjectW(bitmap, sizeof(description), &description) && description.bmWidth > 0 && description.bmHeight > 0) {
+        int width = description.bmWidth;
+        int height = description.bmHeight;
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height; // top-down rows
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        std::vector<std::uint8_t> pixels((std::size_t)width * height * 4);
+        HDC screen = GetDC(nullptr);
+        int rows = GetDIBits(screen, bitmap, 0, (UINT)height, pixels.data(), &info, DIB_RGB_COLORS);
+        ReleaseDC(nullptr, screen);
+        if (rows == height) {
+          // BGRA to RGBA. A bitmap without alpha leaves it 0, which would be fully transparent
+          bool any_alpha = false;
+          for (std::size_t i = 3; i < pixels.size(); i += 4) {
+            if (pixels[i]) {
+              any_alpha = true;
+              break;
+            }
+          }
+          for (std::size_t i = 0; i < pixels.size(); i += 4) {
+            std::swap(pixels[i], pixels[i + 2]);
+            if (!any_alpha) {
+              pixels[i + 3] = 255;
+            }
+          }
+          fan::stb::write(path.string(), pixels.data(), fan::vec2i(width, height), 4);
+          written = std::filesystem::file_size(path, ec) > 0 && !ec;
+        }
+      }
+    }
+  }
+  CloseClipboard();
+  return written ? path.string() : std::string();
 }
 #endif
 

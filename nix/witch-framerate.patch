@@ -11,7 +11,22 @@
  
    if (ctx->frame_data) {
      free(ctx->frame_data);
-@@ -976,8 +980,10 @@
+@@ -755,6 +759,14 @@
+   }
+ #endif
+ 
++  // A buffer without a picture: GNOME sends them when only the pointer moved or nothing changed (more often with no
++  // frame-rate limit). Copying it as a whole frame gave a black (all zero) one, the encoder took it as the newest
++  // and the stream flickered. It goes back to the compositor, and the read waits for the next real frame
++  if (buf->datas[0].chunk && (chunk_size == 0 || (buf->datas[0].chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))) {
++    pw_stream_queue_buffer(ctx->stream, b);
++    return;
++  }
++
+   // Primary path: Direct mapped data (works on GNOME)
+   if (data_ptr != NULL) {
+     size_t copy_size = chunk_size;
+@@ -976,8 +988,10 @@
    }
  
    // Build format parameters based on desktop environment
@@ -24,7 +39,7 @@
    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
  
    if (is_gnome) {
-@@ -993,6 +999,13 @@
+@@ -993,6 +1007,13 @@
      struct spa_fraction def_fps = SPA_FRACTION(25, 1);
      struct spa_fraction min_fps = SPA_FRACTION(0, 1);
      struct spa_fraction max_fps = SPA_FRACTION(1000, 1);
@@ -38,7 +53,7 @@
  
      params[0] = (const struct spa_pod*)spa_pod_builder_add_object(&b,
        SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
-@@ -1003,7 +1016,21 @@
+@@ -1003,7 +1024,21 @@
          SPA_VIDEO_FORMAT_BGRx,
          SPA_VIDEO_FORMAT_RGBx),
        SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(&def_size, &min_size, &max_size),
@@ -61,7 +76,7 @@
  
    } else {
      // Use flexible parameters for COSMIC and others
-@@ -1052,7 +1079,7 @@
+@@ -1052,7 +1087,7 @@
  #endif
    }
  

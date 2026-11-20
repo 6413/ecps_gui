@@ -279,6 +279,10 @@
     if (!paths.empty()) {
       return paths;
     }
+    // an image goes as a picture file
+    if (std::string image = clipboard_image_file(); !image.empty()) {
+      return { image };
+    }
   #endif
     std::string text = engine.window.get_clipboard();
     std::istringstream lines(text);
