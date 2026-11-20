@@ -314,6 +314,37 @@
   std::unordered_map<std::string, chat_picture_t> chat_pictures;
   // what we sent ourselves: file name -> path here
   std::unordered_map<std::string, std::string> chat_sent_files;
+
+  // the chat's files on this computer by name (sent or received), kept in the config: after a restart the chat
+  // history still shows them. The names carry a time, they don't repeat
+  void chat_remember_file(const std::string& name, const std::string& path) {
+    fan::json files = config.contains("chat_files") ? config["chat_files"] : fan::json::object();
+    if (files.contains(name) && files[name].get<std::string>() == path) {
+      return;
+    }
+    // the ones whose file is gone are forgotten when the list grows
+    if (files.size() > 300) {
+      fan::json kept = fan::json::object();
+      for (auto it = files.begin(); it != files.end(); ++it) {
+        std::error_code ec;
+        if (std::filesystem::exists(ecps_backend_t::file_fs_path(it.value().get<std::string>()), ec)) {
+          kept[it.key()] = it.value();
+        }
+      }
+      files = kept;
+    }
+    files[name] = path;
+    write_to_config("chat_files", files);
+  }
+
+  std::string chat_remembered_file(const std::string& name) {
+    if (!config.contains("chat_files") || !config["chat_files"].contains(name)) {
+      return {};
+    }
+    std::string path = config["chat_files"][name].get<std::string>();
+    std::error_code ec;
+    return std::filesystem::exists(ecps_backend_t::file_fs_path(path), ec) ? path : std::string();
+  }
   std::unordered_set<std::uint64_t> chat_accepted_pictures;
   bool chat_scroll_down = false;
   // the code block whose copy icon was pressed last, it says Copied for a moment
@@ -354,14 +385,26 @@
         found = &v;
       }
     }
+    std::string id = std::to_string(message_id);
+    std::string kept = found ? std::string() : chat_remembered_file(name);
+    if (!kept.empty()) {
+      if (gui::button("Open##chat_file_open" + id)) {
+        chat_open_path(kept);
+      }
+      gui::same_line();
+      if (gui::button("Show in folder##chat_file_folder" + id)) {
+        chat_open_path(ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(kept).parent_path()));
+      }
+      return;
+    }
     if (!found) {
       return;
     }
-    std::string id = std::to_string(message_id);
     if (found->state == state_e::transferring) {
       text_wrapped_disabled("Receiving  " + file_progress_text(*found));
     }
     else if (found->state == state_e::done) {
+      chat_remember_file(name, found->path);
       if (gui::button("Open##chat_file_open" + id)) {
         chat_open_path(found->path);
       }
@@ -539,12 +582,14 @@
     using state_e = ecps_backend_t::file_transfer_t::state_e;
     std::string path;
     std::string waiting;
-    if (from == (std::uint32_t)ecps_backend.session_id.i) {
-      auto it = chat_sent_files.find(name);
-      if (it == chat_sent_files.end()) {
-        return false;
-      }
+    if (auto it = chat_sent_files.find(name); it != chat_sent_files.end()) {
       path = it->second;
+    }
+    else if (std::string kept = chat_remembered_file(name); !kept.empty()) {
+      path = kept;
+    }
+    else if (from == (std::uint32_t)ecps_backend.session_id.i) {
+      return false;
     }
     else {
       auto views = ecps_backend.file_transfer_views();
@@ -559,6 +604,7 @@
       }
       if (found->state == state_e::done) {
         path = found->path;
+        chat_remember_file(name, path);
       }
       else {
         waiting = "Receiving " + name + (found->size ? "  " + std::to_string((int)((double)found->transferred * 100.0 / (double)found->size)) + "%" : std::string());
@@ -996,6 +1042,7 @@
       // the line first: the others take an offer without asking when its line is in the chat
       std::string name = ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(path).filename());
       chat_sent_files[name] = path;
+      chat_remember_file(name, path);
       std::string line = "[file] " + name + " (" +
         chat_size_label(std::filesystem::file_size(ecps_backend_t::file_fs_path(path), ec)) + ")" +
         (peers.empty() ? "  - nobody else here to send it to" : "");

@@ -403,18 +403,49 @@
   struct network_frame_helper_t {
     #undef This
     #define This OFFSETLESS(this, ecps_gui_t, network_frame_helper) 
+    // Zoom: Ctrl+wheel over the stream zooms at the mouse, dragging with the middle button (or Ctrl+left) moves the
+    // zoomed picture, Ctrl+middle click goes back to the whole picture
+    f32_t zoom = 1.f;
+    fan::vec2 offset = 0;
+
     void setup_network_frame(fan::vec2 available_area) {
       auto rt = get_render_thread();
       if (!rt) return;
 
       fan::vec2 center = available_area / 2;
-      rt->network_frame.set_position(center);
-
       fan::vec2 fitted_size = stream_area_calculator_t::calculate_fitted_size(
         available_area, rt->screen_decoder.decoded_size);
 
+      // called inside the stream's window: its top left is the stream's
+      auto& io = gui::get_io();
+      fan::vec2 origin = gui::get_window_pos();
+      fan::vec2 mouse = fan::vec2(io.MousePos) - origin;
+      bool over = gui::is_window_hovered() && mouse.x >= 0 && mouse.y >= 0 && mouse.x <= available_area.x && mouse.y <= available_area.y;
+      bool ctrl = engine.window.is_key_down(fan::key_left_control) || engine.window.is_key_down(fan::key_right_control);
+      if (over && ctrl && io.MouseWheel != 0.f) {
+        f32_t old_zoom = zoom;
+        zoom = std::clamp(zoom * std::pow(1.15f, io.MouseWheel), 1.f, 10.f);
+        fan::vec2 at = center + offset;
+        at = mouse + (at - mouse) * (zoom / old_zoom);
+        offset = at - center;
+      }
+      if (over && zoom > 1.f && (gui::is_mouse_dragging(2, 2.f) || (ctrl && gui::is_mouse_dragging(0, 2.f)))) {
+        offset += fan::vec2(io.MouseDelta);
+      }
+      if (over && ctrl && fan::window::is_mouse_clicked(2)) {
+        zoom = 1.f;
+      }
+      if (zoom <= 1.f) {
+        offset = 0;
+      }
+      // the picture keeps covering the area it can
+      fan::vec2 half = fitted_size * zoom;
+      fan::vec2 limit(std::max(0.f, half.x - available_area.x * 0.5f), std::max(0.f, half.y - available_area.y * 0.5f));
+      offset = fan::vec2(std::clamp(offset.x, -limit.x, limit.x), std::clamp(offset.y, -limit.y, limit.y));
+
+      rt->network_frame.set_position(center + offset);
       if (rt->network_frame.get_image() != engine.default_texture) {
-        rt->network_frame.set_size(fitted_size);
+        rt->network_frame.set_size(half);
       }
       else {
         rt->network_frame.set_size(fan::vec2(0, 0));

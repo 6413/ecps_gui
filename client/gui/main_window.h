@@ -888,8 +888,9 @@
           This->render_stream_empty_hint(stream_area);
         }
         else {
-          fan::vec2 half = stream_area_calculator_t::calculate_fitted_size(stream_area, rt->screen_decoder.decoded_size);
-          fan::vec2 center = gui::get_window_pos() + stream_area * 0.5f;
+          fan::vec2 half = stream_area_calculator_t::calculate_fitted_size(stream_area, rt->screen_decoder.decoded_size) *
+            This->network_frame_helper.zoom;
+          fan::vec2 center = gui::get_window_pos() + stream_area * 0.5f + This->network_frame_helper.offset;
           This->picture_min = center - half;
           This->picture_max = center + half;
           This->picture_shown = true;
