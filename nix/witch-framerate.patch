@@ -1,6 +1,17 @@
 --- a/MD/SCR/backend/wayland/wayland.h
 +++ b/MD/SCR/backend/wayland/wayland.h
-@@ -993,6 +993,11 @@
+@@ -688,6 +688,10 @@
+   printf("*** SUCCESS *** PipeWire format: %dx%d, stride: %d, format: %s (%d)\n",
+     ctx->width, ctx->height, ctx->stride, format_name, format.info.raw.format);
+ #endif
++  // what the compositor agreed to: GNOME sends a frame at most every 1/max_framerate
++  printf("PipeWire frame rate: %u/%u, max %u/%u\n",
++    format.info.raw.framerate.num, format.info.raw.framerate.denom,
++    format.info.raw.max_framerate.num, format.info.raw.max_framerate.denom);
+ 
+   if (ctx->frame_data) {
+     free(ctx->frame_data);
+@@ -993,6 +997,11 @@
      struct spa_fraction def_fps = SPA_FRACTION(25, 1);
      struct spa_fraction min_fps = SPA_FRACTION(0, 1);
      struct spa_fraction max_fps = SPA_FRACTION(1000, 1);
@@ -12,7 +23,7 @@
  
      params[0] = (const struct spa_pod*)spa_pod_builder_add_object(&b,
        SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
-@@ -1003,7 +1008,8 @@
+@@ -1003,7 +1012,8 @@
          SPA_VIDEO_FORMAT_BGRx,
          SPA_VIDEO_FORMAT_RGBx),
        SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(&def_size, &min_size, &max_size),

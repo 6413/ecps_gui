@@ -407,6 +407,22 @@
     midi["volume"] = midi_volume;
     state["midi"] = midi;
     state["show_own_stream"] = show_own_stream;
+    // sharing goes on after the update: into the same channel, from the camera or from the same screen or window
+    // (on Linux the portal's token skips its dialog). Only this file carries it, a normal start never shares by itself
+    for (const auto& channel : ecps_backend.channel_info) {
+      if (!channel.is_streaming) {
+        continue;
+      }
+      fan::json share = fan::json::object();
+      share["channel"] = channel_name_of(channel.channel_id);
+      share["own"] = ecps_backend.is_hosting_channel(channel.channel_id);
+      share["camera"] = stream_settings.share_camera;
+      if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
+        share["token"] = rt->screen_encoder.restore_token();
+      }
+      state["share"] = share;
+      break;
+    }
     return state.dump();
   }
 
@@ -447,8 +463,91 @@
         midi_volume = midi.value("volume", midi_volume);
       }
       show_own_stream = state.value("show_own_stream", show_own_stream);
+      if (state.contains("share") && state["share"].is_object()) {
+        fan::json share = state["share"];
+        resume_share.channel = share.value("channel", std::string());
+        resume_share.own = share.value("own", false);
+        resume_share.token = share.value("token", std::string());
+        stream_settings.share_camera = share.value("camera", stream_settings.share_camera);
+        resume_share.active = !resume_share.channel.empty();
+        resume_share.since = std::chrono::steady_clock::now();
+        // a channel of somebody else's is joined again like the others
+        if (resume_share.active && !resume_share.own &&
+          std::find(resume_join.begin(), resume_join.end(), resume_share.channel) == resume_join.end()) {
+          resume_join.push_back(resume_share.channel);
+        }
+      }
     }
     catch (...) {}
+  }
+
+  // ---- sharing again after an update ---------------------------------------------------------------------------
+  // Once the channel shared into before is joined again (our own: joined back, or made again when the server lost
+  // it), sharing starts into it. Given up after a minute
+  struct resume_share_t {
+    bool active = false;
+    bool own = false;
+    std::string channel;
+    std::string token;
+    std::chrono::steady_clock::time_point since;
+    std::chrono::steady_clock::time_point next_try;
+  } resume_share;
+
+  void update_resume_share() {
+    if (!resume_share.active) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now - resume_share.since > std::chrono::seconds(60)) {
+      fan::print("could not share again after the update: the channel did not come back");
+      resume_share.active = false;
+      return;
+    }
+    if (!ecps_backend.connected || ecps_backend.session_id.i == 0 || !ecps_backend.channel_list_received) {
+      return;
+    }
+    const ecps_backend_t::channel_list_info_t* target = nullptr;
+    for (const auto& channel : ecps_backend.available_channels) {
+      if (channel.name == resume_share.channel) {
+        target = &channel;
+      }
+    }
+    if (target && ecps_backend.is_channel_joined(target->channel_id)) {
+      if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
+        rt->screen_encoder.set_resume_token(resume_share.token);
+      }
+      selected_channel_id = target->channel_id;
+      stream_button_renderer_t::set_sharing(true);
+      fan::print("sharing again after the update, into " + resume_share.channel);
+      resume_share.active = false;
+      return;
+    }
+    // our own channel: joined back (the server keeps it), or made again. Others are joined by the auto join
+    if (!resume_share.own || now < resume_share.next_try) {
+      return;
+    }
+    resume_share.next_try = now + std::chrono::seconds(5);
+    if (target) {
+      backend_queue([id = target->channel_id]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.channel_join(id);
+          co_await ecps_backend.request_channel_list();
+          co_await ecps_backend.request_channel_session_list(id);
+        }
+        catch (...) {}
+      });
+    }
+    else if (!ecps_backend.is_hosting_any_channel()) {
+      backend_queue([this]() -> fan::event::task_t {
+        try {
+          auto channel_id = co_await ecps_backend.channel_create();
+          co_await ecps_backend.channel_join(channel_id, true);
+          co_await ecps_backend.request_channel_list();
+          co_await ecps_backend.request_channel_session_list(channel_id);
+        }
+        catch (...) {}
+      });
+    }
   }
 
   std::string username_input;

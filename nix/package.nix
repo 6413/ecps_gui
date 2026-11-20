@@ -139,6 +139,9 @@ clangStdenv.mkDerivation {
 
     # ask GNOME for up to 240 fps: its default cap gives 50 fps on a 100 Hz screen
     patch -p1 -d $inc/WITCH < ${./witch-framerate.patch}
+
+    # the portal's restore token: after an update the same screen or window is shared again without the dialog
+    patch -p1 -d $inc/WITCH < ${./witch-restore.patch}
     runHook postPatch
   '';
 
