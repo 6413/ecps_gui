@@ -804,6 +804,14 @@ struct render_thread_t {
     window_icon = engine.image_load("icons/ecps_logo.png");
 
     request_precise_timers();
+    // started again by the in-app update (it leaves this file for the new process): the window comes back without
+    // taking the focus from what the user is doing. A start by hand shows it focused as usual
+    {
+      std::error_code ec;
+      if (std::filesystem::exists(updater_t::restarted_file, ec)) {
+        engine.window.set_focus_on_show(false);
+      }
+    }
     engine.set_target_fps(0, false);
     engine.set_window_name("ECPS - Every Communication Program Sucks");
     // image_load is async now, so read the icon pixels synchronously for glfw
