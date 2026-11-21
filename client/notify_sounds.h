@@ -27,7 +27,8 @@ struct notify_sounds_t {
       }
       last_played[k] = now;
       try {
-        sounds[k].play_once();
+        // one push plays the whole short clip once, then the player falls silent
+        players[k].push(pcm[k].data(), (std::uint32_t)(pcm[k].size() / 2));
       }
       catch (...) {}
     }
@@ -82,7 +83,10 @@ private:
     pcm[join] = render({{523.25f, 0.f, 0.15f}, {659.25f, 0.07f, 0.15f}, {783.99f, 0.14f, 0.14f}}, volume);
     pcm[leave] = render({{783.99f, 0.f, 0.14f}, {659.25f, 0.07f, 0.15f}, {523.25f, 0.14f, 0.15f}}, volume);
     for (std::uint32_t k = 0; k < kind_count; ++k) {
-      sounds[k] = fan::audio::sound_t(pcm[k].data(), pcm[k].size() / 2, 2);
+      if (!started[k]) {
+        started[k] = players[k].start();
+      }
+      players[k].set_volume(1.f); // the requested volume is baked into the samples already
     }
     built_volume = volume;
   }
@@ -90,7 +94,9 @@ private:
   std::atomic<std::uint32_t> pending{0};
   f32_t built_volume = -1.f;
   std::vector<f32_t> pcm[kind_count];
-  fan::audio::sound_t sounds[kind_count];
+  // live_player_t is in fan.audio_stream, which is also built when the Nix package disables FAN_AUDIO
+  fan::audio::live_player_t players[kind_count];
+  bool started[kind_count] = {};
   std::chrono::steady_clock::time_point last_played[kind_count]{};
 };
 

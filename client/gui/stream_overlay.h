@@ -3,8 +3,57 @@
   // The bottom toolbar of the stream view (start/stop, settings, fullscreen). It is drawn at the bottom of the
   // stream area, over the picture, and fades out unless the mouse is near the bottom or there is no picture, so
   // the stream gets the whole height. Call it inside the stream child, no window or focus tricks of its own
+  // a small list of who is in the channel, over the picture. Off by default so it never covers the stream
+  bool show_stream_users = false;
+
+  void render_stream_users_overlay() {
+    if (!show_stream_users) {
+      return;
+    }
+    auto channel_id = selected_channel_id;
+    if (!ecps_backend.is_channel_joined(channel_id) && !ecps_backend.channel_info.empty()) {
+      channel_id = ecps_backend.channel_info.front().channel_id;
+    }
+    std::vector<std::string> lines;
+    auto it = ecps_backend.channel_sessions.find((std::uint32_t)channel_id.i);
+    if (it != ecps_backend.channel_sessions.end()) {
+      for (const auto& session : it->second) {
+        std::string name = session.username;
+        if (session.session_id.i == ecps_backend.session_id.i) {
+          name += " (you)";
+        }
+        if (session.is_host) {
+          name += " (host)";
+        }
+        lines.push_back(name);
+      }
+    }
+    lines.insert(lines.begin(), "In channel  " + std::to_string(lines.size()));
+    f32_t width = 180.f;
+    for (const auto& line : lines) {
+      width = std::max(width, gui::calc_text_size(line).x + 24.f);
+    }
+    f32_t height = lines.size() * gui::get_text_line_height_with_spacing() + 12.f;
+    fan::vec2 at = gui::get_window_pos() + fan::vec2(std::max(0.f, gui::get_window_size().x - width - 10.f), 10.f + stream_top_offset());
+    gui::set_cursor_screen_pos(at);
+    gui::push_style_color(gui::col_child_bg, fan::color(0.f, 0.f, 0.f, 0.6f));
+    if (gui::begin_child("##stream_users", fan::vec2(width, std::min(height, gui::get_window_size().y - 20.f)), true)) {
+      for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (i == 0) {
+          gui::text_disabled(lines[i]);
+        }
+        else {
+          gui::text(lines[i]);
+        }
+      }
+    }
+    gui::end_child();
+    gui::pop_style_color();
+  }
+
   void render_stream_toolbar() {
     top_bar.render_stream_stats_overlay();
+    render_stream_users_overlay();
     render_stream_top_overlay();
     auto& io = gui::get_io();
     fan::vec2 area_pos = gui::get_window_pos();
@@ -37,6 +86,14 @@
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
     gui::same_line();
+    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f - 68.f);
+    if (gui::button("Users##btn_users", fan::vec2(60.f, frame_height))) {
+      show_stream_users = !show_stream_users;
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip(show_stream_users ? "Hide the users in this channel" : "Show the users in this channel");
+    }
+    gui::same_line(0, 8.f);
     gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f);
     render_side_chat_button("##btn_chat", frame_height);
     gui::same_line(0, 8.f);
