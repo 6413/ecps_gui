@@ -265,6 +265,7 @@ struct top_bar_t {
         if (gui::button("Retry")) {
           updater.check();
         }
+        render_copy_update_error();
         break;
       case state_e::available:
         gui::text_wrapped("Update available: " + updater.latest());
@@ -303,9 +304,38 @@ struct top_bar_t {
         if (gui::button("Check again")) {
           updater.check();
         }
+        render_copy_update_error();
         break;
     }
     gui::end_popup();
+  }
+
+  // what went wrong with the update on the clipboard, to paste it somewhere: the version, the error and the end of
+  // ecps_update.log when there is one
+  std::chrono::steady_clock::time_point update_error_copied_at{};
+  void render_copy_update_error() {
+    gui::same_line();
+    bool copied = std::chrono::steady_clock::now() - update_error_copied_at < std::chrono::milliseconds(1500);
+    if (gui::button(copied ? "Copied##copy_update_error" : "Copy error##copy_update_error")) {
+      std::string text = std::string("ECPS v") + ecps_version + "\n" + updater.build_label() + "\n" + updater.error() + "\n";
+      std::ifstream log(updater_t::log_file, std::ios::binary);
+      if (log) {
+        std::string content((std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>());
+        // the last 80 lines are where the error is
+        std::size_t at = content.size();
+        for (int lines = 0; lines < 81 && at > 0; ) {
+          if (content[--at] == '\n') {
+            ++lines;
+          }
+        }
+        text += std::string("\n--- ") + updater_t::log_file + " ---\n" + content.substr(at == 0 ? 0 : at + 1);
+      }
+      gloco()->window.set_clipboard(text);
+      update_error_copied_at = std::chrono::steady_clock::now();
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("Copies the error and the end of the update log, to paste where it can be looked at");
+    }
   }
 
   void render_share_chips(f32_t room) {

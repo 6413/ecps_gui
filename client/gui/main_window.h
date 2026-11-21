@@ -84,280 +84,223 @@
       This->pop_theme();
     }
 
-    // the channel list and the selected channel's details: side by side when there is room, else the list above
-    f32_t channels_list_height = 0.f;
+    // the channels panel, made for a side bar: the buttons and the search on top, the channels as rows, the selected
+    // channel's details under them at the full width. The line between the list and the details moves
+    f32_t channels_list_height = 0.f; // 0: as tall as the rows need
     bool channels_list_resizing = false;
+
+    static std::string channel_live_time(std::uint64_t ns) {
+      std::uint64_t s = ns / 1000000000ull;
+      return s >= 3600 ? fan::format("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60) : fan::format("{}:{:02}", s / 60, s % 60);
+    }
+
+    void render_channel_row(const ecps_backend_t::channel_list_info_t& channel, f32_t width) {
+      bool is_selected = This->selected_channel_id.i == channel.channel_id.i;
+      bool mine = ecps_backend.is_current_user_host_of_channel(channel.channel_id);
+      bool joined = ecps_backend.is_channel_joined(channel.channel_id);
+      std::uint64_t live_ns = ecps_backend.get_channel_stream_time(channel.channel_id);
+      bool host_here = channel.host_session_id.i != decltype(channel.host_session_id.i)(-1);
+      int viewers = (int)channel.user_count - (host_here && channel.user_count > 0 ? 1 : 0);
+
+      f32_t row_height = gui::get_frame_height() + 10.f;
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      gui::push_id((int)channel.channel_id.i);
+      bool clicked = gui::invisible_button("##channel_row", fan::vec2(width, row_height));
+      bool hovered = gui::is_item_hovered();
+      gui::pop_id();
+      if (clicked) {
+        This->selected_channel_id = channel.channel_id;
+        This->backend_queue([channel_id = channel.channel_id]() -> fan::event::task_t {
+          try {
+            co_await ecps_backend.request_channel_session_list(channel_id);
+          }
+          catch (...) {
+            fan::print("Failed to request session list");
+          }
+        });
+      }
+      auto* list = gui::get_window_draw_list();
+      if (is_selected || hovered) {
+        list->AddRectFilled(at, at + fan::vec2(width, row_height), is_selected ? 0xff3a170cu : 0xff1c0f09u, 6.f);
+      }
+      if (is_selected) {
+        list->AddRectFilled(at + fan::vec2(0, 6.f), at + fan::vec2(3.f, row_height - 6.f), 0xffff7a33u, 1.5f);
+      }
+      f32_t text_y = at.y + (row_height - gui::get_font_size()) * 0.5f;
+      // a red dot while someone shares, grey otherwise
+      f32_t dot = 4.f;
+      list->AddCircleFilled(fan::vec2(at.x + 14.f, at.y + row_height * 0.5f), dot, live_ns ? 0xff4040ffu : 0x40ffffffu, 12);
+
+      // at the right: how many watch, and for how long it has been live
+      std::string right = std::to_string(std::max(viewers, 0)) + (viewers == 1 ? " viewer" : " viewers");
+      if (live_ns) {
+        right = channel_live_time(live_ns) + "   " + right;
+      }
+      f32_t right_width = gui::calc_text_size(right).x;
+      f32_t name_x = at.x + 28.f;
+      f32_t room = std::max(width - (name_x - at.x) - right_width - 18.f, 30.f);
+      std::string name = gui::fit_title(channel.name, room);
+      std::uint32_t name_ink = is_selected || joined ? 0xffffffffu : 0xffd0d0d0u;
+      list->AddText(fan::vec2(name_x, text_y), name_ink, name.c_str());
+      f32_t after_name = name_x + gui::calc_text_size(name).x + 8.f;
+      // small tags after the name: yours, joined, a password
+      auto tag = [&](const char* text, std::uint32_t fill, std::uint32_t ink) {
+        fan::vec2 size = gui::calc_text_size(text);
+        if (after_name + size.x + 12.f > at.x + width - right_width - 12.f) {
+          return;
+        }
+        fan::vec2 a(after_name, text_y - 1.f);
+        list->AddRectFilled(a, a + size + fan::vec2(12.f, 2.f), fill, (size.y + 2.f) * 0.5f);
+        list->AddText(a + fan::vec2(6.f, 1.f), ink, text);
+        after_name += size.x + 18.f;
+      };
+      if (mine) {
+        tag("yours", 0x50ff5919u, 0xffffa070u);
+      }
+      else if (joined) {
+        tag("joined", 0x5040a040u, 0xff90ff90u);
+      }
+      if (channel.is_password_protected) {
+        tag("password", 0x40909090u, 0xffc0c0c0u);
+      }
+      list->AddText(fan::vec2(at.x + width - right_width - 10.f, text_y), 0xff909090u, right.c_str());
+    }
 
     void render_channels_content() {
       fan::vec2 avail_size = gui::get_content_region_avail();
-      if (avail_size.x > 0 && avail_size.y > 0) {
-        bool stacked = avail_size.x < 760.f;
-        f32_t stacked_handle = 12.f;
-        f32_t stacked_list_height = 0.f;
-        if (stacked) {
-          if (channels_list_height <= 0.f) {
-            channels_list_height = avail_size.y * 0.38f;
-          }
-          stacked_list_height = std::clamp(channels_list_height, std::min(160.f, avail_size.y * 0.3f), avail_size.y * 0.7f);
-        }
+      if (avail_size.x <= 0 || avail_size.y <= 0) {
+        return;
+      }
+      bool has_selection = This->selected_channel_id.i != (uint16_t)-1;
+      bool already_in_selected = has_selection && ecps_backend.is_channel_joined(This->selected_channel_id);
+      bool is_host_of_selected = already_in_selected && ecps_backend.is_current_user_host_of_channel(This->selected_channel_id);
 
-        f32_t left_window_padding = 0.0f;
-        f32_t right_window_padding = 0.0f;
-        f32_t splitter_spacing = 12.0f;
-        f32_t splitter_width = 2.0f;
-
-        f32_t total_spacing = left_window_padding + splitter_spacing + splitter_width + splitter_spacing + right_window_padding;
-
-        static f32_t channel_details_width = 0.0f;
-        static f32_t unclamped_details_width = 0.0f;
-        static bool initialized = false;
-        if (!initialized) {
-          f32_t available_content_width = avail_size.x - total_spacing;
-          channel_details_width = available_content_width * 0.5f;
-          unclamped_details_width = channel_details_width;
-          initialized = true;
-        }
-
-        f32_t min_details_width = 300.0f;
-        f32_t max_details_width = avail_size.x * 0.7f;
-        channel_details_width = std::clamp(
-          unclamped_details_width,
-          min_details_width,
-          max_details_width
-        );
-
-        f32_t channel_list_width = avail_size.x - channel_details_width - total_spacing;
-
-        if (!stacked) {
-          gui::dummy(fan::vec2(left_window_padding, 0));
-          gui::same_line(0, 0);
-        }
-
-        gui::begin_child("##channel_list_panel", stacked ? fan::vec2(avail_size.x, stacked_list_height) : fan::vec2(channel_list_width, avail_size.y), true);
-
-        gui::spacing();
-        gui::spacing();
-
-        gui::spacing();
-        gui::spacing();
-
-        gui::push_item_width(150);
-        gui::input_text("Search", &search_filter);
-        gui::pop_item_width();
-
-        gui::spacing();
-
-        gui::spacing();
-        gui::spacing();
-
-        gui::table_flags_t table_flags = gui::table_flags_row_bg
-          | gui::table_flags_borders_inner
-          | gui::table_flags_borders_outer
-          | gui::table_flags_resizable
-          | gui::table_flags_sizing_fixed_same;
-        if (gui::begin_child("ChannelList", fan::vec2(0, -60), true)) {
-          if (gui::begin_table("ChannelTable", 4, table_flags)) {
-
-            gui::table_setup_column("ID", gui::table_column_flags_width_fixed, 50.f, 0);
-            gui::table_setup_column("Stream Name", gui::table_column_flags_width_stretch, 0.f, 0);
-            gui::table_setup_column("Viewers");
-            gui::table_setup_column("Live Time");
-
-            gui::table_headers_row();
-
-            int row_index = 0;
-            for (const auto& channel : ecps_backend.available_channels) {
-              gui::push_id(row_index);
-              if (!search_filter.empty()) {
-                std::string name_lower = channel.name;
-                std::string filter_lower = search_filter;
-                std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
-                std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
-                if (name_lower.find(filter_lower) == std::string::npos) {
-                  gui::pop_id();
-                  continue;
-                }
-              }
-
-              bool is_selected = (This->selected_channel_id.i == channel.channel_id.i);
-
-              bool is_host_of_channel = ecps_backend.is_current_user_host_of_channel(channel.channel_id);
-
-              std::string display_name = channel.name;
-              if (is_host_of_channel) {
-                display_name = "⭐ " + channel.name;
-              }
-              if (channel.is_password_protected) {
-                display_name += "  (password)";
-              }
-
-              bool already_joined = false;
-              for (const auto& joined_channel : ecps_backend.channel_info) {
-                if (joined_channel.channel_id.i == channel.channel_id.i) {
-                  already_joined = true;
-                  break;
-                }
-              }
-              gui::table_next_row();
-              {
-                gui::table_set_column_index(0);
-                gui::text(std::to_string(channel.channel_id.i));
-              }
-
-              {
-                gui::table_set_column_index(1);
-                gui::push_style_color(gui::col_header_active, gui::get_style().Colors[gui::col_header_hovered]);
-
-                if (gui::selectable(std::string_view(display_name), is_selected, gui::selectable_flags_span_all_columns)) {
-                  This->selected_channel_id = channel.channel_id;
-
-                  This->backend_queue([channel_id = channel.channel_id]() -> fan::event::task_t {
-                    try {
-                      co_await ecps_backend.request_channel_session_list(channel_id);
-                    }
-                    catch (...) {
-                      fan::print("Failed to request session list");
-                    }
-                    });
-                }
-                gui::pop_style_color();
-              }
-              {
-                gui::table_set_column_index(2);
-                // everyone but the host. A channel stays after its host leaves, then all in it are viewers (and it can be empty)
-                bool host_here = channel.host_session_id.i != decltype(channel.host_session_id.i)(-1);
-                gui::text(std::to_string(channel.user_count - (host_here && channel.user_count > 0 ? 1 : 0)));
-              }
-              {
-                gui::table_set_column_index(3);
-                uint64_t stream_time_ns = ecps_backend.get_channel_stream_time(channel.channel_id);
-                double stream_time_s = stream_time_ns / 1e+9;
-                uint64_t hours = stream_time_s / 3600;
-                uint64_t minutes = fmod(stream_time_s, 3600.0) / 60.0;
-                uint64_t seconds = fmod(stream_time_s, 60.0);
-                if (!stream_time_ns) {
-                  hours = minutes = seconds = 0;
-                }
-                gui::text(fan::format("{:02}:{:02}:{:02}", hours, minutes, seconds));
-              }
-              row_index++;
-              gui::pop_id();
-            }
-            gui::end_table();
-          }
-
-          if (ecps_backend.available_channels.empty()) {
-            if (ecps_backend.channel_list_received) {
-              gui::text("No channels available, create a new channel.");
-            }
-            else {
-              gui::text("Click 'Refresh Channel List' to load channels");
-            }
-          }
-        }
-        gui::end_child();
-
-        gui::spacing();
-
-        bool has_selection = (This->selected_channel_id.i != (uint16_t)-1);
-        bool already_in_selected = false;
-        bool is_host_of_selected = false;
-
-        if (has_selection) {
-          for (const auto& joined_channel : ecps_backend.channel_info) {
-            if (joined_channel.channel_id.i == This->selected_channel_id.i) {
-              already_in_selected = true;
-
-              is_host_of_selected = ecps_backend.is_current_user_host_of_channel(This->selected_channel_id);
-              break;
-            }
-          }
-        }
-
-        if (has_selection && !is_host_of_selected) {
-          if (already_in_selected) {
-            if (icon_button("##leave_channel", icon_e::leave, "Leave channel", gui::get_frame_height() * 1.15f, icon_style_e::danger)) {
-              // a channel joined by itself would be joined again at once, leaving it stops that
-              for (const auto& channel : ecps_backend.available_channels) {
-                if (channel.channel_id.i == This->selected_channel_id.i && This->auto_join_host == channel.name) {
-                  This->set_auto_join(std::string());
-                }
-              }
-              This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
-                try {
-                  co_await ecps_backend.channel_quit(channel_id);
-                  co_await ecps_backend.request_channel_list();
-                }
-                catch (...) {
-                  fan::print("Failed to leave channel");
-                }
-                });
-            }
-            gui::same_line();
-          }
-          else {
-            if (icon_button("##join_channel", icon_e::join, "Join channel", gui::get_frame_height() * 1.15f, icon_style_e::accent)) {
-              This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
-                try {
-                  co_await ecps_backend.channel_join(channel_id);
-                  co_await ecps_backend.request_channel_list();
-                  co_await ecps_backend.request_channel_session_list(channel_id);
-                }
-                catch (...) {
-                  fan::print("Failed to join channel");
-                }
-                });
-            }
-            gui::same_line();
-          }
-        }
-
-        if (icon_button("##add_channel", icon_e::plus, "New channel", gui::get_frame_height() * 1.15f)) {
-          This->new_channel_popup_requested = true;
-        }
+      // ---- the top row: the search over the width, the buttons at its right
+      f32_t button = gui::get_frame_height();
+      int buttons = 2 + (has_selection && !is_host_of_selected ? 1 : 0);
+      f32_t buttons_width = buttons * (button + gui::get_style().ItemSpacing.x);
+      fan::vec2 search_at = gui::get_cursor_screen_pos();
+      gui::push_item_width(std::max(avail_size.x - buttons_width, 80.f));
+      gui::input_text("##channel_search", &search_filter);
+      bool search_active = gui::is_item_active();
+      gui::pop_item_width();
+      if (search_filter.empty() && !search_active) {
+        gui::get_window_draw_list()->AddText(search_at + fan::vec2(gui::get_style().FramePadding.x, gui::get_style().FramePadding.y), 0xff808080u, "Search channels");
+      }
+      if (has_selection && !is_host_of_selected) {
         gui::same_line();
-        
-        if (icon_button("##connect_server", icon_e::server, "Connect to a server", gui::get_frame_height() * 1.15f)) {
-          This->drop_down_server.toggle_render_server_connect = true;
-        }
-
-        gui::end_child();
-
-        if (stacked) {
-          // the line between the list and the details: dragged, the list gets taller or shorter
-          fan::vec2 at = gui::get_cursor_screen_pos();
-          gui::invisible_button("##channel_stack_handle", fan::vec2(avail_size.x, stacked_handle));
-          bool hot = gui::is_item_hovered() || gui::is_item_active();
-          if (hot) {
-            gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
+        if (already_in_selected) {
+          if (icon_button("##leave_channel", icon_e::leave, "Leave the selected channel", button, icon_style_e::danger)) {
+            // a channel joined by itself would be joined again at once, leaving it stops that
+            for (const auto& channel : ecps_backend.available_channels) {
+              if (channel.channel_id.i == This->selected_channel_id.i && This->auto_join_host == channel.name) {
+                This->set_auto_join(std::string());
+              }
+            }
+            This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
+              try {
+                co_await ecps_backend.channel_quit(channel_id);
+                co_await ecps_backend.request_channel_list();
+              }
+              catch (...) {
+                fan::print("Failed to leave channel");
+              }
+            });
           }
-          if (gui::is_item_active()) {
-            channels_list_height = stacked_list_height + gui::get_io().MouseDelta.y;
-            channels_list_resizing = true;
-          }
-          else if (channels_list_resizing) {
-            channels_list_resizing = false;
-            This->save_side_panel_layout();
-          }
-          fan::vec2 c = at + fan::vec2(avail_size.x * 0.5f, stacked_handle * 0.5f);
-          gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), hot ? 0xffff7a33u : 0x30ffffffu, 3.f);
-          gui::begin_child("##channel_details_panel", fan::vec2(avail_size.x, std::max(avail_size.y - stacked_list_height - stacked_handle - gui::get_style().ItemSpacing.y * 2.f, 60.f)), true);
         }
-        else {
-          gui::same_line(0, splitter_spacing);
-
-          static bool is_resizing_channels = false;
-          gui::render_vertical_splitter("##channel_splitter_hitbox", avail_size.y,
-            unclamped_details_width, channel_details_width, min_details_width, max_details_width, is_resizing_channels);
-
-          gui::same_line(0, splitter_spacing);
-
-          gui::begin_child("##channel_details_panel", fan::vec2(channel_details_width, avail_size.y), true);
+        else if (icon_button("##join_channel", icon_e::join, "Join the selected channel", button, icon_style_e::accent)) {
+          This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
+            try {
+              co_await ecps_backend.channel_join(channel_id);
+              co_await ecps_backend.request_channel_list();
+              co_await ecps_backend.request_channel_session_list(channel_id);
+            }
+            catch (...) {
+              fan::print("Failed to join channel");
+            }
+          });
         }
+      }
+      gui::same_line();
+      if (icon_button("##add_channel", icon_e::plus, "New channel", button)) {
+        This->new_channel_popup_requested = true;
+      }
+      gui::same_line();
+      if (icon_button("##connect_server", icon_e::server, "Connect to a server", button)) {
+        This->drop_down_server.toggle_render_server_connect = true;
+      }
+      gui::spacing();
 
-        gui::dummy(fan::vec2(12, 0));
-        gui::same_line(0, 0);
-        gui::begin_group();
+      // ---- the channels
+      std::vector<const ecps_backend_t::channel_list_info_t*> shown;
+      for (const auto& channel : ecps_backend.available_channels) {
+        if (!search_filter.empty()) {
+          std::string name_lower = channel.name;
+          std::string filter_lower = search_filter;
+          std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+          std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+          if (name_lower.find(filter_lower) == std::string::npos) {
+            continue;
+          }
+        }
+        shown.push_back(&channel);
+      }
+      f32_t rest = gui::get_content_region_avail().y;
+      f32_t row_height = gui::get_frame_height() + 10.f + 2.f;
+      f32_t padding = gui::get_style().WindowPadding.y * 2.f;
+      f32_t fitted = std::max<std::size_t>(shown.size(), 1) * row_height + padding + 4.f;
+      f32_t list_height = channels_list_height > 0.f ? channels_list_height : fitted;
+      list_height = std::clamp(list_height, std::min(row_height * 2.f + padding, rest * 0.3f), rest * 0.6f);
+      f32_t handle = 12.f;
+
+      gui::push_style_var(gui::style_var_item_spacing, fan::vec2(gui::get_style().ItemSpacing.x, 2.f));
+      if (gui::begin_child("##channel_list_panel", fan::vec2(avail_size.x, list_height), true)) {
+        f32_t width = gui::get_content_region_avail().x;
+        for (const auto* channel : shown) {
+          render_channel_row(*channel, width);
+        }
+        if (ecps_backend.available_channels.empty()) {
+          gui::text_wrapped_disabled(ecps_backend.channel_list_received
+            ? "No channels yet. Make one with +"
+            : "Loading the channels...");
+        }
+        else if (shown.empty()) {
+          gui::text_disabled("No channel matches the search");
+        }
+      }
+      gui::end_child();
+      gui::pop_style_var();
+
+      // the line between the list and the details: dragged, the list gets taller or shorter
+      {
+        fan::vec2 at = gui::get_cursor_screen_pos();
+        gui::invisible_button("##channel_stack_handle", fan::vec2(avail_size.x, handle));
+        bool hot = gui::is_item_hovered() || gui::is_item_active();
+        if (hot) {
+          gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
+          gui::set_tooltip("Drag to make the list taller or shorter, double click to fit it to the channels");
+        }
+        if (gui::is_item_active()) {
+          channels_list_height = list_height + gui::get_io().MouseDelta.y;
+          channels_list_resizing = true;
+        }
+        else if (channels_list_resizing) {
+          channels_list_resizing = false;
+          This->save_side_panel_layout();
+        }
+        if (hot && gui::is_mouse_double_clicked(0)) {
+          channels_list_height = 0.f;
+          This->save_side_panel_layout();
+        }
+        fan::vec2 c = at + fan::vec2(avail_size.x * 0.5f, handle * 0.5f);
+        gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), hot ? 0xffff7a33u : 0x30ffffffu, 3.f);
+      }
+
+      gui::begin_child("##channel_details_panel", fan::vec2(avail_size.x, std::max(gui::get_content_region_avail().y, 60.f)), true);
+
+      gui::dummy(fan::vec2(6, 0));
+      gui::same_line(0, 0);
+      gui::begin_group();
 
         if (This->selected_channel_id.i != (uint16_t)-1) {
           std::string channel_name = "Channel " + std::to_string(This->selected_channel_id.i);
@@ -367,9 +310,15 @@
               break;
             }
           }
-          gui::text("Channel: " + channel_name + (ecps_backend.is_hosting_channel(This->selected_channel_id) ? "  (yours)" : ""));
+          {
+            gui::font_scope_t title(gui::get_font_size() * 1.15f, gui::font::bold);
+            gui::text(channel_name);
+          }
+          if (ecps_backend.is_hosting_channel(This->selected_channel_id)) {
+            gui::same_line(0, 10.f);
+            gui::badge("yours", 0x50ff5919u, 0xffffa070u);
+          }
           if (!ecps_backend.is_hosting_channel(This->selected_channel_id) && !channel_name.empty()) {
-            gui::same_line(0, 24.f);
             bool auto_join_on = This->auto_join_host == channel_name;
             if (gui::checkbox("Join automatically", &auto_join_on)) {
               This->set_auto_join(auto_join_on ? channel_name : std::string());
@@ -588,9 +537,8 @@
           gui::text("Select a channel.");
         }
 
-        gui::end_group();
-        gui::end_child();
-      }
+      gui::end_group();
+      gui::end_child();
     }
 
     // The panel beside the stream. Sections for what you share, what you watch and how it shows, then the details
