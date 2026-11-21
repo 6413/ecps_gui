@@ -136,5 +136,45 @@ namespace fan::audio {
       }
       return {};
     }
+
+#if defined(_WIN32)
+    // The Windows release leaves the recordings out (6 MB of a 12 MB download): the first time MIDI plays they are
+    // fetched from the newest GitHub release's ecps_piano.7z and unpacked next to the exe, with the curl.exe and
+    // tar.exe Windows has. Blocks for the download, run it off the audio and GUI threads. True when they are there
+    static bool download() {
+      wchar_t exe[1024];
+      DWORD length = GetModuleFileNameW(nullptr, exe, 1024);
+      if (length == 0 || length >= 1024) {
+        return false;
+      }
+      std::filesystem::path dir = std::filesystem::path(exe).parent_path();
+      std::filesystem::path archive = dir / "ecps_piano.7z.part";
+      wchar_t system[MAX_PATH];
+      UINT n = GetSystemDirectoryW(system, MAX_PATH);
+      std::wstring tools(system, n);
+      auto run = [](const std::wstring& program, std::wstring arguments) {
+        std::wstring command = L"\"" + program + L"\" " + arguments;
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(program.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+          return false;
+        }
+        CloseHandle(pi.hThread);
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hProcess);
+        return code == 0;
+      };
+      std::error_code ec;
+      bool ok = run(tools + L"\\curl.exe", L"-fsSL --max-time 120 -o \"" + archive.wstring() +
+        L"\" https://github.com/6413/ecps_gui/releases/latest/download/ecps_piano.7z") &&
+        // the archive holds audio/steinway keys/*.sac
+        run(tools + L"\\tar.exe", L"-xf \"" + archive.wstring() + L"\" -C \"" + dir.wstring() + L"\"");
+      std::filesystem::remove(archive, ec);
+      return ok && std::filesystem::exists(dir / "audio" / "steinway keys" / "1.sac", ec);
+    }
+#endif
   };
 }

@@ -399,6 +399,7 @@ static void stop_worker_threads() {
   }
 }
 
+#include "frame_assembler.h"
 #include "backend.h"
 
 fan::window::input_injector_t host_input;
@@ -892,6 +893,17 @@ struct midi_host_t {
     // the steinway recordings take a few seconds to decode, until then notes use the plain tone
     loader = std::thread([this] {
       auto directory = fan::audio::midi_sac_bank_t::find_directory();
+    #if defined(_WIN32)
+      if (directory.empty()) {
+        fan::print("midi: downloading the piano recordings, the plain tone plays until they are here");
+        if (fan::audio::midi_sac_bank_t::download()) {
+          directory = fan::audio::midi_sac_bank_t::find_directory();
+        }
+        else {
+          fan::print("midi: could not download the piano recordings (ecps_piano.7z from the GitHub release)");
+        }
+      }
+    #endif
       if (directory.empty()) {
         fan::print("midi: audio/steinway keys not found (set ECPS_PIANO_DIR), using the built-in tone");
         return;
@@ -1589,51 +1601,32 @@ static void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) 
   ecps_backend.view.m_stats.Frame_Drop++;
 }
 
-void ecps_backend_t::view_t::WriteFramePacket() {
-  if (m_Possible == 0) return;
-
-  uint32_t FramePacketSize = (uint32_t)(this->m_Possible - 1) * 0x400 + this->m_ModuloSize;
-  if (FramePacketSize < 32 || FramePacketSize > 0x500000) {
+void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& frame) {
+  if (frame.size < 32 || frame.size > 0x500000) {
     this->m_stats.Frame_Drop++;
   #if ecps_debug_prints >= 1
-    ecps_print_throttled("NETWORK: Frame dropped - invalid size: {} bytes (valid range: 32 - 5MB)",
-      FramePacketSize);
-  #endif
-    return;
-  }
-
-  if (this->m_data.size() < FramePacketSize) {
-    this->m_stats.Frame_Drop++;
-  #if ecps_debug_prints >= 1
-    ecps_print_throttled("NETWORK: Frame dropped - buffer underrun: need {} bytes, have {}",
-      FramePacketSize, this->m_data.size());
+    ecps_print_throttled("NETWORK: Frame dropped - invalid size: {} bytes (valid range: 32 - 5MB)", frame.size);
   #endif
     return;
   }
 
 #if ecps_debug_prints >= 2
-  printf("NETWORK: Frame received at %lld ms, size: %u bytes\n",
-    std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now().time_since_epoch()).count(),
-    FramePacketSize);
+  printf("NETWORK: Frame %u received, %zu bytes%s\n", frame.sequence, frame.size, frame.recovered ? " (resends)" : "");
 #endif
 
   ecps_backend.view_frames_assembled.fetch_add(1, std::memory_order_relaxed);
 
-  // a whole frame before this one was lost: decoding this one would show blocks until intra refresh swept over them.
-  // A keyframe needs nothing before it (the sharer also skips a number when it drops its queue for a keyframe)
-  if (m_SequenceGap) {
-    m_SequenceGap = false;
-    if (!m_KeyFrame) {
-      RequestKeyframe();
-    }
+  // a frame before this one was dropped (its resends never came): decoding this one would show blocks until intra
+  // refresh swept over them. A keyframe needs nothing before it
+  if (frame.after_loss && !frame.keyframe) {
+    RequestKeyframe();
   }
 
   // after a start or a loss only a keyframe can be decoded cleanly; the frames before it are held back (the last
   // picture stays) instead of decoding into blocks. A sharer that never marks keyframes isn't waited on forever
   if (ecps_backend.view_need_keyframe.load(std::memory_order_relaxed)) {
     uint64_t now = fan::event::now();
-    if (m_KeyFrame) {
+    if (frame.keyframe) {
       ecps_backend.view_need_keyframe.store(false, std::memory_order_relaxed);
       m_KeyFrameWaitSince = 0;
     }
@@ -1652,7 +1645,7 @@ void ecps_backend_t::view_t::WriteFramePacket() {
     }
   }
 
-  if (!decode_queue.push(std::vector<uint8_t>(this->m_data.begin(), this->m_data.begin() + FramePacketSize))) {
+  if (!decode_queue.push(std::vector<uint8_t>(frame.data, frame.data + frame.size))) {
     this->m_stats.Frame_Drop++;
     ecps_backend.view_queue_full.fetch_add(1, std::memory_order_relaxed);
     RequestKeyframe();
@@ -1660,38 +1653,6 @@ void ecps_backend_t::view_t::WriteFramePacket() {
 
   frame_index++;
 }
-
-void ecps_backend_t::view_t::FixFrameOnComplete() {
-  // the first packet carries the packet count; without it the frame can't be sized
-  m_stats.Frame_Total++;
-  if (m_Possible == (uint16_t)-1) {
-    m_stats.Frame_Drop++;
-    m_stats.Packet_HeadDrop++;
-  #if ecps_debug_prints >= 1
-    ecps_print_throttled("NETWORK: Frame dropped - first packet missing (seq {})", m_Sequence);
-  #endif
-    RequestKeyframe();
-    return;
-  }
-
-  UpdateMissingPackets();
-  if (m_MissingPackets.empty()) {
-    // whole only because lost packets were asked for again
-    m_stats.Frame_Corrected += m_RecoveryRetries != 0;
-    WriteFramePacket();
-    return;
-  }
-
-  m_stats.Frame_Drop++;
-  m_stats.Packet_BodyDrop += m_MissingPackets.size();
-#if ecps_debug_prints >= 1
-  ecps_print_throttled("NETWORK: Frame dropped - missing {} of {} packets (seq {}), first missing: {}",
-    m_MissingPackets.size(), m_Possible, m_Sequence, m_MissingPackets.front());
-#endif
-  m_Possible = (uint16_t)-1;
-  RequestKeyframe();
-}
-
 uint32_t dynamic_config_t::get_target_framerate() {
   auto* rt = render_thread_ptr.load(std::memory_order_acquire);
   if (rt && rt->screen_encoder.config_.frame_rate > 0) {
@@ -1737,6 +1698,13 @@ int main() {
         fan::printcl("failed to connect to server:"_str + e.reason + ", retrying...");
       });
     }
+  };
+  // the assembler runs on the network thread (the udp receive and the 1 ms network task)
+  ecps_backend.view.assembler.on_frame = [](const frame_assembler_t::frame_t& frame) {
+    ecps_backend.view.WriteFramePacket(frame);
+  };
+  ecps_backend.view.assembler.on_request = [](uint16_t sequence, const std::vector<uint16_t>& missing) {
+    ecps_backend.view.SendRecoveryRequest(sequence, missing);
   };
   ecps_backend.view.recovery_callback = [](std::vector<uint8_t> request_data) {
     auto* rt = get_render_thread();
@@ -2236,6 +2204,10 @@ int main() {
   });
 
   auto network_task = fan::event::every(1, []() -> fan::event::runv_t<bool> {
+    // lost video packets are asked for and given up on with time, not only when the next packet comes
+    ecps_backend.view.assembler.set_rtt_ms(ecps_backend.ping_ms);
+    ecps_backend.view.assembler.poll(fan::event::now());
+    ecps_backend.view.SyncStats();
     co_await audio_share.send_pending();
     if (voice_chat.has_work()) {
       co_await voice_chat.sync();

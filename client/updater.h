@@ -412,7 +412,9 @@ private:
     return code == 0;
   }
 
-  // the newest release: its tag (without the "v") and its first .7z/.zip asset
+  // the newest release: its tag (without the "v") and its client archive. A release also carries the server
+  // (ecps_server_v*.7z) and the piano recordings (ecps_piano.7z): the one named ecps_v* is taken, else the first
+  // .7z/.zip that is neither of those
   static bool parse_release(const std::string& body, std::string& tag, std::string& url, std::uint64_t& size) {
     auto value_at = [&](std::size_t key_end) -> std::string {
       std::size_t colon = body.find(':', key_end);
@@ -432,6 +434,7 @@ private:
       tag.erase(0, 1);
     }
     std::size_t end = body.find("\"tag_name\"", at + 10);
+    int best_rank = 0;
     for (std::size_t u = body.find("\"browser_download_url\"", at); u != std::string::npos && u < end;
       u = body.find("\"browser_download_url\"", u + 1)) {
       std::string candidate = value_at(u + 22);
@@ -442,12 +445,18 @@ private:
       if (!ends(".7z") && !ends(".zip")) {
         continue;
       }
+      std::string file = candidate.substr(candidate.find_last_of('/') + 1);
+      int rank = file.rfind("ecps_v", 0) == 0 ? 2 :
+        (file.rfind("ecps_server", 0) == 0 || file.rfind("ecps_piano", 0) == 0) ? 0 : 1;
+      if (rank <= best_rank) {
+        continue;
+      }
+      best_rank = rank;
       url = candidate;
       std::size_t s = body.rfind("\"size\":", u);
       size = (s != std::string::npos && s > at) ? std::strtoull(body.c_str() + s + 7, nullptr, 10) : 0;
-      return !tag.empty();
     }
-    return false;
+    return best_rank > 0 && !tag.empty();
   }
 
   void fail_install(const std::string& text) {

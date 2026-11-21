@@ -285,6 +285,34 @@ void StorePacketForRecovery(Protocol_ChannelID_t channel_id, Protocol_SessionID_
   }
 }
 
+/* Packets a viewer asks for that the server never got: they were lost between the sharer and the server. The request
+   goes on to the sharer, whose resend the server keeps and relays to the frame's viewers. Several viewers missing the
+   same packets ask about the same time, so one frame is asked about at most every 5 ms */
+static void ForwardRecoveryToSource(ScreenShare_Stream_t& stream, Protocol_SessionID_t source, Protocol_ChannelID_t channel_id,
+  uint16_t sequence, const std::vector<uint16_t>& indices) {
+  if (indices.empty()) {
+    return;
+  }
+  uint64_t now = EV_nowi(&g_pile->listener);
+  auto& tracker = stream.Frames[sequence % stream.Frames.size()];
+  if (tracker.Sequence == sequence) {
+    if (now - tracker.LastRequestAt < 5000000ULL || tracker.Requests >= 6) {
+      return;
+    }
+    tracker.LastRequestAt = now;
+    ++tracker.Requests;
+  }
+  // the layout the sharer reads: sequence, count, then the packet numbers
+  uint8_t buffer[4 + 512 * sizeof(uint16_t)];
+  uint16_t count = (uint16_t)std::min<size_t>(indices.size(), 512);
+  std::memcpy(buffer, &sequence, sizeof(uint16_t));
+  std::memcpy(buffer + 2, &count, sizeof(uint16_t));
+  std::memcpy(buffer + 4, indices.data(), count * sizeof(uint16_t));
+  ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest_t rest;
+  rest.ChannelID = channel_id;
+  UDP_send(source, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_RecoveryRequest, rest, buffer, 4 + count * sizeof(uint16_t));
+}
+
 void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t channel_id, uint16_t sequence,
                            const uint16_t* missing_indices, uint16_t missing_count) {
   if (IsChannelInvalid(channel_id)) return;
@@ -298,16 +326,19 @@ void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t
   if (stream_it == ChannelData->Streams.end()) {
     return;
   }
-  auto it = stream_it->second.SentPackets.find(sequence);
-  if (it == stream_it->second.SentPackets.end()) {
-    return;
-  }
-
-  auto& packets = it->second;
   auto Session = &g_pile->SessionList[requester];
   if(Session->UDP.Address.ip == 0){
     return;
   }
+  auto it = stream_it->second.SentPackets.find(sequence);
+  if (it == stream_it->second.SentPackets.end()) {
+    // none of that frame reached the server
+    std::vector<uint16_t> lacking(missing_indices, missing_indices + missing_count);
+    ForwardRecoveryToSource(stream_it->second, source, channel_id, sequence, lacking);
+    return;
+  }
+
+  auto& packets = it->second;
   // one small request can ask for a megabyte of resends, and they are sent from inside the event loop.
   // A real viewer asks for a few packets of a few frames, this is far above that
   constexpr uint32_t MaxResendsPerSecond = 2000;
@@ -318,17 +349,22 @@ void ProcessRecoveryRequest(Protocol_SessionID_t requester, Protocol_ChannelID_t
   }
   ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData_t cd;
   cd.ChannelID = channel_id;
+  std::vector<uint16_t> lacking;
   for (uint16_t i = 0; i < missing_count; ++i) {
-    if (Session->UDP.RecoverySent >= MaxResendsPerSecond) {
-      break;
-    }
     uint16_t packet_index = missing_indices[i];
     if (packet_index < packets.size() && !packets[packet_index].empty()) {
+      if (Session->UDP.RecoverySent >= MaxResendsPerSecond) {
+        continue;
+      }
       UDP_send(requester, 0, ProtocolUDP::S2C_t::Channel_ScreenShare_View_StreamData,
               cd, packets[packet_index].data(), packets[packet_index].size());
       ++Session->UDP.RecoverySent;
     }
+    else {
+      lacking.push_back(packet_index);
+    }
   }
+  ForwardRecoveryToSource(stream_it->second, source, channel_id, sequence, lacking);
 }
 
 /* Source is the session the video comes from. It goes to the viewers that picked it, and to the ones that picked

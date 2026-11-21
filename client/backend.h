@@ -126,30 +126,12 @@ struct ecps_backend_t {
 
   struct view_t {
     uint64_t frame_index = 0;
-    uint16_t m_Sequence;
-    uint16_t m_Possible;
-    uint16_t m_ModuloSize;
-    // the frame being received is a keyframe (the sharer marks it in the first packet)
-    bool m_KeyFrame = false;
-    // a frame before this one never arrived whole (all of it lost, or its first packet): this one refers to what is
-    // missing, so unless it is a keyframe it is held back like after any other loss
-    bool m_SequenceGap = false;
     // when the decoder has no picture to build on (watching started, a frame was lost), frames are held back until a
     // keyframe: a frame decoded without what it refers to comes out as blocks and smears. Since when it waits, 0 = not
     uint64_t m_KeyFrameWaitSince = 0;
-    uint64_t frame_start_time = 0;
-    uint64_t last_valid_packet_time = 0;
 
-    std::vector<uint8_t> m_DataCheck = std::vector<uint8_t>(0x201);
-    std::vector<uint8_t> m_data = std::vector<uint8_t>(0x400400);
-    std::vector<uint16_t> m_MissingPackets;
-    uint32_t m_ReceivedCount = 0;
-    uint16_t m_HighestCurrent = 0;
-    uint64_t m_GapSince = 0;
-    uint64_t m_LastRecoveryAt = 0;
-    uint8_t m_RecoveryRetries = 0;
-
-    static constexpr uint64_t recovery_delay_ns = 5000000;
+    // frames back together from their packets, in order; lost packets are asked for again (see frame_assembler.h)
+    frame_assembler_t assembler;
     std::function<void(std::vector<uint8_t>)> recovery_callback;
 
     struct {
@@ -161,157 +143,36 @@ struct ecps_backend_t {
       uint64_t Frame_Corrected;
     } m_stats{};
 
-    uint64_t get_adaptive_timeout() {
-      f32_t ping_ms = 0;
-      auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-      if (rt) {
-        ping_ms = OFFSETLESS(this, ecps_backend_t, view)->ping_ms;
-      }
-
-      // Base timeout + (RTT * safety multiplier) + recovery time
-      uint64_t base_timeout = 50000000ULL; // 50ms base
-      uint64_t rtt_timeout = (uint64_t)(ping_ms * 2.0f * 1000000.0f); // 2x RTT in nanoseconds
-      uint64_t recovery_time = 30000000ULL; // 30ms for recovery processing
-
-      uint64_t total_timeout = base_timeout + rtt_timeout + recovery_time;
-
-      // big frames (keyframes) are paced out by the sender's bandwidth bucket and can
-      // take a few hundred ms to arrive; give each 1 KB packet 1.5 ms (~5.5 Mbit/s floor)
-      if (m_Possible != (uint16_t)-1) {
-        total_timeout += (uint64_t)m_Possible * 1500000ULL;
-      }
-
-      uint64_t min_timeout = 80000000ULL;
-      uint64_t max_timeout = 1000000000ULL;
-
-      return std::clamp(total_timeout, min_timeout, max_timeout);
+    // the assembler's counts into m_stats, which the overlay shows. Frame_Drop also counts frames the decoder lost
+    uint64_t m_AssemblerDropped = 0;
+    void SyncStats() {
+      auto& s = assembler.stats;
+      m_stats.Frame_Drop += s.dropped - m_AssemblerDropped;
+      m_AssemblerDropped = s.dropped;
+      m_stats.Frame_Total = s.frames + s.dropped;
+      m_stats.Packet_Total = s.packets;
+      m_stats.Packet_HeadDrop = s.dropped_head;
+      m_stats.Packet_BodyDrop = s.dropped_packets;
+      m_stats.Frame_Corrected = s.recovered;
     }
 
-    void CheckAndSendRecoveryRequest() {
-      uint64_t current_time = fan::event::now();
-
-      if (last_valid_packet_time > 0 &&
-        current_time - last_valid_packet_time > 5000000000ULL) {
-      #if ecps_debug_prints >= 1
-        fan::print("UDP: forcing sequence reset due to timeout");
-      #endif
-        m_Sequence = 0;
-        last_valid_packet_time = current_time;
-        RequestKeyframe();
+    // the packets of a frame to send again, as the server's recovery request reads them
+    void SendRecoveryRequest(uint16_t sequence, const std::vector<uint16_t>& missing) {
+      if (!recovery_callback || missing.empty()) {
         return;
       }
-
-      if (frame_start_time > 0) {
-        uint64_t frame_age = current_time - frame_start_time;
-        uint64_t adaptive_timeout = get_adaptive_timeout();
-
-        if (frame_age > adaptive_timeout) {
-          m_stats.Frame_Total++;
-          m_stats.Frame_Drop++;
-          SetNewSequence((m_Sequence + 1) % 0x1000);
-          RequestKeyframe();
-          return;
-        }
-      }
-
-      // packets arrive in order, so only a hole below the newest packet can be a loss;
-      // anything above it is still on its way and asking for it just doubles the traffic
-      if (m_Possible == (uint16_t)-1 || m_ReceivedCount > m_HighestCurrent) {
-        m_GapSince = 0;
-        m_RecoveryRetries = 0;
-        return;
-      }
-      if (m_GapSince == 0) {
-        m_GapSince = current_time;
-      }
-      if (current_time - m_GapSince < recovery_delay_ns || m_RecoveryRetries >= 3 ||
-        current_time - m_LastRecoveryAt < recovery_delay_ns) {
-        return;
-      }
-
-      UpdateMissingPackets(m_HighestCurrent);
-      SendRecoveryRequest();
-      m_LastRecoveryAt = current_time;
-      m_RecoveryRetries++;
+      std::vector<uint8_t> request_data(sizeof(recovery_request_t) + missing.size() * sizeof(uint16_t));
+      auto req = reinterpret_cast<recovery_request_t*>(request_data.data());
+      req->sequence = sequence;
+      req->missing_count = static_cast<uint16_t>(missing.size());
+      std::memcpy(req + 1, missing.data(), missing.size() * sizeof(uint16_t));
+      recovery_callback(std::move(request_data));
     }
-
-    void FixFrameOnComplete();
 
     void RequestKeyframe();
 
-    void UpdateMissingPackets(uint16_t Limit = (uint16_t)-1) {
-      m_MissingPackets.clear();
-      if (m_Possible == (uint16_t)-1) {
-        return;
-      }
-
-      Limit = std::min(Limit, m_Possible);
-      for (uint16_t i = 0; i < Limit; i++) {
-        if (!GetDataCheck(i)) {
-          m_MissingPackets.push_back(i);
-        }
-      }
-    }
-
-    void SendRecoveryRequest() {
-      if (m_MissingPackets.empty()) {
-        return;
-      }
-
-      size_t request_size = sizeof(recovery_request_t) + m_MissingPackets.size() * sizeof(uint16_t);
-      std::vector<uint8_t> request_data(request_size);
-
-      recovery_request_t* req = reinterpret_cast<recovery_request_t*>(request_data.data());
-      req->sequence = m_Sequence;
-      req->missing_count = static_cast<uint16_t>(m_MissingPackets.size());
-
-      uint16_t* missing_indices = reinterpret_cast<uint16_t*>(req + 1);
-      for (size_t i = 0; i < m_MissingPackets.size(); ++i) {
-        missing_indices[i] = m_MissingPackets[i];
-      }
-
-      if (recovery_callback) {
-        recovery_callback(std::move(request_data));
-      }
-
-    }
-
-    // a frame was skipped without being counted: counted as dropped, the next written frame checks m_SequenceGap
-    void MarkSequenceGap(bool lost_whole) {
-      if (!lost_whole) {
-        return;
-      }
-      m_stats.Frame_Total++;
-      m_stats.Frame_Drop++;
-      m_SequenceGap = true;
-    }
-
-    void SetNewSequence(uint16_t sequence) {
-      m_Sequence = sequence;
-      m_Possible = (uint16_t)-1;
-      m_KeyFrame = false;
-      m_RecoveryRetries = 0;
-      m_MissingPackets.clear();
-      __builtin_memset(m_DataCheck.data(), 0, m_DataCheck.size());
-      // timed from the frame's first packet, see the udp receive path
-      frame_start_time = 0;
-      m_ReceivedCount = 0;
-      m_HighestCurrent = 0;
-      m_GapSince = 0;
-    }
-
-
-    void SetDataCheck(uint16_t Index) {
-      uint8_t* byte = &this->m_DataCheck[Index / 8];
-      *byte |= 1 << Index % 8;
-    }
-
-    bool GetDataCheck(uint16_t Index) {
-      uint8_t* byte = &this->m_DataCheck[Index / 8];
-      return (*byte & (1 << Index % 8)) >> Index % 8;
-    }
-
-    void WriteFramePacket();
+    // a whole frame from the assembler, on to the decoder
+    void WriteFramePacket(const frame_assembler_t::frame_t& frame);
   }view;
 
   struct share_t {
@@ -562,112 +423,31 @@ struct ecps_backend_t {
 
           auto stream_data = (uint8_t*)&command_data[1];
           auto body = (ScreenShare_StreamHeader_Body_t*)stream_data;
-          uint16_t sequence = body->GetSequence();
 
-        #if ecps_debug_prints >= 3
-          printf("UDP: received seq=%u, current_seq=%u, diff=%d\n",
-            sequence, view.m_Sequence, (int16_t)(sequence - view.m_Sequence));
-        #endif
-
-          // another streamer is being watched now, its sequence has nothing to do with the old one's
-          if (view_resync.exchange(false) && sequence != view.m_Sequence) {
-            if (view.m_Possible != (uint16_t)-1) {
-              view.FixFrameOnComplete();
-            }
-            view.SetNewSequence(sequence);
+          // another streamer is being watched now, its numbering has nothing to do with the old one's
+          if (view_resync.exchange(false)) {
+            view.assembler.reset();
           }
 
-          bool is_sequence_valid = true;
-          if (sequence != view.m_Sequence) {
-            int16_t diff = (int16_t)(sequence - view.m_Sequence);
-
-            if (abs(diff) > 0x800) {
-            #if ecps_debug_prints >= 1
-              printf("UDP: large sequence jump detected %u->%u, accepting\n", view.m_Sequence, sequence);
-            #endif
-              bool lost_whole = view.m_Possible == (uint16_t)-1;
-              if (!lost_whole) {
-                view.FixFrameOnComplete();
-              }
-              view.SetNewSequence(sequence);
-              view.MarkSequenceGap(lost_whole);
-            }
-            else {
-              const int16_t sequence_window = 0x1000;
-              bool is_past = diff < -sequence_window || (diff < 0 && diff > -sequence_window);
-
-              if (is_past) {
-              #if ecps_debug_prints >= 2
-                printf("UDP: dropping past sequence %u (current %u)\n", sequence, view.m_Sequence);
-              #endif
-                co_return;
-              }
-
-              // m_Sequence is the frame expected next: without its first packet it can't be finished or dropped
-              // the usual way, it just vanished (a small frame is one or two packets, all of it can be lost)
-              bool lost_whole = view.m_Possible == (uint16_t)-1;
-              if (!lost_whole) {
-                view.FixFrameOnComplete();
-              }
-              view.SetNewSequence(sequence);
-              view.MarkSequenceGap(lost_whole);
-            }
-          }
-
-          uint8_t* packet_data;
-          uint16_t current = body->GetCurrent();
-
-          if (current == 0) {
+          frame_assembler_t::packet_t p;
+          p.sequence = body->GetSequence();
+          p.index = body->GetCurrent();
+          std::size_t header_size = sizeof(ScreenShare_StreamHeader_Body_t);
+          if (p.index == 0) {
             if (relative_size < sizeof(ScreenShare_StreamHeader_Head_t)) {
               co_return;
             }
-            if (view.m_Possible != (uint16_t)-1) {
-              co_return;
-            }
             auto head = (ScreenShare_StreamHeader_Head_t*)stream_data;
-            view.m_Possible = head->GetPossible();
-            view.m_KeyFrame = (head->GetFlag() & ProtocolChannel::ScreenShare::StreamHeadFlag::KeyFrame) != 0;
-            packet_data = &stream_data[sizeof(ScreenShare_StreamHeader_Head_t)];
+            p.head = true;
+            p.possible = head->GetPossible();
+            p.keyframe = (head->GetFlag() & ProtocolChannel::ScreenShare::StreamHeadFlag::KeyFrame) != 0;
+            header_size = sizeof(ScreenShare_StreamHeader_Head_t);
           }
-          else {
-            packet_data = &stream_data[sizeof(ScreenShare_StreamHeader_Body_t)];
-          }
-
-          uint16_t packet_size = relative_size - ((uintptr_t)packet_data - (uintptr_t)stream_data);
-          if (packet_size != 0x400) {
-            view.m_ModuloSize = packet_size;
-          }
-
-          if (current < view.m_data.size() / 0x400) {
-            __builtin_memcpy(&view.m_data[current * 0x400], packet_data, packet_size);
-            if (!view.GetDataCheck(current)) {
-              view.SetDataCheck(current);
-              ++view.m_ReceivedCount;
-              ++view.m_stats.Packet_Total;
-            }
-            view.m_HighestCurrent = std::max(view.m_HighestCurrent, current);
-
-            view.last_valid_packet_time = fan::event::now();
-            if (view.frame_start_time == 0) {
-              view.frame_start_time = view.last_valid_packet_time;
-            }
-
-          #if ecps_debug_prints >= 3
-            printf("UDP: accepted packet seq=%u, current=%u, size=%u\n", sequence, current, packet_size);
-          #endif
-
-            view.CheckAndSendRecoveryRequest();
-
-            if ((view.m_Possible != (uint16_t)-1 && current == view.m_Possible) || packet_size != 0x400) {
-              view.FixFrameOnComplete();
-              view.SetNewSequence((view.m_Sequence + 1) % 0x1000);
-            }
-          }
-          else {
-          #if ecps_debug_prints >= 1
-            printf("UDP: packet index %u exceeds buffer capacity\n", current);
-          #endif
-          }
+          p.data = stream_data + header_size;
+          p.size = relative_size - header_size;
+          view.assembler.set_rtt_ms(ping_ms);
+          view.assembler.on_packet(p, fan::event::now());
+          view.SyncStats();
         }
         else if (bp.Command == ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData) {
           uintptr_t offset = sizeof(bp) + sizeof(ProtocolUDP::S2C_t::Channel_ScreenShare_View_AudioData_t);
