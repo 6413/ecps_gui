@@ -30,6 +30,14 @@
   openssl,
   curl,
   xorg,
+  # the X libraries under their new names; an older nixpkgs without them falls back to the xorg set
+  libx11 ? xorg.libX11,
+  libxcb ? xorg.libxcb,
+  libxrandr ? xorg.libXrandr,
+  libxinerama ? xorg.libXinerama,
+  libxcursor ? xorg.libXcursor,
+  libxi ? xorg.libXi,
+  libxtst ? xorg.libXtst,
   libxkbcommon,
   wayland,
   pipewire,
@@ -117,7 +125,7 @@ clangStdenv.mkDerivation {
   buildInputs = [
     libuv glfw libpng libwebp freetype fmt shaderc zlib ffmpeg-full
     vulkanHeaders vulkan-loader gtk3 openssl curl
-    xorg.libX11 xorg.libxcb xorg.libXrandr xorg.libXinerama xorg.libXcursor xorg.libXi
+    libx11 libxcb libxrandr libxinerama libxcursor libxi
     libxkbcommon wayland lunasvg box2d libopus
   ] ++ lib.optionals withWaylandCapture [ pipewire dbus ];
 
@@ -223,7 +231,7 @@ clangStdenv.mkDerivation {
       --set-default ECPS_PIANO_DIR $share/steinway-keys \
       --set ECPS_BUILD_INFO $share/build-info \
       --prefix PATH : ${lib.makeBinPath [ curl ]} \
-      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib xorg.libX11 xorg.libXtst ]} \
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ vulkan-loader libpulseaudio alsa-lib libx11 libxtst ]} \
       --prefix XDG_DATA_DIRS : ${gtk3}/share/gsettings-schemas/${gtk3.name}:${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}
     runHook postInstall
   '';

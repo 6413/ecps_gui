@@ -1765,6 +1765,10 @@
     else if (chat_input.size() > chat_inline_max && chat_has_text_content(chat_input)) {
       chat_pending_files.push_back(chat_text_to_file(chat_input));
       chat_input.clear();
+      // the field keeps its own copy of the text while it is being typed in: without letting go of it, it hands the
+      // same text back next frame and every frame made one more file. Focus comes back to it right after
+      gui::clear_active_id();
+      chat_focus_input = true;
     }
 
     gui::same_line();

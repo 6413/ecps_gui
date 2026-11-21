@@ -218,6 +218,10 @@ struct updater_t {
     std::error_code ec;
     std::filesystem::remove(ready_file, ec);
     std::filesystem::remove(failed_file, ec);
+#if !defined(_WIN32)
+    // the log is of this update only: appended to forever, the error of the newest build was lost among old ones
+    std::filesystem::remove(log_file, ec);
+#endif
     state = state_e::building;
 #if defined(_WIN32)
     phase = 1;
