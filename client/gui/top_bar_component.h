@@ -89,6 +89,27 @@ struct top_bar_t {
       gui::set_tooltip("About and updates");
     }
 
+    // an update to get: a download icon in the accent colour next to the version, it opens the same dropdown
+    if (updater.state.load() == state_e::available) {
+      f32_t icon_box = frame_height;
+      right -= 6.f + icon_box;
+      gui::set_cursor_pos(fan::vec2(right, row_y));
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      bool clicked = gui::invisible_button("##update_available", fan::vec2(icon_box, icon_box));
+      bool hovered = gui::is_item_hovered();
+      // a slow bob so it gets noticed without blinking
+      f64_t seconds = std::chrono::duration<f64_t>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      f32_t bob = hovered ? 0.f : (f32_t)std::sin(std::fmod(seconds, 1000.0) * 3.0) * icon_box * 0.04f;
+      Gui::draw_icon(list, Gui::icon_e::download, at + fan::vec2(icon_box * 0.5f, icon_box * 0.5f + bob), icon_box * 0.78f,
+        faded(hovered ? Gui::accent_hover_u32 : Gui::accent_u32));
+      if (hovered) {
+        gui::set_tooltip("Update available: " + updater.latest() + ". Click to update");
+      }
+      if (clicked) {
+        gui.about_popup_requested = true;
+      }
+    }
+
     right -= 16.f + gui::calc_text_size("Audio").x;
     gui::set_cursor_pos(fan::vec2(right, text_y));
     gui::text(fan::color(0.7f, 0.7f, 0.75f, 1.f), "Audio");
@@ -104,7 +125,6 @@ struct top_bar_t {
     const char* hint = nullptr;
     fan::color hint_color(1.f, 1.f, 1.f, 1.f);
     switch (updater.state.load()) {
-      case state_e::available: hint = "update available"; hint_color = fan::color(1.f, 0.7f, 0.15f, 1.f); break;
       case state_e::building: hint = "updating..."; hint_color = fan::color(0.3f, 0.6f, 1.f, 1.f); break;
       case state_e::ready: hint = "restarting..."; hint_color = fan::color(0.15f, 1.f, 0.3f, 1.f); break;
       case state_e::failed:
