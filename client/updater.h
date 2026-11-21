@@ -258,8 +258,10 @@ struct updater_t {
     }
     next_auto_check = now + std::chrono::seconds(5);
     state_e current = state.load();
-    // an update found, being installed or restarting into: nothing more to look for
-    if (current != state_e::idle && current != state_e::up_to_date && current != state_e::failed) {
+    // an update found, being installed or restarting into: nothing more to look for. After a failed build it keeps
+    // looking, a fix pushed later is a new update (without this the icon never came back until a restart)
+    if (current != state_e::idle && current != state_e::up_to_date && current != state_e::failed &&
+      current != state_e::build_failed) {
       return;
     }
     auto_check_running = true;

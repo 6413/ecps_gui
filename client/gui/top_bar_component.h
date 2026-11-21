@@ -324,12 +324,17 @@ struct top_bar_t {
     }
     if (updater_t::self_updates()) {
       gui::separator();
-      // a switch at least as wide as its text, the popup sizes itself to what is in it
-      gui::dummy(fan::vec2(gui::calc_text_size("Update automatically").x + gui::get_frame_height() * 2.f + 24.f, 0));
-      if (gui::settings_switch("Update automatically", &gui.auto_update,
-        "Installs a new version as soon as it is found and restarts into it, also while you share your screen")) {
-        gui.save_ui_config();
+      // the switch takes the width it is given: in a child of a set width, not the popup's, which is 0 on the frame
+      // the popup opens (a button 0 wide is an ImGui assert, the crash on opening this)
+      f32_t switch_width = std::max(gui::calc_text_size("Update automatically").x + gui::get_frame_height() * 2.f + 24.f,
+        gui::get_content_region_avail().x);
+      if (gui::begin_child("##auto_update_row", fan::vec2(switch_width, gui::get_frame_height()), false)) {
+        if (gui::settings_switch("Update automatically", &gui.auto_update,
+          "Installs a new version as soon as it is found and restarts into it, also while you share your screen")) {
+          gui.save_ui_config();
+        }
       }
+      gui::end_child();
     }
     gui::end_popup();
   }
