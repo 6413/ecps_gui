@@ -93,9 +93,15 @@
     theme_rgb_to_hsv(std::pow(theme.accent.r, 1.f / 2.2f), std::pow(theme.accent.g, 1.f / 2.2f), std::pow(theme.accent.b, 1.f / 2.2f), h, s, v);
     return h;
   }
+  // how colourful the accent is, 0 for black, white and grays: those have no hue, so nothing may follow it
+  f32_t theme_saturation() const {
+    f32_t h, s, v;
+    theme_rgb_to_hsv(std::pow(theme.accent.r, 1.f / 2.2f), std::pow(theme.accent.g, 1.f / 2.2f), std::pow(theme.accent.b, 1.f / 2.2f), h, s, v);
+    return s;
+  }
   // the backdrop's colour as it looks on screen
   fan::color theme_background_display() const {
-    return theme_hsv_to_rgb(theme_hue(), std::clamp(theme.background_tint, 0.f, 1.f), std::clamp(theme.background_brightness, 0.f, 1.f));
+    return theme_hsv_to_rgb(theme_hue(), std::clamp(theme.background_tint, 0.f, 1.f) * theme_saturation(), std::clamp(theme.background_brightness, 0.f, 1.f));
   }
   void apply_backdrop_color() {
     fan::color shown = theme_background_display();
@@ -255,7 +261,7 @@
     // the lights are the accent's colour and two neighbours of it on the colour wheel, in the gui's colour space
     f32_t hue = theme_hue();
     auto light = [&](f32_t shift, f32_t alpha) {
-      fan::color shown = theme_hsv_to_rgb(hue + shift, 0.95f, 1.f);
+      fan::color shown = theme_hsv_to_rgb(hue + shift, 0.95f * theme_saturation(), 1.f);
       return fan::color(std::pow(shown.r, 2.2f), std::pow(shown.g, 2.2f), std::pow(shown.b, 2.2f), alpha * theme.glow);
     };
     const glow_t glows[] = {
