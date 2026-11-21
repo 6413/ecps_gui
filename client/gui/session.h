@@ -711,6 +711,8 @@
     watch_channel = (std::uint32_t)channel_id.i;
     watch_source = source;
     ecps_backend.view_resync = true;
+    // the new picture builds on nothing the decoder has, it starts at the sharer's next keyframe
+    ecps_backend.view_need_keyframe = true;
     if (auto* rt = get_render_thread()) {
       rt->host_cursor.visible.store(false);
     }

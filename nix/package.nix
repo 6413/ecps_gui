@@ -129,19 +129,6 @@ clangStdenv.mkDerivation {
     cp ${thirdParty.VulkanMemoryAllocator}/include/vk_mem_alloc.h $inc/VulkanMemoryAllocator/include/
     cp ${thirdParty.VulkanUtilityLibraries}/include/vulkan/*.h $inc/vulkan/
     chmod -R u+w fan
-
-    # ask the screen capture portal to draw the mouse pointer into the picture while it is showing. When an
-    # application hides it (a game does) the portal leaves it out, so viewers see what the user sees
-    patch -p1 -d $inc/WITCH < ${./witch-cursor.patch}
-
-    # let the portal offer windows as well as screens, it asks which one to share
-    patch -p1 -d $inc/WITCH < ${./witch-window.patch}
-
-    # ask GNOME for up to 240 fps: its default cap gives 50 fps on a 100 Hz screen
-    patch -p1 -d $inc/WITCH < ${./witch-framerate.patch}
-
-    # the portal's restore token: after an update the same screen or window is shared again without the dialog
-    patch -p1 -d $inc/WITCH < ${./witch-restore.patch}
     runHook postPatch
   '';
 

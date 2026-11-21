@@ -162,13 +162,18 @@ static void request_precise_timers() {
 #endif
 }
 
-// the decoded frames waiting to be shown, oldest first. Two fit: frames often arrive in pairs (network, the sharer's
-// timing), and with one slot the first of a pair was overwritten before a draw took it, so 60 decoded showed as ~50.
-// With two, the second is shown one draw later instead of lost. When full, the oldest is dropped so the delay
-// can't grow. Frames swap in and out so the plane buffers get reused, a new 1080p frame would page fault 3 mb
+// the decoded frames waiting to be shown, oldest first. Frames often arrive in pairs (network, the sharer's timing):
+// with one slot the first of a pair was overwritten before a draw took it, so 60 decoded showed as ~50. Three fit,
+// since a window that draws exactly as often as the stream sends (60 frames on a 60 Hz screen) meets the frames with
+// jitter and a late draw can find three waiting. When full, the oldest is dropped so the delay can't grow, and a
+// queue that stays backed up (delay that never goes away at equal rates) has one frame skipped after a while.
+// Frames swap in and out so the plane buffers get reused, a new 1080p frame would page fault 3 mb
 struct latest_frame_t {
   using frame_t = fan::graphics::screen_decode_t::decode_data_t;
-  static constexpr std::size_t slot_count = 2;
+  static constexpr std::size_t slot_count = 3;
+  // draws in a row that found more than one frame waiting before one is skipped to catch up
+  static constexpr int backlog_draws_limit = 30;
+  int backlog_draws = 0;
 
   void publish(frame_t& frame) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -185,7 +190,16 @@ struct latest_frame_t {
   bool take(frame_t& frame) {
     std::lock_guard<std::mutex> lock(mutex);
     if (count == 0) {
+      backlog_draws = 0;
       return false;
+    }
+    backlog_draws = count > 1 ? backlog_draws + 1 : 0;
+    if (backlog_draws >= backlog_draws_limit) {
+      // the oldest is a frame of delay kept for a second: skipped, the shown picture catches up by one
+      head = (head + 1) % slot_count;
+      --count;
+      ++dropped;
+      backlog_draws = 0;
     }
     std::swap(slots[head], frame);
     head = (head + 1) % slot_count;
@@ -1490,6 +1504,8 @@ void ecps_backend_t::share_t::CalculateNetworkFlowBucket() {
 }
 
 void ecps_backend_t::view_t::RequestKeyframe() {
+  // whatever broke the picture, the frames after it refer to what is missing: hold them back until the keyframe
+  ecps_backend.view_need_keyframe.store(true, std::memory_order_relaxed);
   // keyframes are big, asking for one per lost frame makes the congestion worse
   static auto last_request = std::chrono::steady_clock::time_point{};
   auto now = std::chrono::steady_clock::now();
@@ -1505,6 +1521,10 @@ void ecps_backend_t::view_t::RequestKeyframe() {
 
 static bool is_displayable(const fan::graphics::screen_decode_t::decode_data_t& frame) {
   using image_format_e = fan::graphics::image_format_e;
+  // still on the GPU (zero copy): no planes here, only its size to check
+  if (frame.gpu_slot >= 0) {
+    return frame.image_size.x > 0 && frame.image_size.x <= 7680 && frame.image_size.y > 0 && frame.image_size.y <= 4320;
+  }
   size_t planes = frame.pixel_format == image_format_e::yuv420p ? 3 : frame.pixel_format == image_format_e::nv12 ? 2 : 1;
   for (size_t i = 0; i < planes; ++i) {
     if (frame.data[i].empty()) {
@@ -1565,8 +1585,33 @@ void ecps_backend_t::view_t::WriteFramePacket() {
 #endif
 
   ecps_backend.view_frames_assembled.fetch_add(1, std::memory_order_relaxed);
+
+  // after a start or a loss only a keyframe can be decoded cleanly; the frames before it are held back (the last
+  // picture stays) instead of decoding into blocks. A sharer that never marks keyframes isn't waited on forever
+  if (ecps_backend.view_need_keyframe.load(std::memory_order_relaxed)) {
+    uint64_t now = fan::event::now();
+    if (m_KeyFrame) {
+      ecps_backend.view_need_keyframe.store(false, std::memory_order_relaxed);
+      m_KeyFrameWaitSince = 0;
+    }
+    else {
+      if (m_KeyFrameWaitSince == 0) {
+        m_KeyFrameWaitSince = now;
+      }
+      if (now - m_KeyFrameWaitSince < 3000000000ull) {
+        ecps_backend.view_keyframe_waits.fetch_add(1, std::memory_order_relaxed);
+        RequestKeyframe();
+        frame_index++;
+        return;
+      }
+      ecps_backend.view_need_keyframe.store(false, std::memory_order_relaxed);
+      m_KeyFrameWaitSince = 0;
+    }
+  }
+
   if (!decode_queue.push(std::vector<uint8_t>(this->m_data.begin(), this->m_data.begin() + FramePacketSize))) {
     this->m_stats.Frame_Drop++;
+    ecps_backend.view_queue_full.fetch_add(1, std::memory_order_relaxed);
     RequestKeyframe();
   }
 
@@ -1756,12 +1801,20 @@ int main() {
         }
         try {
           stage_scope_t upload_scope {stage_times.upload};
-          render_thread_instance.network_frame.set_tc_size(fan::vec2((f32_t)shown_frame.image_size.x / shown_frame.stride[0].x, 1));
-          render_thread_instance.network_frame.reload(
-            shown_frame.pixel_format,
-            planes.data(),
-            fan::vec2ui(shown_frame.stride[0].x, shown_frame.image_size.y)
-          );
+          if (shown_frame.gpu_slot >= 0) {
+            // decoded on the GPU and still there: copied inside the GPU into the picture, rows tightly packed
+            if (render_thread_instance.screen_decoder.show_gpu_frame(shown_frame, render_thread_instance.network_frame)) {
+              render_thread_instance.network_frame.set_tc_size(fan::vec2(1, 1));
+            }
+          }
+          else {
+            render_thread_instance.network_frame.set_tc_size(fan::vec2((f32_t)shown_frame.image_size.x / shown_frame.stride[0].x, 1));
+            render_thread_instance.network_frame.reload(
+              shown_frame.pixel_format,
+              planes.data(),
+              fan::vec2ui(shown_frame.stride[0].x, shown_frame.image_size.y)
+            );
+          }
         }
         catch (const std::exception& e) {
         #if ecps_debug_prints >= 1
@@ -1788,6 +1841,23 @@ int main() {
           slowest_ms = 0.f;
           second_start = now;
         }
+      }
+
+      // In the background (another program in front, a game for example) the window draws only as often as the
+      // stream needs, with room to spare: every decoded frame still shows, and the rest of the monitor's refresh
+      // rate (165 draws a second on a 165 Hz screen) is GPU time left to the game
+      {
+        static auto last_draw = std::chrono::steady_clock::now();
+        if (!render_thread_instance.engine.window.is_focused()) {
+          f32_t stream_fps = render_thread_instance.ecps_gui.debug_sample.decoded_fps;
+          f64_t wanted = std::max(30.0, stream_fps * 1.25 + 5.0);
+          auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<f64_t>(1.0 / wanted));
+          auto since = std::chrono::steady_clock::now() - last_draw;
+          if (since < interval) {
+            std::this_thread::sleep_for(interval - since);
+          }
+        }
+        last_draw = std::chrono::steady_clock::now();
       }
 
       std::this_thread::yield();
@@ -1858,7 +1928,9 @@ int main() {
 
         auto now = std::chrono::steady_clock::now();
         auto time_since_idr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_idr_time);
-        if (time_since_idr > std::chrono::milliseconds(5000)) {
+        // a keyframe now and then repairs what a lost frame broke for a viewer that didn't ask. With intra refresh
+        // the picture is renewed all the time anyway, and an extra keyframe would only be the burst it avoids
+        if (time_since_idr > std::chrono::milliseconds(5000) && !rt->screen_encoder.encoder_.uses_intra_refresh()) {
           rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
           last_idr_time = now;
         }
@@ -2200,6 +2272,12 @@ int main() {
     double bits_to_add = seconds_elapsed * pace_bps * bucket_multiplier;
 
     auto& flow = ecps_backend.share.m_NetworkFlow;
+    // A keyframe goes out on credit (the bucket below zero), and every frame after it waited until the debt was paid
+    // at the stream's own rate: up to a quarter second of held frames, a visible hitch after each keyframe. The link
+    // is faster than the stream's average, so the debt is paid back at three times the pace
+    if (flow.Bucket < 0) {
+      bits_to_add *= 3.0;
+    }
     // room for a quarter second at the pace, so a keyframe's debt is paid back in time
     flow.BucketSize = std::max<uint64_t>(dynamic_config_t::get_adaptive_bucket_size(), (uint64_t)(pace_bps / 4));
     flow.Bucket = std::min(flow.Bucket + static_cast<int64_t>(bits_to_add), static_cast<int64_t>(flow.BucketSize));

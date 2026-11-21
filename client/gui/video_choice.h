@@ -128,7 +128,8 @@
       }
     });
     if (ecps_backend.is_viewing_any_channel()) {
-      text_wrapped_disabled("In use: " + std::string(decoder.using_hardware_ ? decoder.get_hardware_type_string() : "CPU"));
+      text_wrapped_disabled("In use: " + std::string(decoder.using_hardware_ ? decoder.get_hardware_type_string() : "CPU") +
+        (rt->screen_decoder.zero_copy_active() ? ", zero copy" : ""));
     }
     else {
       text_wrapped_disabled(gpu_decoding_usable ? "GPU: available" : "GPU: none found, CPU is used");

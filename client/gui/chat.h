@@ -11,6 +11,9 @@
   std::chrono::steady_clock::time_point chat_tab_seen_at{};
   // files dropped on the window while the chat was showing, sent by the next frame of the chat
   std::vector<std::string> chat_dropped_files;
+  // files chosen to send, shown above the input until Enter or Send
+  std::vector<std::string> chat_pending_files;
+  static constexpr f32_t chat_pending_height = 72.f;
 
   // longer text than this goes as a .txt file, a message holds Protocol::ChatTextMax bytes
   static constexpr std::size_t chat_inline_max = 1000;
@@ -418,6 +421,40 @@
     }
   }
 
+  // the picture at path, loaded the first time it is asked for: read and decoded off the gui thread, big pictures
+  // made smaller to at most 1600 wide or high. ready or failed tell when it is done
+  chat_picture_t& chat_picture_for(const std::string& path) {
+    auto& picture = chat_pictures[path];
+    if (!picture.ready && !picture.failed && !picture.loading.valid()) {
+      picture.loading = std::async(std::launch::async, [path]() {
+        try {
+          return fan::image::load_owned(path, fan::vec2ui(1600, 1600));
+        }
+        catch (...) {
+          return fan::image::owned_t{};
+        }
+      });
+    }
+    if (picture.loading.valid() && picture.loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      auto owned = picture.loading.get();
+      if (owned.valid()) {
+        fan::image::info_t info;
+        info.data = owned.data.get();
+        info.size = fan::vec2i(owned.size.x, owned.size.y);
+        info.channels = owned.channels;
+        picture.image = engine.image_load(info, smooth_image());
+        picture.size = fan::vec2((f32_t)owned.size.x, (f32_t)owned.size.y);
+        picture.ready = true;
+        // the log got taller: down to it, so a pasted or new picture is seen
+        chat_scroll_down = true;
+      }
+      else {
+        picture.failed = true;
+      }
+    }
+    return picture;
+  }
+
   static bool chat_is_picture_name(const std::string& name) {
     std::string extension = std::filesystem::path(name).extension().string();
     for (auto& c : extension) {
@@ -614,35 +651,7 @@
       text_wrapped_disabled(waiting);
       return true;
     }
-    auto& picture = chat_pictures[path];
-    if (!picture.ready && !picture.failed && !picture.loading.valid()) {
-      // read and decoded off the gui thread, made big pictures smaller to at most 1600 wide or high
-      picture.loading = std::async(std::launch::async, [path]() {
-        try {
-          return fan::image::load_owned(path, fan::vec2ui(1600, 1600));
-        }
-        catch (...) {
-          return fan::image::owned_t{};
-        }
-      });
-    }
-    if (picture.loading.valid() && picture.loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-      auto owned = picture.loading.get();
-      if (owned.valid()) {
-        fan::image::info_t info;
-        info.data = owned.data.get();
-        info.size = fan::vec2i(owned.size.x, owned.size.y);
-        info.channels = owned.channels;
-        picture.image = engine.image_load(info, smooth_image());
-        picture.size = fan::vec2((f32_t)owned.size.x, (f32_t)owned.size.y);
-        picture.ready = true;
-        // the log got taller: down to it, so a pasted or new picture is seen
-        chat_scroll_down = true;
-      }
-      else {
-        picture.failed = true;
-      }
-    }
+    auto& picture = chat_picture_for(path);
     if (picture.failed) {
       return false;
     }
@@ -723,7 +732,13 @@
         f32_t height = lines * gui::get_text_line_height_with_spacing() + gui::get_style().WindowPadding.y * 2 +
           gui::get_style().ScrollbarSize;
         gui::push_style_color(gui::col_child_bg, fan::color(0.f, 0.f, 0.f, 0.35f));
-        if (gui::begin_child("##chat_code" + id, fan::vec2(0, std::min(height, 400.f)), 1, gui::window_flags_horizontal_scrollbar)) {
+        // a block that fits in height has nothing to scroll up or down: the wheel goes on to the chat around it
+        // instead of moving the block a few pixels. Only a block taller than its 400 px takes the wheel
+        gui::window_flags_t code_flags = gui::window_flags_horizontal_scrollbar;
+        if (height <= 400.f) {
+          code_flags |= gui::window_flags_no_scroll_with_mouse;
+        }
+        if (gui::begin_child("##chat_code" + id, fan::vec2(0, std::min(height, 400.f)), 1, code_flags)) {
           gui::text(code);
           bool copied = chat_copied_id == id && std::chrono::steady_clock::now() - chat_copied_at < std::chrono::milliseconds(1500);
           if (gui::is_window_hovered() || copied) {
@@ -1068,6 +1083,11 @@
       });
       return;
     }
+    chat_send_files(channel_id, { chat_text_to_file(text) });
+  }
+
+  // text too long for one message, written to a .txt file to go as a file
+  std::string chat_text_to_file(const std::string& text) {
     std::error_code ec;
     auto folder = std::filesystem::temp_directory_path(ec) / "ecps";
     std::filesystem::create_directories(folder, ec);
@@ -1076,7 +1096,69 @@
       std::ofstream out(path, std::ios::binary);
       out << text;
     }
-    chat_send_files(channel_id, { path.string() });
+    return path.string();
+  }
+
+  // Files waiting above the input, pictures shown small: they go with Enter or Send, together with the text, and
+  // the x takes one out again. Pasted, dropped and attached files all wait here first
+  void render_chat_pending_files() {
+    if (chat_pending_files.empty()) {
+      return;
+    }
+    const f32_t height = chat_pending_height;
+    std::size_t remove = (std::size_t)-1;
+    for (std::size_t i = 0; i < chat_pending_files.size(); ++i) {
+      const std::string& path = chat_pending_files[i];
+      std::string name = ecps_backend_t::file_utf8(ecps_backend_t::file_fs_path(path).filename());
+      if (i) {
+        gui::same_line(0, 8.f);
+      }
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      fan::vec2 size(height, height);
+      bool picture_shown = false;
+      if (chat_is_picture_name(name)) {
+        auto& picture = chat_picture_for(path);
+        if (picture.ready) {
+          f32_t scale = std::min(height / std::max(picture.size.y, 1.f), 2.f * height / std::max(picture.size.x, 1.f));
+          size = picture.size * scale;
+          gui::image(picture.image, size);
+          picture_shown = true;
+        }
+      }
+      if (!picture_shown) {
+        // a file that isn't a picture (or one still loading): a card with its name
+        size = fan::vec2(std::clamp(gui::calc_text_size(name).x + 20.f, height, 2.f * height), height);
+        gui::dummy(size);
+        auto* list = gui::get_window_draw_list();
+        list->AddRectFilled(at, at + size, 0xff1a1310u, 6.f);
+        gui::push_clip_rect(at, at + size, true);
+        list->AddText(at + fan::vec2(10.f, size.y * 0.5f - gui::get_font_size() * 0.5f), 0xffd0d0d0u, name.c_str());
+        gui::pop_clip_rect();
+      }
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip(name + "\nEnter or Send sends it");
+      }
+      // the x in the corner takes it out
+      fan::vec2 x_at = at + fan::vec2(size.x - 20.f, 2.f);
+      gui::set_cursor_screen_pos(x_at);
+      if (gui::invisible_button("##chat_pending_remove" + std::to_string(i), fan::vec2(18.f, 18.f))) {
+        remove = i;
+      }
+      bool x_hovered = gui::is_item_hovered();
+      auto* list = gui::get_window_draw_list();
+      fan::vec2 c = x_at + fan::vec2(9.f, 9.f);
+      list->AddCircleFilled(c, 9.f, x_hovered ? 0xff4040d0u : 0xc0000000u);
+      list->AddLine(c - fan::vec2(3.5f, 3.5f), c + fan::vec2(3.5f, 3.5f), 0xffffffffu, 1.5f);
+      list->AddLine(c + fan::vec2(-3.5f, 3.5f), c + fan::vec2(3.5f, -3.5f), 0xffffffffu, 1.5f);
+      if (x_hovered) {
+        gui::set_tooltip("Don't send " + name);
+      }
+      gui::set_cursor_screen_pos(at + fan::vec2(size.x, 0));
+      gui::dummy(fan::vec2(0, size.y));
+    }
+    if (remove != (std::size_t)-1) {
+      chat_pending_files.erase(chat_pending_files.begin() + remove);
+    }
   }
 
   // the files on the clipboard: Explorer's copied files on Windows, file:// lines or paths elsewhere
@@ -1133,9 +1215,11 @@
       return;
     }
 
+    // dropped or attached files wait above the input for Enter or Send
     if (!chat_dropped_files.empty()) {
-      chat_send_files(channel_id, chat_dropped_files);
+      chat_pending_files.insert(chat_pending_files.end(), chat_dropped_files.begin(), chat_dropped_files.end());
       chat_dropped_files.clear();
+      chat_focus_input = true;
     }
 
     auto messages = ecps_backend.chat_of(channel_id);
@@ -1143,6 +1227,9 @@
     std::size_t input_lines = std::clamp<std::size_t>(1 + (std::size_t)std::count(chat_input.begin(), chat_input.end(), '\n'), 1, 6);
     f32_t input_box = input_lines * gui::get_text_line_height() + gui::get_style().FramePadding.y * 2;
     f32_t input_height = input_box + gui::get_style().ItemSpacing.y * 2;
+    if (!chat_pending_files.empty()) {
+      input_height += chat_pending_height + gui::get_style().ItemSpacing.y;
+    }
     fan::vec2 avail = gui::get_content_region_avail();
     chat_lines.clear();
     if (gui::begin_child("##chat_log", fan::vec2(0, std::max(avail.y - input_height, 80.f)), true)) {
@@ -1182,6 +1269,8 @@
     }
     gui::end_child();
 
+    render_chat_pending_files();
+
     // ---- the input: attach, text, send
     if (icon_button("##chat_attach", icon_e::send_file, "Send a file to everyone here", 0.f)) {
       fan::graphics::open_file("", [this, channel_id](std::string_view path) {
@@ -1210,25 +1299,26 @@
     bool enter = gui::input_text_multiline("##chat_input", &chat_input, fan::vec2(0, input_box), input_flags) && !shift;
     chat_input_active = gui::is_item_active();
     gui::pop_item_width();
-    if (gui::is_item_hovered() && chat_input.empty()) {
-      gui::set_tooltip("Enter sends, Shift+Enter starts a new line. ```code``` shows as code. Long text and pasted files go as files, pictures show here. Drag over messages to mark them, Ctrl+C or a right click copies");
-    }
-
+    // pasted files wait above the input, like dropped ones
     if (!pasted_files.empty()) {
       chat_input = before;
-      chat_send_files(channel_id, pasted_files);
+      chat_pending_files.insert(chat_pending_files.end(), pasted_files.begin(), pasted_files.end());
     }
-    // pasted text too long for a message goes as a file
+    // pasted text too long for a message waits as a file too
     else if (chat_input.size() > chat_inline_max) {
-      chat_send_text(channel_id, chat_input);
+      chat_pending_files.push_back(chat_text_to_file(chat_input));
       chat_input.clear();
     }
 
     gui::same_line();
     bool send = gui::button("Send##chat_send");
-    if ((enter || send) && !chat_input.empty()) {
+    if ((enter || send) && (!chat_input.empty() || !chat_pending_files.empty())) {
       chat_send_text(channel_id, chat_input);
       chat_input.clear();
+      if (!chat_pending_files.empty()) {
+        chat_send_files(channel_id, chat_pending_files);
+        chat_pending_files.clear();
+      }
       chat_focus_input = true;
     }
   }

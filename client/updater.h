@@ -10,9 +10,13 @@
 //    build, with the newest fan, by itself a second or so after it finishes, no reopening. The result is linked as
 //    ecps_update_result next to the settings, which keeps the build from being garbage collected.
 //    Progress is written to ecps_update.log
-//  - Windows only tells that a newer version exists
+//  - Windows: the newest GitHub release (prereleases too) is compared with ecps_version. Update downloads its
+//    .7z/.zip with the curl.exe and tar.exe Windows has, copies the client folder over the folder this exe is in
+//    (the user's own files like config.json are kept), and restarts. The running exe can't be overwritten, so it is
+//    renamed to *.update_old first and deleted on the next start
 
 #include <algorithm>
+#include <cstring>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -48,11 +52,12 @@ struct updater_t {
   // set by the UI: JSON of what the new process should pick up again (channels, tab, switches)
   std::function<std::string()> collect_state;
 
-  static constexpr bool can_install =
+  static constexpr bool can_install = true;
+  static constexpr bool windows =
 #if defined(_WIN32)
-    false;
-#else
     true;
+#else
+    false;
 #endif
 
   std::atomic<state_e> state{state_e::idle};
@@ -80,10 +85,10 @@ struct updater_t {
   std::string build_label() {
     std::string ecps = build_info("ecps");
     std::string fan = build_info("fan");
-    if (can_install && is_commit(ecps)) {
+    if (!windows && is_commit(ecps)) {
       return "ecps " + ecps.substr(0, 7) + (is_commit(fan) ? ", fan " + fan.substr(0, 7) : std::string());
     }
-    if (can_install) {
+    if (!windows) {
       // says what was actually found, so the reason is on screen
       if (build_info_path().empty()) {
         return "no build-info file, so this build isn't from the current Nix package. Version check only";
@@ -108,6 +113,9 @@ struct updater_t {
     if (!notice_loaded) {
       notice_loaded = true;
       std::error_code ec;
+#if defined(_WIN32)
+      cleanup_windows();
+#endif
       if (std::filesystem::exists(restarted_file, ec)) {
         std::ifstream in(restarted_file);
         std::string previous;
@@ -142,7 +150,7 @@ struct updater_t {
       std::string built_fan = build_info("fan");
       // a Nix package build has the file. One that doesn't know its commit (built from a local tree) can't say
       // whether it is behind, so it is offered the newest build: that one, made from GitHub, records its commit
-      if (can_install && !build_info_path().empty()) {
+      if (!windows && !build_info_path().empty()) {
         std::string latest_ecps = latest_commit("6413/ecps_gui");
         std::string latest_fan = latest_commit("6413/fan");
         std::lock_guard<std::mutex> lock(mutex);
@@ -169,6 +177,25 @@ struct updater_t {
         state = (ecps_changed || fan_changed) ? state_e::available : state_e::up_to_date;
         return;
       }
+#if defined(_WIN32)
+      if (windows) {
+        std::string body = run_capture(std::string("curl -fsSL --max-time 15 \"") + releases_url + "\"", 8 << 20);
+        std::string tag, url;
+        std::uint64_t size = 0;
+        bool found = parse_release(body, tag, url, size);
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!found) {
+          error_text = body.empty() ? "could not reach GitHub, is the network up?" : "no Windows download (.7z or .zip) in the newest GitHub release";
+          state = state_e::failed;
+          return;
+        }
+        latest_version = tag;
+        asset_url = url;
+        asset_size = size;
+        state = is_newer(tag, ecps_version) ? state_e::available : state_e::up_to_date;
+        return;
+      }
+#endif
       std::string body = run_capture(std::string("curl -fsSL --max-time 10 ") + version_url);
       std::string found = parse_version(body);
       std::lock_guard<std::mutex> lock(mutex);
@@ -191,7 +218,11 @@ struct updater_t {
     std::filesystem::remove(ready_file, ec);
     std::filesystem::remove(failed_file, ec);
     state = state_e::building;
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    phase = 1;
+    downloaded = 0;
+    std::thread([this] { install_windows(); }).detach();
+#else
     // --override-input makes the build use the newest fan, not the commit flake.nix pins, so a push to
     // fan alone is enough. --refresh stops nix from answering with a copy it fetched earlier
     std::string command =
@@ -209,7 +240,7 @@ struct updater_t {
 
   // GUI thread, every frame: cheap, looks at the two files once a second while a build runs
   void tick() {
-    if (state.load() != state_e::building) {
+    if (windows || state.load() != state_e::building) {
       return;
     }
     auto now = std::chrono::steady_clock::now();
@@ -278,10 +309,251 @@ struct updater_t {
     std::lock_guard<std::mutex> lock(mutex);
     error_text = "could not start the new version";
     state = state_e::build_failed;
+#else
+    std::filesystem::path exe = exe_path();
+    {
+      std::ofstream marker(restarted_file, std::ios::trunc);
+      marker << "v" << ecps_version << '\n';
+    }
+    if (collect_state) {
+      std::string state = collect_state();
+      if (!state.empty()) {
+        std::ofstream out(state_file, std::ios::trunc);
+        out << state;
+      }
+    }
+    std::wstring command = L"\"" + exe.wstring() + L"\"";
+    std::wstring dir = exe.parent_path().wstring();
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(exe.wstring().c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      log_capture().restore();
+      TerminateProcess(GetCurrentProcess(), 0);
+    }
+    std::error_code ec;
+    std::filesystem::remove(restarted_file, ec);
+    std::lock_guard<std::mutex> lock(mutex);
+    error_text = "the update is installed, but the new version did not start. Start it by hand";
+    state = state_e::build_failed;
 #endif
   }
 
+  // "Downloading 45%", "Installing" on Windows, empty elsewhere
+  std::string progress() {
+#if defined(_WIN32)
+    if (phase == 1) {
+      std::uint64_t total = asset_size;
+      std::uint64_t done = downloaded;
+      if (total) {
+        return "Downloading " + std::to_string((std::min<std::uint64_t>)(done * 100 / total, 100)) + "%";
+      }
+      return "Downloading " + std::to_string(done >> 20) + " MB";
+    }
+    if (phase == 2) {
+      return "Installing";
+    }
+#endif
+    return {};
+  }
+
 private:
+#if defined(_WIN32)
+  static constexpr const char* releases_url = "https://api.github.com/repos/6413/ecps_gui/releases?per_page=5";
+  // files the user changes, never overwritten by an update (copied only when missing)
+  static bool is_user_file(const std::filesystem::path& rel) {
+    static const char* names[] = {"config.json", "known_hosts", "fan_settings.json", "imgui.ini", "fan_log.txt"};
+    for (const char* n : names) {
+      if (rel == n) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  std::string asset_url;
+  std::atomic<std::uint64_t> asset_size{0};
+  std::atomic<std::uint64_t> downloaded{0};
+  std::atomic<int> phase{0};
+
+  static std::filesystem::path exe_path() {
+    std::wstring buffer(32768, L'\0');
+    DWORD n = GetModuleFileNameW(nullptr, buffer.data(), (DWORD)buffer.size());
+    buffer.resize(n);
+    return std::filesystem::path(buffer);
+  }
+
+  static std::wstring system_tool(const wchar_t* name) {
+    wchar_t dir[MAX_PATH];
+    UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+    return std::wstring(dir, n) + L"\\" + name;
+  }
+
+  // runs a program without a console window and waits; true when it exited with 0. on_wait runs every 200 ms
+  static bool run_hidden(const std::wstring& program, std::wstring arguments, const std::function<void()>& on_wait = {}) {
+    std::wstring command = L"\"" + program + L"\" " + arguments;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(program.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+      return false;
+    }
+    CloseHandle(pi.hThread);
+    while (WaitForSingleObject(pi.hProcess, 200) == WAIT_TIMEOUT) {
+      if (on_wait) {
+        on_wait();
+      }
+    }
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return code == 0;
+  }
+
+  // the newest release: its tag (without the "v") and its first .7z/.zip asset
+  static bool parse_release(const std::string& body, std::string& tag, std::string& url, std::uint64_t& size) {
+    auto value_at = [&](std::size_t key_end) -> std::string {
+      std::size_t colon = body.find(':', key_end);
+      if (colon == std::string::npos) {
+        return {};
+      }
+      std::size_t open = body.find('"', colon + 1);
+      std::size_t close = open == std::string::npos ? open : body.find('"', open + 1);
+      return close == std::string::npos ? std::string() : body.substr(open + 1, close - open - 1);
+    };
+    std::size_t at = body.find("\"tag_name\"");
+    if (at == std::string::npos) {
+      return false;
+    }
+    tag = value_at(at + 10);
+    if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V')) {
+      tag.erase(0, 1);
+    }
+    std::size_t end = body.find("\"tag_name\"", at + 10);
+    for (std::size_t u = body.find("\"browser_download_url\"", at); u != std::string::npos && u < end;
+      u = body.find("\"browser_download_url\"", u + 1)) {
+      std::string candidate = value_at(u + 22);
+      auto ends = [&](const char* ext) {
+        std::size_t n = std::strlen(ext);
+        return candidate.size() > n && candidate.compare(candidate.size() - n, n, ext) == 0;
+      };
+      if (!ends(".7z") && !ends(".zip")) {
+        continue;
+      }
+      url = candidate;
+      std::size_t s = body.rfind("\"size\":", u);
+      size = (s != std::string::npos && s > at) ? std::strtoull(body.c_str() + s + 7, nullptr, 10) : 0;
+      return !tag.empty();
+    }
+    return false;
+  }
+
+  void fail_install(const std::string& text) {
+    std::lock_guard<std::mutex> lock(mutex);
+    error_text = text;
+    phase = 0;
+    state = state_e::build_failed;
+  }
+
+  // background thread: download, unpack, copy over the exe's folder, then the GUI thread restarts
+  void install_windows() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path exe = exe_path();
+    fs::path dir = exe.parent_path();
+    fs::path work = dir / "ecps_update";
+    fs::remove_all(work, ec);
+    fs::create_directories(work / "unpacked", ec);
+    std::string url;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      url = asset_url;
+    }
+    fs::path archive = work / (url.size() > 3 && url.compare(url.size() - 3, 3, ".7z") == 0 ? "release.7z" : "release.zip");
+    bool ok = run_hidden(system_tool(L"curl.exe"),
+      L"-fsSL --max-time 1800 -o \"" + archive.wstring() + L"\" \"" + fs::path(url).wstring() + L"\"",
+      [&] { std::error_code e; auto n = fs::file_size(archive, e); if (!e) downloaded = n; });
+    if (!ok) {
+      fail_install("downloading the update failed");
+      return;
+    }
+    phase = 2;
+    if (!run_hidden(system_tool(L"tar.exe"), L"-xf \"" + archive.wstring() + L"\" -C \"" + (work / "unpacked").wstring() + L"\"")) {
+      fail_install("unpacking the update failed");
+      return;
+    }
+    // the client folder: the one with the client exe in it, a folder named "client" preferred
+    fs::path source, new_exe;
+    for (auto it = fs::recursive_directory_iterator(work / "unpacked", ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+      const fs::path& p = it->path();
+      std::string name = p.filename().string();
+      if (it->is_regular_file(ec) && p.extension() == ".exe" && name.rfind("ecps", 0) == 0) {
+        if (source.empty() || p.parent_path().filename() == "client") {
+          source = p.parent_path();
+          new_exe = p;
+        }
+      }
+    }
+    if (source.empty()) {
+      fail_install("the update has no ecps exe in it");
+      return;
+    }
+    // a file in use (this exe, a loaded dll) can't be overwritten but can be renamed
+    auto replace = [&](const fs::path& from, const fs::path& to) -> bool {
+      std::error_code e;
+      if (fs::copy_file(from, to, fs::copy_options::overwrite_existing, e)) {
+        return true;
+      }
+      fs::path old = to;
+      old += ".update_old";
+      for (int i = 1; fs::exists(old, e); ++i) {
+        old = to;
+        old += "." + std::to_string(i) + ".update_old";
+      }
+      e.clear();
+      fs::rename(to, old, e);
+      return !e && fs::copy_file(from, to, fs::copy_options::overwrite_existing, e);
+    };
+    for (auto it = fs::recursive_directory_iterator(source, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+      fs::path rel = fs::relative(it->path(), source, ec);
+      // the exe keeps the name it has now, so shortcuts to it keep working
+      fs::path target = it->path() == new_exe ? exe : dir / rel;
+      if (it->is_directory(ec)) {
+        fs::create_directories(target, ec);
+        continue;
+      }
+      if (is_user_file(rel) && fs::exists(target, ec)) {
+        continue;
+      }
+      if (!replace(it->path(), target)) {
+        fail_install("could not replace " + rel.string() + ", is it open somewhere?");
+        return;
+      }
+    }
+    fs::remove_all(work, ec);
+    std::lock_guard<std::mutex> lock(mutex);
+    phase = 0;
+    restart_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    state = state_e::ready;
+  }
+
+  // after an update: the renamed old files and the download
+  static void cleanup_windows() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path dir = exe_path().parent_path();
+    fs::remove_all(dir / "ecps_update", ec);
+    for (auto it = fs::recursive_directory_iterator(dir, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+      if (it->path().extension() == ".update_old") {
+        std::error_code e;
+        fs::remove(it->path(), e);
+      }
+    }
+  }
+#endif
+
   // the Nix package writes "ecps=<commit>" and "fan=<commit>" lines and points ECPS_BUILD_INFO at the file
   // The wrapper sets ECPS_BUILD_INFO, but the file is found without it too: next to the executable in the
   // Nix store (libexec/ecps -> share/ecps/build-info), or linked into the working directory by the wrapper
@@ -349,7 +621,7 @@ private:
     return is_commit(body) ? body : std::string();
   }
 
-  static std::string run_capture(const std::string& command) {
+  static std::string run_capture(const std::string& command, std::size_t limit = 1 << 16) {
     std::string output;
 #if defined(_WIN32)
     FILE* pipe = _popen(command.c_str(), "r");
@@ -361,7 +633,7 @@ private:
     }
     char buffer[512];
     std::size_t n;
-    while ((n = std::fread(buffer, 1, sizeof(buffer), pipe)) > 0 && output.size() < (1 << 16)) {
+    while ((n = std::fread(buffer, 1, sizeof(buffer), pipe)) > 0 && output.size() < limit) {
       output.append(buffer, n);
     }
 #if defined(_WIN32)
@@ -413,7 +685,7 @@ private:
   static bool is_newer(const std::string& candidate, const std::string& current) {
     auto a = numbers(candidate);
     auto b = numbers(current);
-    std::size_t length = std::max(a.size(), b.size());
+    std::size_t length = (std::max)(a.size(), b.size());
     a.resize(length);
     b.resize(length);
     return a > b;

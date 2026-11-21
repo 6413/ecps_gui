@@ -129,6 +129,11 @@ struct ecps_backend_t {
     uint16_t m_Sequence;
     uint16_t m_Possible;
     uint16_t m_ModuloSize;
+    // the frame being received is a keyframe (the sharer marks it in the first packet)
+    bool m_KeyFrame = false;
+    // when the decoder has no picture to build on (watching started, a frame was lost), frames are held back until a
+    // keyframe: a frame decoded without what it refers to comes out as blocks and smears. Since when it waits, 0 = not
+    uint64_t m_KeyFrameWaitSince = 0;
     uint64_t frame_start_time = 0;
     uint64_t last_valid_packet_time = 0;
 
@@ -271,6 +276,7 @@ struct ecps_backend_t {
     void SetNewSequence(uint16_t sequence) {
       m_Sequence = sequence;
       m_Possible = (uint16_t)-1;
+      m_KeyFrame = false;
       m_RecoveryRetries = 0;
       m_MissingPackets.clear();
       __builtin_memset(m_DataCheck.data(), 0, m_DataCheck.size());
@@ -376,6 +382,12 @@ struct ecps_backend_t {
   std::atomic<uint64_t> view_frames_assembled{0};
   std::atomic<uint64_t> view_frames_decoded{0};
   std::atomic<uint64_t> view_decode_failed{0};
+  // frames that arrived whole but found the decode queue full (this computer decodes too slowly)
+  std::atomic<uint64_t> view_queue_full{0};
+  // the decoder needs a keyframe before it can show anything: set when watching starts and when a frame is lost,
+  // cleared by the next keyframe. view_keyframe_waits counts the whole frames held back meanwhile
+  std::atomic<bool> view_need_keyframe{true};
+  std::atomic<uint64_t> view_keyframe_waits{0};
 
   fan::event::runv_t<bool> write_stream(
     uint16_t Current,
@@ -448,6 +460,14 @@ struct ecps_backend_t {
   }
 
   fan::event::runv_t<bool> connect(const std::string& ip, uint16_t port) {
+    // chat is kept by channel id, and every server numbers its channels from the start: another server's channel 2
+    // would show this one's messages. A reconnect to the same server keeps them (its history repeats them anyway)
+    if (ip != this->ip || port != this->port) {
+      std::lock_guard<std::mutex> lock(chat_mutex);
+      chat_messages.clear();
+      chat_channels.clear();
+      chat_revision.fetch_add(1);
+    }
     this->ip = ip;
     this->port = port;
 
@@ -587,6 +607,7 @@ struct ecps_backend_t {
             }
             auto head = (ScreenShare_StreamHeader_Head_t*)stream_data;
             view.m_Possible = head->GetPossible();
+            view.m_KeyFrame = (head->GetFlag() & ProtocolChannel::ScreenShare::StreamHeadFlag::KeyFrame) != 0;
             packet_data = &stream_data[sizeof(ScreenShare_StreamHeader_Head_t)];
           }
           else {
@@ -934,6 +955,7 @@ struct ecps_backend_t {
     ci.joined_at.start();
     ci.is_own = is_own_channel;
     channel_info.emplace_back(ci);
+    view_need_keyframe = true;
     co_await send_idr_request(channel_id);
     did_just_join = !is_own_channel;
   }

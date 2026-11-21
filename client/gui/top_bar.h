@@ -378,6 +378,9 @@
           if (gui::button("Update now")) {
             updater.start_update();
           }
+          if (updater_t::windows) {
+            text_wrapped_disabled("Downloads it from GitHub, replaces the files next to this exe and restarts. Your settings are kept");
+          }
         }
         else if (updater_t::installer() == "pacman") {
           text_wrapped_disabled("Update it the way it was installed: in the ecps_gui/arch folder run makepkg -si");
@@ -387,8 +390,13 @@
         }
         break;
       case state_e::building:
-        gui::text("Building the update...");
-        text_wrapped_disabled("This can take a while. Progress is in ecps_update.log");
+        if (updater_t::windows) {
+          gui::text(updater.progress() + "...");
+        }
+        else {
+          gui::text("Building the update...");
+          text_wrapped_disabled("This can take a while. Progress is in ecps_update.log");
+        }
         break;
       case state_e::ready:
         gui::text("Update " + updater.latest() + " is ready, restarting...");
@@ -430,27 +438,44 @@
     }
     bool first = true;
 
-    bool sending = ecps_backend.is_streaming_to_any_channel();
-    bool receiving = debug_sample.view_pps > 0.5f;
-    if (sending) {
-      std::string text = "Sending " + size_label(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) +
-        "  " + number_text(debug_sample.share_fps, 0) + " fps  " + number_text(debug_sample.share_kbps / 1000.0, 1) + " Mbit/s";
-      f32_t width = gui::calc_text_size(text).x + 16.f;
-      if (width <= room) {
-        gui::text(fan::color(0.3f, 0.6f, 1.f, 1.f), text);
-        room -= width;
-        first = false;
+    // short: an arrow, the frame rate and the bitrate. The picture size and the rest are in the tooltip
+    auto chip = [&](bool up, fan::color color, f32_t fps, f32_t kbps, const std::string& size) {
+      std::string text = number_text(fps, 0) + " fps  " + number_text(kbps / 1000.0, 1) + " Mb/s";
+      f32_t arrow = gui::get_font_size() * 0.55f;
+      f32_t width = arrow + 6.f + gui::calc_text_size(text).x;
+      if (width + (first ? 0.f : 14.f) > room) {
+        return;
       }
+      if (!first) {
+        gui::same_line(0, 14.f);
+      }
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      gui::dummy(fan::vec2(arrow + 6.f, gui::get_font_size()));
+      bool hovered = gui::is_item_hovered();
+      fan::vec2 c = at + fan::vec2(arrow * 0.5f, gui::get_font_size() * 0.5f);
+      f32_t h = arrow * 0.5f;
+      auto col = color.get_gui_color();
+      if (up) {
+        gui::get_window_draw_list()->AddTriangleFilled(c + fan::vec2(0, -h), c + fan::vec2(h, h * 0.7f), c + fan::vec2(-h, h * 0.7f), col);
+      }
+      else {
+        gui::get_window_draw_list()->AddTriangleFilled(c + fan::vec2(-h, -h * 0.7f), c + fan::vec2(h, -h * 0.7f), c + fan::vec2(0, h), col);
+      }
+      gui::same_line(0, 0);
+      gui::text(color, text);
+      if (hovered || gui::is_item_hovered()) {
+        gui::set_tooltip((up ? std::string("Sending ") : std::string("Receiving ")) + size + "  " + text);
+      }
+      room -= width + (first ? 0.f : 14.f);
+      first = false;
+    };
+    if (ecps_backend.is_streaming_to_any_channel()) {
+      chip(true, fan::color(0.3f, 0.6f, 1.f, 1.f), debug_sample.share_fps, debug_sample.share_kbps,
+        size_label(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height));
     }
-    if (receiving) {
-      std::string text = "Receiving " + size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) +
-        "  " + number_text(debug_sample.decoded_fps, 0) + " fps  " + number_text(debug_sample.view_kbps / 1000.0, 1) + " Mbit/s";
-      if (gui::calc_text_size(text).x + 16.f <= room) {
-        if (!first) {
-          gui::same_line(0, 16.f);
-        }
-        gui::text(fan::color(0.2f, 0.85f, 0.4f, 1.f), text);
-      }
+    if (debug_sample.view_pps > 0.5f) {
+      chip(false, fan::color(0.2f, 0.85f, 0.4f, 1.f), debug_sample.decoded_fps, debug_sample.view_kbps,
+        size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y));
     }
   }
 

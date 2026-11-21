@@ -163,6 +163,7 @@
     f32_t screen_fps = 0.f, screen_ms = 0.f;
     std::uint64_t sum_new_frames = 0, sum_wait_ns = 0;
     std::uint64_t frame_total = 0, frame_drop = 0, packet_total = 0, packet_drop = 0;
+    std::uint64_t keyframe_waits = 0, queue_full = 0, decode_failed = 0;
     // send_debug summed (or the most) since the last summary
     std::uint64_t queued = 0, sent = 0, flushed = 0, backlog_idrs = 0, lock_misses = 0, passes = 0, chunks = 0,
       cap_stops = 0, bucket_stops = 0, send_us = 0, max_send_us = 0, max_gap_us = 0, max_queue = 0;
@@ -226,6 +227,11 @@
     std::uint64_t frames_lost = stats.Frame_Drop - perf_log.frame_drop;
     std::uint64_t packets = stats.Packet_Total - perf_log.packet_total;
     std::uint64_t packets_lost = packet_drops_now - perf_log.packet_drop;
+    // of the lost frames, the ones this computer dropped (decode queue full, decode failed) rather than the network
+    auto delta = [](std::uint64_t now_value, std::uint64_t& last) { std::uint64_t d = now_value - last; last = now_value; return d; };
+    std::uint64_t keyframe_waits = delta(ecps_backend.view_keyframe_waits.load(), perf_log.keyframe_waits);
+    std::uint64_t queue_full = delta(ecps_backend.view_queue_full.load(), perf_log.queue_full);
+    std::uint64_t decode_failed = delta(ecps_backend.view_decode_failed.load(), perf_log.decode_failed);
     perf_log.frame_total = stats.Frame_Total;
     perf_log.frame_drop = stats.Frame_Drop;
     perf_log.packet_total = stats.Packet_Total;
@@ -235,7 +241,8 @@
 
     std::string encoder_name = rt->screen_encoder.encoder_.get_codec_name();
     auto& decoder = rt->screen_decoder.decoder_;
-    std::string decoder_name = decoder.using_hardware_ ? decoder.get_hardware_type_string() : std::string("CPU");
+    std::string decoder_name = (decoder.using_hardware_ ? decoder.get_hardware_type_string() : std::string("CPU")) +
+      (rt->screen_decoder.zero_copy_active() ? ", zero copy" : "");
     std::size_t queued = ecps_backend.share.m_NetworkFlow.FrameList.Usage();
 
     perf_collect_send(sharing);
@@ -305,9 +312,26 @@
           number_text(debug_sample.decoded_fps, 0) + " frames/s are decoded: the stream shows at the window's rate. Near the monitor's refresh rate that is the most it can show");
       }
       if (frames >= 5 && frame_loss > 5.f) {
+        std::uint64_t here = std::min(frames_lost, queue_full + decode_failed);
+        std::string why;
+        if (here * 2 >= frames_lost) {
+          why = "dropped on this computer: " + std::to_string(queue_full) + " found the decode queue full, " +
+            std::to_string(decode_failed) + " failed to decode";
+        }
+        else if (packets_lost == 0) {
+          why = "no packet went missing, the frames came too late (the sharer's upload or the server is slow)";
+        }
+        else {
+          why = "data is lost between the sharer, the server and here";
+        }
         perf_warn("frame_loss", "lost " + number_text(frame_loss, 0) + "% of frames in the last second (" + std::to_string(frames_lost) +
           " of " + std::to_string(frames) + "), " + number_text(packet_loss, 1) + "% of packets, ping " +
-          number_text(ecps_backend.ping_ms, 0) + " ms: data is lost between the sharer, the server and here");
+          number_text(ecps_backend.ping_ms, 0) + " ms: " + why);
+      }
+      // held back while waiting for a keyframe: normal for a moment after watching starts or a frame is lost
+      if (keyframe_waits >= 30) {
+        perf_warn("keyframe_wait", "waited for a keyframe for " + std::to_string(keyframe_waits) +
+          " frames in the last second: the sharer is slow to send one (an older version, or its upload is full)");
       }
     }
     else {
@@ -318,20 +342,33 @@
       perf_warn("ping", "ping to the server is " + number_text(ecps_backend.ping_ms, 0) + " ms");
     }
 
+    // the sums cover the time since the last summary, which is 30 s only when this ran every second: divided by
+    // that time, not by 30 (a window that drew rarely, or a pause in sharing, made 60 fps read as 91)
+    auto reset_sums = [&] {
+      perf_log.queued = perf_log.sent = perf_log.flushed = perf_log.backlog_idrs = perf_log.lock_misses = perf_log.passes = 0;
+      perf_log.chunks = perf_log.cap_stops = perf_log.bucket_stops = perf_log.send_us = 0;
+      perf_log.max_send_us = perf_log.max_gap_us = perf_log.max_queue = 0;
+      perf_log.sum_new_frames = perf_log.sum_wait_ns = 0;
+    };
+    if (!sharing && !watching) {
+      // nothing to report: the next summary starts from here, not with what piled up meanwhile
+      perf_log.summary_at = now;
+      reset_sums();
+    }
     if ((sharing || watching) && now - perf_log.summary_at >= std::chrono::seconds(30)) {
+      f64_t seconds = std::max(1.0, std::chrono::duration<f64_t>(now - perf_log.summary_at).count());
       perf_log.summary_at = now;
       if (sharing) {
         fan::print("perf: sending " + size_label(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " " +
           number_text(debug_sample.share_fps, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
           number_text(debug_sample.share_kbps / 1000.0, 1) + " Mbit/s, capture " + number_text(stage_times.capture.ms.load(), 1) +
           " ms, encode " + number_text(stage_times.encode.ms.load(), 1) + " ms (" + encoder_name + "), " +
-          std::to_string(queued) + " frames queued, the screen gave " + number_text(perf_log.sum_new_frames / 30.0, 1) +
+          std::to_string(queued) + " frames queued, the screen gave " + number_text(perf_log.sum_new_frames / seconds, 1) +
           " new frames/s, " + number_text(perf_log.sum_new_frames ? perf_log.sum_wait_ns / 1e6 / perf_log.sum_new_frames : 0.0, 1) +
           " ms each (waiting for the screen included)");
         // where the frames went: sent whole, thrown away for a keyframe, or lost before the queue. And how the network
         // loop kept up: packets per pass, passes stopped by the packet limit or the bitrate budget, the longest stall
         auto& p = perf_log;
-        f64_t seconds = 30.0;
         fan::print("perf: send path " + number_text(p.queued / seconds, 1) + " frames/s queued, " + number_text(p.sent / seconds, 1) +
           " sent, " + std::to_string(p.flushed) + " thrown away (" + std::to_string(p.backlog_idrs) + " keyframes for a long queue), " +
           std::to_string(p.lock_misses) + " lost to a locked queue, most waiting " + std::to_string(p.max_queue) + ". " +
@@ -340,10 +377,7 @@
           number_text(p.max_send_us / 1000.0, 1) + " ms), " + std::to_string(p.cap_stops) + " stopped at the packet limit, " +
           std::to_string(p.bucket_stops) + " at the bitrate budget, longest stall " + number_text(p.max_gap_us / 1000.0, 1) + " ms");
       }
-      perf_log.queued = perf_log.sent = perf_log.flushed = perf_log.backlog_idrs = perf_log.lock_misses = perf_log.passes = 0;
-      perf_log.chunks = perf_log.cap_stops = perf_log.bucket_stops = perf_log.send_us = 0;
-      perf_log.max_send_us = perf_log.max_gap_us = perf_log.max_queue = 0;
-      perf_log.sum_new_frames = perf_log.sum_wait_ns = 0;
+      reset_sums();
       if (watching) {
         // "fps" is what arrives whole. Lower than the sharer sends: lost on the way. Decoded lower than that: this computer
         fan::print("perf: receiving " + size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) + " " +
