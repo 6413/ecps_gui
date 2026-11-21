@@ -79,6 +79,7 @@ struct ecps_gui_t {
         top_bar_compact = ui.value("compact_bar", false);
         top_bar_stats_mode = std::clamp((int)ui.value("stats_mode", 1.0), 0, 1);
         ui_autohide = ui.value("autohide", false);
+        auto_update = ui.value("auto_update", false);
         preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
         hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
         preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
@@ -214,6 +215,7 @@ struct ecps_gui_t {
 
   void render() {
     update_voice_keys();
+    update_automatically();
     apply_video_choice_once();
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
     voice_chat.update(get_voice_settings());

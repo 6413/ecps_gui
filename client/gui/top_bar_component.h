@@ -132,6 +132,15 @@ struct top_bar_t {
       case state_e::build_failed: hint = "update failed"; hint_color = fan::color(1.f, 0.25f, 0.2f, 1.f); break;
       default: break;
     }
+    // while it updates, how far it is: "updating: Downloading 12.3 / 45.6 MB (27%)"
+    std::string update_progress;
+    if (updater.state.load() == state_e::building) {
+      update_progress = updater.progress();
+      if (!update_progress.empty()) {
+        update_progress = "updating: " + update_progress;
+        hint = update_progress.c_str();
+      }
+    }
     std::string update_notice = updater.update_notice();
     std::string notice = gui.username_notice_text();
     for (const auto& [text, color, opens_about] : {
@@ -268,7 +277,10 @@ struct top_bar_t {
         render_copy_update_error();
         break;
       case state_e::available:
-        gui::text_wrapped("Update available: " + updater.latest());
+        {
+          std::string size = updater.download_size();
+          gui::text_wrapped("Update available: " + updater.latest() + (size.empty() ? std::string() : " (" + size + ")"));
+        }
         if (updater_t::self_updates()) {
           if (gui::button("Update now")) {
             updater.start_update();
@@ -289,8 +301,9 @@ struct top_bar_t {
           gui::text(updater.progress() + "...");
         }
         else {
-          gui::text("Building the update...");
-          gui::text_wrapped_disabled("This can take a while. Progress is in ecps_update.log");
+          std::string progress = updater.progress();
+          gui::text(progress.empty() ? std::string("Building the update...") : progress);
+          gui::text_wrapped_disabled("This can take a while. What it does is in ecps_update.log");
         }
         break;
       case state_e::ready:
@@ -306,6 +319,15 @@ struct top_bar_t {
         }
         render_copy_update_error();
         break;
+    }
+    if (updater_t::self_updates()) {
+      gui::separator();
+      if (gui::checkbox("Update automatically", &gui.auto_update)) {
+        gui.save_ui_config();
+      }
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip("Installs a new version as soon as it is found and restarts into it. While you share your screen it waits until you stop");
+      }
     }
     gui::end_popup();
   }

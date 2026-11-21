@@ -45,6 +45,9 @@ struct updater_t {
   static constexpr const char* ready_file = "ecps_update.ready";
   static constexpr const char* failed_file = "ecps_update.failed";
   static constexpr const char* log_file = "ecps_update.log";
+  // what nix writes while it builds, as JSON lines: the sizes downloaded come from it, the readable lines of it go
+  // to log_file
+  static constexpr const char* nix_progress_file = "ecps_update.json";
   // written just before the restart, the new process reads it to say it was updated and from what
   static constexpr const char* restarted_file = "ecps_update.restarted";
   // where the session was before the update, written only when the restart comes from the Update button
@@ -221,6 +224,8 @@ struct updater_t {
 #if !defined(_WIN32)
     // the log is of this update only: appended to forever, the error of the newest build was lost among old ones
     std::filesystem::remove(log_file, ec);
+    std::filesystem::remove(nix_progress_file, ec);
+    nix_reset_progress();
 #endif
     state = state_e::building;
 #if defined(_WIN32)
@@ -232,8 +237,8 @@ struct updater_t {
     // fan alone is enough. --refresh stops nix from answering with a copy it fetched earlier
     std::string command =
       "nohup sh -c 'out=$(nix --extra-experimental-features \"nix-command flakes\" build --refresh --out-link ecps_update_result "
-      "--override-input fan github:6413/fan "
-      "--print-out-paths \"" + std::string(flake_ref) + "\" 2>>" + log_file + ") "
+      "--override-input fan github:6413/fan --log-format internal-json "
+      "--print-out-paths \"" + std::string(flake_ref) + "\" 2>>" + nix_progress_file + ") "
       "&& printf \"%s\" \"$out\" > " + ready_file + " || : > " + failed_file + "' >/dev/null 2>&1 &";
     if (std::system(command.c_str()) != 0) {
       std::lock_guard<std::mutex> lock(mutex);
@@ -284,6 +289,7 @@ struct updater_t {
     }
     last_poll = now;
     std::error_code ec;
+    nix_read_progress();
     if (std::filesystem::exists(failed_file, ec)) {
       std::lock_guard<std::mutex> lock(mutex);
       error_text = std::string("nix build failed, see ") + log_file;
@@ -376,25 +382,204 @@ struct updater_t {
 #endif
   }
 
-  // "Downloading 45%", "Installing" on Windows, empty elsewhere
+  // "12.3 MB"
+  static std::string size_text(std::uint64_t bytes) {
+    char buffer[32];
+    if (bytes < (1u << 20)) {
+      std::snprintf(buffer, sizeof(buffer), "%.0f KB", bytes / 1024.0);
+    }
+    else {
+      std::snprintf(buffer, sizeof(buffer), "%.1f MB", bytes / 1048576.0);
+    }
+    return buffer;
+  }
+  // how big the download of the update found is, empty when not known (the Nix one is known only once it runs)
+  std::string download_size() {
+#if defined(_WIN32)
+    if (asset_size) {
+      return size_text(asset_size);
+    }
+#endif
+    return {};
+  }
+
+  // "Downloading 12.3 / 45.6 MB (27%)", "Installing", on Nix also "Compiling 40%"; empty before it knows anything
   std::string progress() {
 #if defined(_WIN32)
     if (phase == 1) {
       std::uint64_t total = asset_size;
       std::uint64_t done = downloaded;
       if (total) {
-        return "Downloading " + std::to_string((std::min<std::uint64_t>)(done * 100 / total, 100)) + "%";
+        return "Downloading " + size_text(done) + " / " + size_text(total) + " (" +
+          std::to_string((std::min<std::uint64_t>)(done * 100 / total, 100)) + "%)";
       }
-      return "Downloading " + std::to_string(done >> 20) + " MB";
+      return "Downloading " + size_text(done);
     }
     if (phase == 2) {
       return "Installing";
     }
-#endif
     return {};
+#else
+    std::lock_guard<std::mutex> lock(nix_mutex);
+    return nix_progress_text;
+#endif
   }
 
 private:
+  // ---- reading nix's JSON log: each activity (a download, copying paths, a build) with how far it is
+  struct nix_activity_t {
+    int type = 0;
+    std::uint64_t done = 0;
+    std::uint64_t expected = 0;
+  };
+  std::unordered_map<std::uint64_t, nix_activity_t> nix_activities;
+  std::uint64_t nix_read_at = 0;
+  std::string nix_partial_line;
+  int nix_compile_percent = -1;
+  std::mutex nix_mutex;
+  std::string nix_progress_text;
+
+  void nix_reset_progress() {
+    nix_activities.clear();
+    nix_read_at = 0;
+    nix_partial_line.clear();
+    nix_compile_percent = -1;
+    std::lock_guard<std::mutex> lock(nix_mutex);
+    nix_progress_text.clear();
+  }
+
+  // the new lines of the JSON log: the activities' progress, and what a person would read appended to log_file
+  void nix_read_progress() {
+    std::ifstream in(nix_progress_file, std::ios::binary);
+    if (!in) {
+      return;
+    }
+    in.seekg(0, std::ios::end);
+    std::uint64_t size = (std::uint64_t)in.tellg();
+    if (size <= nix_read_at) {
+      return;
+    }
+    in.seekg((std::streamoff)nix_read_at);
+    std::string chunk((std::size_t)(size - nix_read_at), '\0');
+    in.read(chunk.data(), (std::streamsize)chunk.size());
+    nix_read_at = size;
+    std::string text = nix_partial_line + chunk;
+    std::size_t last_break = text.rfind('\n');
+    if (last_break == std::string::npos) {
+      nix_partial_line = text;
+      return;
+    }
+    nix_partial_line = text.substr(last_break + 1);
+    text.resize(last_break);
+
+    std::string readable;
+    std::size_t at = 0;
+    while (at <= text.size()) {
+      std::size_t end = text.find('\n', at);
+      if (end == std::string::npos) {
+        end = text.size();
+      }
+      std::string line = text.substr(at, end - at);
+      at = end + 1;
+      if (line.rfind("@nix ", 0) != 0) {
+        // not nix's own (a plain message): kept as it is
+        if (!line.empty()) {
+          readable += line + "\n";
+        }
+        continue;
+      }
+      fan::json j;
+      try {
+        j = fan::json::parse(line.substr(5));
+      }
+      catch (...) {
+        continue;
+      }
+      if (!j.is_object()) {
+        continue;
+      }
+      std::string action = j.value("action", std::string());
+      int level = j.value("level", 0);
+      if (action == "msg") {
+        if (level <= 3) {
+          readable += j.value("msg", std::string()) + "\n";
+        }
+      }
+      else if (action == "start") {
+        std::uint64_t id = j.value("id", (std::uint64_t)0);
+        nix_activities[id].type = j.value("type", 0);
+        std::string what = j.value("text", std::string());
+        if (!what.empty() && level <= 3) {
+          readable += what + "\n";
+        }
+      }
+      else if (action == "result") {
+        std::uint64_t id = j.value("id", (std::uint64_t)0);
+        int type = j.value("type", 0);
+        fan::json fields_copy = j.contains("fields") ? fan::json(j["fields"]) : fan::json();
+        const fan::json* fields = fields_copy.is_array() ? &fields_copy : nullptr;
+        // 105: progress [done, expected, running, failed]
+        if (type == 105 && fields && fields->size() >= 2 && (*fields)[0].is_number() && (*fields)[1].is_number()) {
+          auto& activity = nix_activities[id];
+          activity.done = (*fields)[0].get<std::uint64_t>();
+          activity.expected = (*fields)[1].get<std::uint64_t>();
+        }
+        // 101: a line the build printed. xmake's "[ 40%]: compiling ..." says how far the compile is
+        else if ((type == 101 || type == 107) && fields && !fields->empty() && (*fields)[0].is_string()) {
+          std::string out = (*fields)[0].get<std::string>();
+          readable += "> " + out + "\n";
+          std::size_t open = out.find('[');
+          std::size_t percent = out.find("%]");
+          if (open != std::string::npos && percent != std::string::npos && percent > open) {
+            try {
+              nix_compile_percent = std::clamp(std::stoi(out.substr(open + 1, percent - open - 1)), 0, 100);
+            }
+            catch (...) {}
+          }
+        }
+      }
+    }
+    if (!readable.empty()) {
+      std::ofstream log(log_file, std::ios::binary | std::ios::app);
+      log << readable;
+    }
+
+    // 101 a download, 103 copying store paths (a download from the cache, its size known at the start), 105 a build
+    std::uint64_t copy_done = 0, copy_expected = 0, fetch_done = 0, fetch_expected = 0;
+    bool building = false;
+    for (const auto& [id, activity] : nix_activities) {
+      if (activity.type == 103) {
+        copy_done += activity.done;
+        copy_expected += activity.expected;
+      }
+      else if (activity.type == 101) {
+        fetch_done += activity.done;
+        fetch_expected += std::max(activity.expected, activity.done);
+      }
+      else if (activity.type == 105) {
+        building = true;
+      }
+    }
+    std::uint64_t done = copy_expected ? copy_done : fetch_done;
+    std::uint64_t expected = copy_expected ? copy_expected : fetch_expected;
+    std::string progress;
+    if (expected && done < expected) {
+      progress = "Downloading " + size_text(done) + " / " + size_text(expected) + " (" +
+        std::to_string(done * 100 / expected) + "%)";
+    }
+    else if (building) {
+      progress = nix_compile_percent >= 0 ? "Compiling " + std::to_string(nix_compile_percent) + "%" : std::string("Compiling");
+      if (expected) {
+        progress += ", downloaded " + size_text(expected);
+      }
+    }
+    else if (expected) {
+      progress = "Downloaded " + size_text(expected);
+    }
+    std::lock_guard<std::mutex> lock(nix_mutex);
+    nix_progress_text = progress;
+  }
+
 #if defined(_WIN32)
   static constexpr const char* releases_url = "https://api.github.com/repos/6413/ecps_gui/releases?per_page=5";
   // files the user changes, never overwritten by an update (copied only when missing)
