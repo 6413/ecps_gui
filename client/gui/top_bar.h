@@ -9,6 +9,7 @@
     ui["preview_size"] = preview_fraction;
     ui["hdr_brightness"] = hdr_exposure;
     ui["preview_fps"] = preview_fps;
+    ui["stats_mode"] = top_bar_stats_mode;
     ui["encode_on_gpu"] = encode_on_gpu;
     ui["decode_on_gpu"] = decode_on_gpu;
     write_to_config("ui", ui);
@@ -330,6 +331,10 @@
         top_bar_compact = !top_bar_compact;
         save_ui_config();
       }
+      if (gui::selectable(top_bar_stats_mode ? "Stats: show only Mb/s" : "Stats: show picture size, fps and Mb/s")) {
+        top_bar_stats_mode = top_bar_stats_mode ? 0 : 1;
+        save_ui_config();
+      }
       gui::end_popup();
     }
   }
@@ -438,9 +443,12 @@
     }
     bool first = true;
 
-    // short: an arrow, the frame rate and the bitrate. The picture size and the rest are in the tooltip
+    // short: an arrow, and either the bitrate alone or the picture size, the frame rate and the bitrate. Clicking
+    // switches between the two. The tooltip always has all of it
     auto chip = [&](bool up, fan::color color, f32_t fps, f32_t kbps, const std::string& size) {
-      std::string text = number_text(fps, 0) + " fps  " + number_text(kbps / 1000.0, 1) + " Mb/s";
+      std::string bitrate = number_text(kbps / 1000.0, 1) + " Mb/s";
+      std::string details = (size.empty() ? std::string() : size + "  ") + number_text(fps, 0) + " fps  " + bitrate;
+      std::string text = top_bar_stats_mode ? details : bitrate;
       f32_t arrow = gui::get_font_size() * 0.55f;
       f32_t width = arrow + 6.f + gui::calc_text_size(text).x;
       if (width + (first ? 0.f : 14.f) > room) {
@@ -450,7 +458,7 @@
         gui::same_line(0, 14.f);
       }
       fan::vec2 at = gui::get_cursor_screen_pos();
-      gui::dummy(fan::vec2(arrow + 6.f, gui::get_font_size()));
+      bool clicked = gui::invisible_button(up ? "##stats_out" : "##stats_in", fan::vec2(width, gui::get_font_size()));
       bool hovered = gui::is_item_hovered();
       fan::vec2 c = at + fan::vec2(arrow * 0.5f, gui::get_font_size() * 0.5f);
       f32_t h = arrow * 0.5f;
@@ -461,10 +469,14 @@
       else {
         gui::get_window_draw_list()->AddTriangleFilled(c + fan::vec2(-h, -h * 0.7f), c + fan::vec2(h, -h * 0.7f), c + fan::vec2(0, h), col);
       }
-      gui::same_line(0, 0);
-      gui::text(color, text);
-      if (hovered || gui::is_item_hovered()) {
-        gui::set_tooltip((up ? std::string("Sending ") : std::string("Receiving ")) + size + "  " + text);
+      gui::get_window_draw_list()->AddText(at + fan::vec2(arrow + 6.f, 0.f), col, text.c_str());
+      if (clicked) {
+        top_bar_stats_mode = top_bar_stats_mode ? 0 : 1;
+        save_ui_config();
+      }
+      if (hovered) {
+        gui::set_tooltip((up ? std::string("Sending ") : std::string("Receiving ")) + details +
+          (top_bar_stats_mode ? "\nClick to show only Mb/s" : "\nClick to show the picture size and frame rate"));
       }
       room -= width + (first ? 0.f : 14.f);
       first = false;

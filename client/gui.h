@@ -68,6 +68,7 @@ struct ecps_gui_t {
       if (config.contains("ui") && config["ui"].is_object()) {
         fan::json ui = config["ui"];
         top_bar_compact = ui.value("compact_bar", false);
+        top_bar_stats_mode = std::clamp((int)ui.value("stats_mode", 1.0), 0, 1);
         ui_autohide = ui.value("autohide", false);
         preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
         hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
@@ -286,6 +287,8 @@ struct ecps_gui_t {
   f32_t top_overlay_alpha = 1.f;
   std::chrono::steady_clock::time_point top_overlay_visible_until;
   bool top_bar_compact = false;
+  // what the chips show: 0 only the bitrate, 1 the picture size, the frame rate and the bitrate
+  int top_bar_stats_mode = 1;
   bool about_popup_requested = false;
   f32_t toolbar_alpha = 1.f;
   std::chrono::steady_clock::time_point toolbar_visible_until;
