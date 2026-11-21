@@ -4,6 +4,9 @@
   gccForLibs,
   overrideCC,
   stdenv,
+  stdenvNoCC,
+  fetchurl,
+  _7zz,
   cmake,
   xmake,
   pkg-config,
@@ -80,6 +83,21 @@ let
   vulkanHeaders = vulkan-headers.overrideAttrs {
     version = "1.4.335.0";
     src = vulkanHeadersSrc;
+  };
+
+  # the piano recordings, kept out of the source archive (.gitattributes export-ignore): fetched once with
+  # a fixed hash and kept in the store, so an update doesn't download them again. Keep the v1.0.5 release
+  # (or move this to a newer one) as long as this points at it
+  piano = stdenvNoCC.mkDerivation {
+    pname = "ecps-piano";
+    version = "1";
+    src = fetchurl {
+      url = "https://github.com/6413/ecps_gui/releases/download/v1.0.5/ecps_piano.7z";
+      hash = "sha256-Pr8wA3JUO7UZkCQAbNOFs5MGuyDnETUezDeBQ0R2k0E=";
+    };
+    nativeBuildInputs = [ _7zz ];
+    unpackPhase = "7zz x $src";
+    installPhase = ''cp -r "audio/steinway keys" $out'';
   };
 
   assetDirs = [ "shaders" "fonts" "icons" "images" "audio" "effects" ];
@@ -184,7 +202,7 @@ clangStdenv.mkDerivation {
     done
     cp ecps_gui/client/webrtc.html $share/
     # the piano the host plays a viewer's MIDI keyboard with, found through ECPS_PIANO_DIR below
-    cp -r "ecps_gui/assets/steinway keys" $share/steinway-keys
+    ln -s ${piano} $share/steinway-keys
     # which commits this build is from, the in-app update check compares them with the latest on GitHub
     printf 'ecps=%s\nfan=%s\n' "${ecpsRev}" "${fanRev}" > $share/build-info
     install -Dm644 fan/icons/ecps_logo.png $out/share/icons/hicolor/256x256/apps/ecps.png
