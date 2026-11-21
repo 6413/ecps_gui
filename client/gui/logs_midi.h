@@ -37,7 +37,7 @@
       remote_logs.allow = allow;
       save_server_logs(allow);
     }
-    text_wrapped_disabled("They see everything this program prints. It passes through the server.");
+    gui::text_wrapped_disabled("They see everything this program prints. It passes through the server.");
     gui::separator();
 
     gui::text("This computer");
@@ -78,7 +78,7 @@
       }
     }
     if (!any_peer) {
-      text_wrapped_disabled("Nobody else in this channel");
+      gui::text_wrapped_disabled("Nobody else in this channel");
     }
 
     const char* status = "";
@@ -106,7 +106,7 @@
     if (gui::button("Clear")) {
       remote_logs.clear_lines();
     }
-    text_wrapped_disabled("Click a line to copy it");
+    gui::text_wrapped_disabled("Click a line to copy it");
 
     // the whole history stays in memory, only the rows on screen are drawn
     std::uint64_t revision = remote_logs.current_revision();
@@ -166,12 +166,6 @@
     });
   }
 
-  static void section_title(const char* title) {
-    gui::spacing();
-    gui::text(fan::color(0.6f, 0.8f, 1.f, 1.f), title);
-    gui::separator();
-  }
-
   void render_midi_tab() {
     // the keyboards are listed and opened on a worker thread, a busy driver must not stop the window
     auto now = std::chrono::steady_clock::now();
@@ -180,55 +174,55 @@
       midi_io.request_scan();
     }
 
-    section_title("This computer");
+    gui::simple_section("This computer");
     auto devices = midi_io.devices();
     if (!midi_io.has_scanned()) {
-      text_wrapped_disabled("Looking for MIDI keyboards...");
+      gui::text_wrapped_disabled("Looking for MIDI keyboards...");
     }
     else if (devices.empty()) {
-      text_wrapped_disabled("No MIDI keyboard found on this computer");
+      gui::text_wrapped_disabled("No MIDI keyboard found on this computer");
     }
     for (const auto& name : devices) {
       gui::text_wrapped(name);
     }
     if (midi_to_host.load() || midi_to_viewers.load()) {
-      text_wrapped_disabled(midi_io.is_open() ? "Keyboard connected" : midi_io.is_busy() ? "Connecting to the keyboard..." : "Keyboard not connected");
+      gui::text_wrapped_disabled(midi_io.is_open() ? "Keyboard connected" : midi_io.is_busy() ? "Connecting to the keyboard..." : "Keyboard not connected");
     }
     else {
-      text_wrapped_disabled("The keyboard is opened when you send");
+      gui::text_wrapped_disabled("The keyboard is opened when you send");
     }
 
-    section_title("Hear MIDI on this computer");
+    gui::simple_section("Hear MIDI on this computer");
     gui::checkbox("Play MIDI from the host", &play_host_midi);
     if (gui::checkbox("Let viewers play MIDI here", &allow_midi)) {
       sent_channel_flags.clear();
     }
-    text_wrapped_disabled("Other users' keyboards play through this computer's speakers. No stream needed.");
+    gui::text_wrapped_disabled("Other users' keyboards play through this computer's speakers. No stream needed.");
     if (gui::slider("Volume", &midi_volume, 0.f, 2.f, gui::slider_flags_always_clamp)) {
       midi_host.player.set_volume(midi_volume);
     }
 
-    section_title("Send my keyboard");
+    gui::simple_section("Send my keyboard");
     gui::checkbox("To the host", &send_midi);
     if (send_midi) {
       if (!is_in_other_channel()) {
-        text_wrapped_disabled("Join another user's channel first");
+        gui::text_wrapped_disabled("Join another user's channel first");
       }
       else if (!can_midi_host()) {
-        text_wrapped_disabled("Waiting for the host to tick \"Let viewers play MIDI here\"");
+        gui::text_wrapped_disabled("Waiting for the host to tick \"Let viewers play MIDI here\"");
       }
       else {
-        text_wrapped_disabled("Sending to the host");
+        gui::text_wrapped_disabled("Sending to the host");
       }
     }
     gui::checkbox("To everyone in my channel", &send_midi_viewers);
     if (send_midi_viewers) {
-      text_wrapped_disabled(ecps_backend.is_hosting_any_channel()
+      gui::text_wrapped_disabled(ecps_backend.is_hosting_any_channel()
         ? "Sending to the viewers in your channel"
         : "You don't have a channel of your own yet");
     }
 
-    section_title("Piano");
+    gui::simple_section("Piano");
     gui::checkbox("Show piano", &show_midi_piano);
     if (show_midi_piano) {
       render_midi_piano();

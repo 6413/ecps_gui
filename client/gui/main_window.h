@@ -38,11 +38,11 @@
           updater.tick();
           updater.tick_restart();
           render_stream_view_content();
-          This->render_about_popup();
+          This->top_bar.render_about_popup();
           This->render_password_popup();
         }
         else {
-        This->render_top_bar();
+        This->top_bar.render_top_bar();
 
         static bool first_open = true;
         if (first_open && p_open) {
@@ -75,7 +75,7 @@
       }
       gui::end();
       if (This->ui_autohide && current_tab == 1) {
-        This->render_autohide_bar(window_pos, window_size);
+        This->top_bar.render_autohide_bar(window_pos, window_size);
       }
       This->pop_theme();
     }
@@ -311,7 +311,7 @@
         gui::same_line(0, splitter_spacing);
 
         static bool is_resizing_channels = false;
-        splitter_renderer_t::render_vertical_splitter("##channel_splitter_hitbox", avail_size.y,
+        gui::render_vertical_splitter("##channel_splitter_hitbox", avail_size.y,
           unclamped_details_width, channel_details_width, min_details_width, max_details_width, is_resizing_channels);
 
         gui::same_line(0, splitter_spacing);
@@ -413,11 +413,11 @@
                     }
                     if (session.is_host) {
                       gui::same_line(0, 10.f);
-                      badge("host", 0x50ff5919u, 0xffffa070u);
+                      gui::badge("host", 0x50ff5919u, 0xffffa070u);
                     }
                     if (is_sharing) {
                       gui::same_line(0, 8.f);
-                      badge("live", 0x600a0affu, 0xff6a6affu);
+                      gui::badge("live", 0x600a0affu, 0xff6a6affu);
                     }
                     if (std::find(in_voice.begin(), in_voice.end(), (std::uint32_t)session.session_id.i) != in_voice.end()) {
                       std::uint32_t speaker = (std::uint32_t)session.session_id.i;
@@ -427,7 +427,7 @@
                       f32_t dt = std::min(gui::get_io().DeltaTime, 0.1f);
                       shown = target > shown ? shown + (target - shown) * std::min(dt * 30.f, 1.f) : std::max(target, shown - dt * 2.5f);
                       gui::same_line(0, 8.f);
-                      level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
+                      gui::level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
                     }
                     gui::same_line(0, 10.f);
                     gui::text(fan::color(0.3f, 0.3f, 0.34f, 1.f), "#" + std::to_string(session.session_id.i));
@@ -463,7 +463,7 @@
               gui::spacing();
               if (is_host_of_selected && gui::begin_child("HostControls", fan::vec2(0, 0), 0)) {
                 gui::text(ecps_backend.is_streaming_to_any_channel() ? "You are sharing your screen" : "Your screen is not shared");
-                text_wrapped_disabled("Use \"Share screen\" at the top. Others join this channel to watch you.");
+                gui::text_wrapped_disabled("Use \"Share screen\" at the top. Others join this channel to watch you.");
                 if (gui::checkbox("Preview own stream", &This->show_own_stream)) {
                   if (auto rt = get_render_thread(); rt) {
                     if (This->show_own_stream) {
@@ -476,7 +476,7 @@
                 }
                 if (!This->show_own_stream && ecps_backend.is_streaming_to_any_channel()) {
                   // the server doesn't send a share back to its host, without this sharing looks broken
-                  text_wrapped_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
+                  gui::text_wrapped_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
                 }
                 This->render_share_audio_checkbox();
                 This->render_channel_password_controls(This->selected_channel_id);
@@ -541,13 +541,13 @@
       auto* rt = get_render_thread();
 
       // ---- what you share
-      settings_section("SHARING");
+      gui::settings_section("SHARING");
       This->render_capture_source();
       This->render_camera_source();
       if (streaming && rt) {
         This->resolution_controls.render_resolution_controls();
 
-        settings_row("Framerate", [&] {
+        gui::settings_row("Framerate", [&] {
           gui::slider("##framerate_compact", &This->stream_settings.framerate, 3.f, 144.f);
           if (gui::is_item_deactivated_after_edit()) {
             rt->screen_encoder.config_.frame_rate = This->stream_settings.framerate;
@@ -556,14 +556,14 @@
           }
         });
 
-        settings_row("Bitrate", [&] {
+        gui::settings_row("Bitrate", [&] {
           const char* bitrate_modes[] = { "Automatic", "Manual" };
           if (gui::combo("##bitrate_mode", &This->stream_settings.bitrate_mode, bitrate_modes, 2)) {
             This->stream_settings.use_adaptive_bitrate = This->stream_settings.bitrate_mode == 0;
           }
         });
         if (This->stream_settings.bitrate_mode == 1) {
-          settings_row("Mbit/s", [&] {
+          gui::settings_row("Mbit/s", [&] {
             if (gui::slider("##bitrate_compact", &This->stream_settings.bitrate_mbps, 0.5f, 50.0f, gui::slider_flags_always_clamp)) {
               rt->screen_encoder.config_.bitrate = This->stream_settings.bitrate_mbps * 1000000;
               std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
@@ -573,7 +573,7 @@
         }
 
         bool remote_control = This->stream_settings.input_control != 0;
-        if (settings_switch("Remote control", &remote_control,
+        if (gui::settings_switch("Remote control", &remote_control,
           "Viewers can use your mouse and keyboard")) {
           This->stream_settings.input_control = remote_control ? 1 : 0;
           This->send_input_control_flag();
@@ -582,12 +582,12 @@
         This->render_share_audio_checkbox();
       }
       else if (!streaming) {
-        text_wrapped_disabled("Quality, audio and remote control show here while you share.");
+        gui::text_wrapped_disabled("Quality, audio and remote control show here while you share.");
       }
 
       // ---- what you watch
       if (viewing) {
-        settings_section("WATCHING");
+        gui::settings_section("WATCHING");
         This->render_play_audio_controls();
       }
 
@@ -595,8 +595,8 @@
       This->render_video_choice();
 
       // ---- how it shows
-      settings_section("DISPLAY");
-      settings_switch("Stats over the picture", &This->show_stream_stats,
+      gui::settings_section("DISPLAY");
+      gui::settings_switch("Stats over the picture", &This->show_stream_stats,
         "Drag the box to move it");
 
       // ---- the details, folded away
@@ -622,7 +622,7 @@
           }
         }
         else if (!viewing) {
-          text_wrapped_disabled("Encoder and decoder settings show while you share or watch.");
+          gui::text_wrapped_disabled("Encoder and decoder settings show while you share or watch.");
         }
       }
       if (settings_fold("Network", &network_open)) {
@@ -649,7 +649,7 @@
         return names;
       }();
 
-      settings_row("Encoder", [&] {
+      gui::settings_row("Encoder", [&] {
         if (!gui::combo("##encoder_compact", &This->stream_settings.selected_encoder, encoder_options.data(), encoder_options.size())) {
           return;
         }
@@ -676,7 +676,7 @@
         }
         return options;
       }();
-      settings_row("Scaling", [&] {
+      gui::settings_row("Scaling", [&] {
         if (gui::combo("##scaling_quality", &This->stream_settings.selected_scaling_quality, quality_options.data(), quality_options.size())) {
           rt->screen_encoder.update_scaling_quality(static_cast<codec_config_t::scaling_quality_e>(This->stream_settings.selected_scaling_quality));
         }
@@ -719,7 +719,7 @@
         return names;
       }();
 
-      settings_row("Decoder", [&] {
+      gui::settings_row("Decoder", [&] {
         if (!gui::combo("##decoder_compact", &This->stream_settings.selected_decoder, decoder_options.data(), decoder_options.size())) {
           return;
         }
@@ -890,7 +890,7 @@
           This->render_stream_empty_hint(stream_area);
         }
         else {
-          fan::vec2 half = stream_area_calculator_t::calculate_fitted_size(stream_area, rt->screen_decoder.decoded_size) *
+          fan::vec2 half = gui::fit_size(stream_area, rt->screen_decoder.decoded_size) *
             This->network_frame_helper.zoom;
           fan::vec2 center = gui::get_window_pos() + stream_area * 0.5f + This->network_frame_helper.offset;
           This->picture_min = center - half;
@@ -900,7 +900,7 @@
 #if ecps_debug_prints >= 3
         static int debug_counter = 0;
         if (++debug_counter % 300 == 1) {
-          fan::vec2 fitted_size = stream_area_calculator_t::calculate_fitted_size(stream_area, rt->screen_decoder.decoded_size);
+          fan::vec2 fitted_size = gui::fit_size(stream_area, rt->screen_decoder.decoded_size);
           f32_t frame_aspect = 16.0f / 9.0f;
           if (rt->screen_decoder.decoded_size.x > 0 && rt->screen_decoder.decoded_size.y > 0) {
             frame_aspect = static_cast<f32_t>(rt->screen_decoder.decoded_size.x) / static_cast<f32_t>(rt->screen_decoder.decoded_size.y);

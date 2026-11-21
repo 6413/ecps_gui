@@ -404,7 +404,7 @@
       return;
     }
     if (found->state == state_e::transferring) {
-      text_wrapped_disabled("Receiving  " + file_progress_text(*found));
+      gui::text_wrapped_disabled("Receiving  " + file_progress_text(*found));
     }
     else if (found->state == state_e::done) {
       chat_remember_file(name, found->path);
@@ -417,7 +417,7 @@
       }
     }
     else if (ecps_backend_t::file_state_finished(found->state)) {
-      text_wrapped_disabled(found->status);
+      gui::text_wrapped_disabled(found->status);
     }
   }
 
@@ -648,7 +648,7 @@
       }
     }
     if (!waiting.empty()) {
-      text_wrapped_disabled(waiting);
+      gui::text_wrapped_disabled(waiting);
       return true;
     }
     auto& picture = chat_picture_for(path);
@@ -656,7 +656,7 @@
       return false;
     }
     if (!picture.ready) {
-      text_wrapped_disabled("Loading " + name + "...");
+      gui::text_wrapped_disabled("Loading " + name + "...");
       return true;
     }
     std::string id = std::to_string(message_id);
@@ -680,7 +680,7 @@
       chat_save_copy(path);
     }
     gui::same_line();
-    text_wrapped_disabled(name + "  " + text.substr(paren + 2, text.size() - paren - 3));
+    gui::text_wrapped_disabled(name + "  " + text.substr(paren + 2, text.size() - paren - 3));
     return true;
   }
 
@@ -927,7 +927,7 @@
     bool chat = panels.size() == 2 ? side_panel_chat : panels[0];
     if (chat) {
       if (ecps_backend.channel_info.empty()) {
-        text_wrapped_disabled("Join a channel to chat");
+        gui::text_wrapped_disabled("Join a channel to chat");
       }
       else {
         render_chat_tab(selected_channel_id);
@@ -1211,7 +1211,7 @@
   void render_chat_tab(ecps_backend_t::Protocol_ChannelID_t channel_id) {
     chat_tab_seen_at = std::chrono::steady_clock::now();
     if (!ecps_backend.chat_known(channel_id)) {
-      text_wrapped_disabled("Connecting to the chat... If this stays, the server is too old for chat and needs updating.");
+      gui::text_wrapped_disabled("Connecting to the chat... If this stays, the server is too old for chat and needs updating.");
       return;
     }
 
@@ -1234,7 +1234,7 @@
     chat_lines.clear();
     if (gui::begin_child("##chat_log", fan::vec2(0, std::max(avail.y - input_height, 80.f)), true)) {
       if (messages.empty()) {
-        text_wrapped_disabled("No messages yet. Text, pasted text and files go to everyone in this channel.");
+        gui::text_wrapped_disabled("No messages yet. Text, pasted text and files go to everyone in this channel.");
       }
       std::uint32_t last_from = (std::uint32_t)-1;
       std::int64_t last_time = 0;
@@ -1248,7 +1248,7 @@
           gui::text(mine ? fan::color(0.55f, 0.8f, 1.f, 1.f) : fan::color(0.95f, 0.8f, 0.45f, 1.f), message.name);
           fan::vec2 name_min = gui::get_item_rect_min();
           gui::same_line();
-          text_wrapped_disabled(chat_time_label(message.time));
+          gui::text_wrapped_disabled(chat_time_label(message.time));
           chat_add_line(message.name + "  " + chat_time_label(message.time), "\n", true, name_min, gui::get_item_rect_max());
         }
         last_from = message.from;

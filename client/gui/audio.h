@@ -4,7 +4,7 @@
     if (!fan::audio::loopback_capture_t::is_supported()) {
       return;
     }
-    if (settings_switch("Share audio", &stream_settings.share_audio, "Send your computer's sound")) {
+    if (gui::settings_switch("Share audio", &stream_settings.share_audio, "Send your computer's sound")) {
       save_audio_settings();
     }
     if (!stream_settings.share_audio) {
@@ -21,7 +21,7 @@
     }
 
     bool combo_open = false;
-    settings_row("Device", [&] {
+    gui::settings_row("Device", [&] {
     combo_open = gui::begin_combo("##audio_device", preview);
     if (combo_open) {
       // re-list on open so newly plugged devices show up
@@ -44,21 +44,21 @@
     auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
     bool can_exclude = fan::audio::loopback_capture_t::can_exclude_processes();
     bool exclude = can_exclude && settings.exclude_discord;
-    if (can_exclude && settings_switch("Leave out Discord", &exclude,
+    if (can_exclude && gui::settings_switch("Leave out Discord", &exclude,
       "Every app except Discord, so calls stay private")) {
       settings.exclude_discord = exclude;
       save_audio_settings();
     }
     if (exclude && !find_sonar_gaming().empty()) {
-      text_wrapped_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
+      gui::text_wrapped_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
     }
     else if (exclude && audio_share.capture.is_running()) {
-      text_wrapped_disabled(audio_share.capture.get_excluded_pid()
+      gui::text_wrapped_disabled(audio_share.capture.get_excluded_pid()
         ? "Recording all apps except Discord"
         : audio_share.exclude_failed ? "Could not exclude Discord, recording the device" : "Discord is not running");
     }
 
-    settings_row("Level", [&] {
+    gui::settings_row("Level", [&] {
       gui::slider("##audio_gain", &settings.gain, 0.f, 2.f, gui::slider_flags_always_clamp);
       if (gui::is_item_deactivated_after_edit()) {
         save_audio_settings();
@@ -108,11 +108,11 @@
   std::chrono::steady_clock::time_point loopback_devices_listed;
 
   void render_play_audio_controls() {
-    if (settings_switch("Play audio", &stream_settings.play_audio, "Play the stream's sound")) {
+    if (gui::settings_switch("Play audio", &stream_settings.play_audio, "Play the stream's sound")) {
       save_audio_settings();
     }
     if (stream_settings.play_audio) {
-      settings_row("Volume", [&] {
+      gui::settings_row("Volume", [&] {
         gui::slider("##audio_volume", &stream_settings.audio_volume, 0.f, 2.f, gui::slider_flags_always_clamp);
         if (gui::is_item_deactivated_after_edit()) {
           save_audio_settings();
@@ -126,7 +126,7 @@
       return false;
     }
     bool in_voice = voice_chat.is_wanted(channel_id);
-    if (settings_switch("Voice chat", &in_voice, "Talk with the others in this channel. Your microphone stays off until you join")) {
+    if (gui::settings_switch("Voice chat", &in_voice, "Talk with the others in this channel. Your microphone stays off until you join")) {
       if (in_voice) {
         voice_chat.join(channel_id);
       }
@@ -137,12 +137,12 @@
     }
     if (in_voice) {
       bool muted = voice_chat.muted.load();
-      if (settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
+      if (gui::settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
         voice_chat.muted.store(muted);
         save_server_voice(true);
       }
       bool deafened = voice_chat.deafened.load();
-      if (settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
+      if (gui::settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
         voice_chat.deafened.store(deafened);
         save_server_voice(true);
       }
@@ -162,7 +162,7 @@
     }
     gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
     gui::push_style_var(gui::style_var_frame_rounding, 5.f);
-    settings_section("VOICE SETTINGS");
+    gui::settings_section("VOICE SETTINGS");
     render_voice_settings();
     gui::pop_style_var(2);
     gui::dummy(fan::vec2(0, 6.f));
@@ -170,25 +170,25 @@
 
   void render_voice_settings() {
     if (!voice_chat.is_active()) {
-      text_wrapped_disabled("Join the voice chat of this channel to try these");
+      gui::text_wrapped_disabled("Join the voice chat of this channel to try these");
     }
     bool echo_cancel = stream_settings.voice_echo_cancel;
-    if (settings_switch("Echo cancellation", &echo_cancel,
+    if (gui::settings_switch("Echo cancellation", &echo_cancel,
       "For speakers: keeps the others from hearing themselves back through your microphone. Not needed with headphones, and adds a little delay")) {
       stream_settings.voice_echo_cancel = echo_cancel;
       save_voice_settings();
     }
     bool noise_suppress = stream_settings.voice_noise_suppress;
-    if (settings_switch("Noise suppression", &noise_suppress,
+    if (gui::settings_switch("Noise suppression", &noise_suppress,
       "Removes steady background noise from your microphone: fans, hiss, hum. Your voice is left as it is")) {
       stream_settings.voice_noise_suppress = noise_suppress;
       save_voice_settings();
     }
     if (voice_chat.capture_failed) {
-      text_wrapped_disabled("Could not open the microphone");
+      gui::text_wrapped_disabled("Could not open the microphone");
     }
     if (voice_chat.mixer_failed) {
-      text_wrapped_disabled("Could not open the speakers");
+      gui::text_wrapped_disabled("Could not open the speakers");
     }
 
     if (voice_inputs.empty()) {
@@ -204,7 +204,7 @@
         }
       }
       bool open = false;
-      settings_row(label, [&] {
+      gui::settings_row(label, [&] {
         open = gui::begin_combo(id, preview);
         if (open) {
           if (!voice_combo_open[index]) {
@@ -226,16 +226,9 @@
     device_row("Microphone", "##voice_device", 0, stream_settings.voice_device);
     device_row("Speakers", "##voice_output", 1, stream_settings.voice_output);
 
-    auto saved_slider = [&](const char* label, const char* id, f32_t* value, f32_t max) {
-      settings_row(label, [&] {
-        gui::slider(id, value, 0.f, max, gui::slider_flags_always_clamp);
-        if (gui::is_item_deactivated_after_edit()) {
-          save_voice_settings();
-        }
-      });
-    };
-    saved_slider("Mic level", "##voice_gain", &stream_settings.voice_gain, 2.f);
-    saved_slider("Send above", "##voice_threshold", &stream_settings.voice_threshold, voice_meter_range);
+    gui::saved_slider("Mic level", "##voice_gain", &stream_settings.voice_gain, 2.f, [this] { save_voice_settings(); });
+    gui::saved_slider("Send above", "##voice_threshold", &stream_settings.voice_threshold, voice_meter_range,
+      [this] { save_voice_settings(); });
 
     fan::vec2 at = gui::get_cursor_screen_pos();
     f32_t width = gui::get_content_region_avail().x;
@@ -248,7 +241,7 @@
     list->AddRectFilled(at + fan::vec2(mark - 1.f, -2.f), at + fan::vec2(mark + 1.f, 6.f), 0xffffffffu);
     gui::dummy(fan::vec2(width, 6.f));
 
-    saved_slider("Volume", "##voice_volume", &stream_settings.voice_volume, 2.f);
+    gui::saved_slider("Volume", "##voice_volume", &stream_settings.voice_volume, 2.f, [this] { save_voice_settings(); });
   }
 
   voice_chat_t::settings_t get_voice_settings() {

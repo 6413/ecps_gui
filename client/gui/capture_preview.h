@@ -74,9 +74,9 @@
         std::uint32_t b = row_a[xa] + row_a[xb] + row_b[xa] + row_b[xb];
         std::uint32_t g = row_a[xa + 1] + row_a[xb + 1] + row_b[xa + 1] + row_b[xb + 1];
         std::uint32_t r = row_a[xa + 2] + row_a[xb + 2] + row_b[xa + 2] + row_b[xb + 2];
-        to[0] = srgb_to_linear[r / 4];
-        to[1] = srgb_to_linear[g / 4];
-        to[2] = srgb_to_linear[b / 4];
+        to[0] = fan::srgb_to_linear[r / 4];
+        to[1] = fan::srgb_to_linear[g / 4];
+        to[2] = fan::srgb_to_linear[b / 4];
         to[3] = 255;
       }
     }
@@ -101,7 +101,7 @@
 
   // the preview's frame rate, under the preview switch
   void render_preview_fps() {
-    settings_row("Preview fps", [&] {
+    gui::settings_row("Preview fps", [&] {
       gui::slider("##preview_fps", &preview_fps, 1, 60, gui::slider_flags_always_clamp);
       if (gui::is_item_hovered()) {
         gui::set_tooltip("How often the preview updates. Higher costs a little more");

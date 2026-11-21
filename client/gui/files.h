@@ -193,7 +193,7 @@
       gui::text(offer->name);
       gui::text(ecps_backend_t::file_format_bytes(offer->size));
       gui::spacing();
-      text_wrapped_disabled("End-to-end encrypted. It is saved to the ecps_downloads folder.");
+      gui::text_wrapped_disabled("End-to-end encrypted. It is saved to the ecps_downloads folder.");
       gui::spacing();
       if (gui::button("Accept")) {
         queue_file_action(offer->id, offer->peer, false, 0);
@@ -211,7 +211,7 @@
     auto views = ecps_backend.file_transfer_views();
 
     gui::spacing();
-    text_wrapped_disabled("Use 'Send file' next to a user in the Users tab.");
+    gui::text_wrapped_disabled("Use 'Send file' next to a user in the Users tab.");
     gui::spacing();
 
     if (gui::begin_child("##file_transfers", fan::vec2(0, -80), true)) {
@@ -231,7 +231,7 @@
           gui::text(v.status);
         }
         if (v.state == state_e::done && !v.outgoing) {
-          text_wrapped_disabled("Saved to " + v.path);
+          gui::text_wrapped_disabled("Saved to " + v.path);
         }
         if (!v.verification.empty()) {
           gui::text("Verification code: " + v.verification);
@@ -260,6 +260,6 @@
     if (gui::button("Clear finished")) {
       ecps_backend.clear_finished_file_transfers();
     }
-    text_wrapped_disabled("If the verification code is the same for both of you, nobody in between,");
-    text_wrapped_disabled("the server included, could have read or changed the file.");
+    gui::text_wrapped_disabled("If the verification code is the same for both of you, nobody in between,");
+    gui::text_wrapped_disabled("the server included, could have read or changed the file.");
   }

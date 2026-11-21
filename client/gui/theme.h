@@ -235,67 +235,6 @@
   static constexpr std::uint32_t accent_u32 = 0xffff5919u;       // a clear blue
   static constexpr std::uint32_t accent_hover_u32 = 0xffff7a33u;
 
-  // a section title: small, blue, with a thin line under it
-  static void settings_section(const char* title) {
-    gui::dummy(fan::vec2(0, 6.f));
-    gui::text(fan::color(0.2f, 0.45f, 1.f, 1.f), title);
-    fan::vec2 at = gui::get_cursor_screen_pos() - fan::vec2(0, 4.f);
-    gui::get_window_draw_list()->AddLine(at, at + fan::vec2(gui::get_content_region_avail().x, 0), 0x50ff5919u, 1.f);
-    gui::dummy(fan::vec2(0, 1.f));
-  }
-
-  // One setting: its name at the left, the control filling the rest of the row. A narrow panel puts the name above
-  static void settings_row(const char* label, auto&& control) {
-    f32_t start = gui::get_cursor_pos_x();
-    f32_t width = gui::get_content_region_avail().x;
-    f32_t label_width = gui::calc_text_size("Resolution").x + 14.f;
-    gui::push_id(label);
-    if (width - label_width < 190.f) {
-      gui::text(fan::color(0.6f, 0.6f, 0.66f, 1.f), label);
-    }
-    else {
-      gui::align_text_to_frame_padding();
-      gui::text(fan::color(0.6f, 0.6f, 0.66f, 1.f), label);
-      gui::same_line();
-      gui::set_cursor_pos_x(start + label_width);
-    }
-    gui::push_item_width(-1);
-    control();
-    gui::pop_item_width();
-    gui::pop_id();
-  }
-
-  // an on/off switch with its name at the left, the whole row is clickable
-  static bool settings_switch(const char* label, bool* value, const char* tooltip = nullptr) {
-    f32_t height = gui::get_frame_height();
-    f32_t width = gui::get_content_region_avail().x;
-    fan::vec2 at = gui::get_cursor_screen_pos();
-    gui::push_id(label);
-    bool clicked = gui::invisible_button("##switch", fan::vec2(width, height));
-    gui::pop_id();
-    bool hovered = gui::is_item_hovered();
-    if (clicked) {
-      *value = !*value;
-    }
-    if (hovered && tooltip) {
-      gui::set_tooltip(tooltip);
-    }
-    auto* list = gui::get_window_draw_list();
-    f32_t track_height = height * 0.62f;
-    f32_t track_width = track_height * 1.85f;
-    std::string shown = fit_title(label, width - track_width - 14.f);
-    if (hovered && !tooltip && shown != label) {
-      gui::set_tooltip(label);
-    }
-    list->AddText(at + fan::vec2(0, (height - gui::get_font_size()) * 0.5f), hovered ? 0xffffffffu : 0xffc8c8c8u, shown.c_str());
-    fan::vec2 track = at + fan::vec2(width - track_width - 2.f, (height - track_height) * 0.5f);
-    std::uint32_t track_color = *value ? (hovered ? accent_hover_u32 : accent_u32) : (hovered ? 0xff221f1eu : 0xff141312u);
-    list->AddRectFilled(track, track + fan::vec2(track_width, track_height), track_color, track_height * 0.5f);
-    f32_t knob_x = *value ? track_width - track_height * 0.5f : track_height * 0.5f;
-    list->AddCircleFilled(track + fan::vec2(knob_x, track_height * 0.5f), track_height * 0.5f - 2.5f, *value ? 0xffffffffu : 0xffb0b0b0u);
-    return clicked;
-  }
-
   // a part of the panel that folds away: an arrow and its name on a darker strip
   static bool settings_fold(const char* title, bool* open) {
     gui::dummy(fan::vec2(0, 2.f));

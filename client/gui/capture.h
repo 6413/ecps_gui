@@ -122,9 +122,9 @@
         for (std::size_t i = 0, count = (std::size_t)out_width * out_height; i < count; ++i) {
           const std::uint8_t* from = source + i * 4;
           std::uint8_t* to = &thumb_pixels[i * 4];
-          to[0] = srgb_to_linear[from[2]];
-          to[1] = srgb_to_linear[from[1]];
-          to[2] = srgb_to_linear[from[0]];
+          to[0] = fan::srgb_to_linear[from[2]];
+          to[1] = fan::srgb_to_linear[from[1]];
+          to[2] = fan::srgb_to_linear[from[0]];
           to[3] = 255;
         }
         size = fan::vec2i(out_width, out_height);
@@ -292,7 +292,7 @@
         fan::vec2 text = gui::calc_text_size("...");
         list->AddText(at + fan::vec2(6.f, 6.f) + (image_area - text) * 0.5f, 0xff808080u, "...");
       }
-      std::string shown = fit_title(title, image_area.x);
+      std::string shown = gui::fit_title(title, image_area.x);
       list->AddText(at + fan::vec2(8.f, image_area.y + 14.f), selected ? 0xffffffffu : 0xffb4b4b4u, shown.c_str());
       // back to where the card ends, so the next one lines up
       gui::set_cursor_screen_pos(at);
@@ -333,8 +333,8 @@
       capture_window_title.clear();
     }
     std::string label = current == 0 ? std::string("Whole screen") : capture_window_title;
-    settings_row("Source", [&] {
-      std::string shown = fit_title(label, gui::get_content_region_avail().x - gui::get_style().FramePadding.x * 2.f);
+    gui::settings_row("Source", [&] {
+      std::string shown = gui::fit_title(label, gui::get_content_region_avail().x - gui::get_style().FramePadding.x * 2.f);
       if (gui::button(shown + "##capture_source", fan::vec2(-1.f, 0.f))) {
         capture_picker_requested = true;
       }
@@ -346,7 +346,7 @@
     // an HDR screen is tone mapped for sharing, how bright that comes out is up to taste and differs per game
     capture.hdr_exposure = hdr_exposure;
     if (capture.hdr_active.load()) {
-      settings_row("HDR light", [&] {
+      gui::settings_row("HDR light", [&] {
         gui::slider("##hdr_brightness", &hdr_exposure, 0.2f, 2.f, gui::slider_flags_always_clamp);
         if (gui::is_item_hovered()) {
           gui::set_tooltip("How bright the HDR screen looks to viewers");
@@ -356,7 +356,7 @@
         }
       });
     }
-    settings_switch("Preview", &preview_own_share, "See what you share");
+    gui::settings_switch("Preview", &preview_own_share, "See what you share");
     capture_preview_wanted = preview_own_share;
     if (preview_own_share) {
       render_preview_fps();

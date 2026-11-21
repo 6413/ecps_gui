@@ -32,7 +32,7 @@
         aspect_cstrings.push_back(str.c_str());
       }
 
-      settings_row("Aspect", [&] {
+      gui::settings_row("Aspect", [&] {
         if (gui::combo("##aspect_ratio", &selected_aspect_ratio, aspect_cstrings.data(), aspect_cstrings.size())) {
           apply_closest_resolution(current_height);
         }
@@ -70,7 +70,7 @@
         res_cstrings.push_back(str.c_str());
       }
 
-      settings_row("Resolution", [&] {
+      gui::settings_row("Resolution", [&] {
         if (gui::combo("##resolution", &selected_resolution, res_cstrings.data(), res_cstrings.size())) {
           if (selected_resolution >= 0 && selected_resolution < available_resolutions.size()) {
             apply_resolution(available_resolutions[selected_resolution]);

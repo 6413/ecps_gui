@@ -12,7 +12,7 @@
   void render_capture_source() {
     bool sharing = ecps_backend.is_streaming_to_any_channel();
     bool chosen = capture_armed.load() || sharing;
-    settings_row("Source", [&] {
+    gui::settings_row("Source", [&] {
       f32_t release_width = chosen && !sharing ? gui::get_frame_height() + gui::get_style().ItemSpacing.x : 0.f;
       if (gui::button(std::string(chosen ? "Change..." : "Choose...") + "##capture_source",
         fan::vec2(gui::get_content_region_avail().x - release_width, 0.f))) {
@@ -32,15 +32,15 @@
         }
       }
     });
-    settings_switch("Preview", &preview_own_share, "See what you share");
+    gui::settings_switch("Preview", &preview_own_share, "See what you share");
     capture_preview_wanted = preview_own_share;
     if (preview_own_share) {
       render_preview_fps();
       if (!chosen) {
-        text_wrapped_disabled("Choose a screen or window to see it here.");
+        gui::text_wrapped_disabled("Choose a screen or window to see it here.");
       }
       else if (!draw_captured_preview()) {
-        text_wrapped_disabled("Waiting for the first picture...");
+        gui::text_wrapped_disabled("Waiting for the first picture...");
       }
     }
   }

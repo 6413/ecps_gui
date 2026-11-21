@@ -4,7 +4,7 @@
   // stream area, over the picture, and fades out unless the mouse is near the bottom or there is no picture, so
   // the stream gets the whole height. Call it inside the stream child, no window or focus tricks of its own
   void render_stream_toolbar() {
-    render_stream_stats_overlay();
+    top_bar.render_stream_stats_overlay();
     render_stream_top_overlay();
     auto& io = gui::get_io();
     fan::vec2 area_pos = gui::get_window_pos();
@@ -32,7 +32,7 @@
     gui::push_style_var(gui::style_var_alpha, std::max(toolbar_alpha, 0.02f));
     f32_t y = area_size.y - frame_height - 14.f + gui::get_scroll_y();
     // as wide as the text needs, a fixed width cut the label off
-    f32_t button_width = pill_button_width(stream_button_renderer_t::share_button_text(false));
+    f32_t button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
     gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
@@ -197,7 +197,7 @@
         std::to_string(backlog_idrs) + " asked for by a long queue, up to " + std::to_string(max_queue) + " waited), " +
         std::to_string(lock_misses) + " lost to a locked queue, in the last second: " + std::to_string(queued) + " queued, " +
         std::to_string(sent) + " sent, " + std::to_string(cap_stops) + " passes hit the packet limit, " +
-        std::to_string(bucket_stops) + " the bitrate budget, longest wait between passes " + number_text(max_gap_us / 1000.0, 1) + " ms");
+        std::to_string(bucket_stops) + " the bitrate budget, longest wait between passes " + fan::number_text(max_gap_us / 1000.0, 1) + " ms");
     }
   }
 
@@ -268,25 +268,25 @@
       if (perf_log.share_slow_seconds == 5) {
         std::string why;
         if (encode_ms > budget * 0.8f) {
-          why = "encoding takes " + number_text(encode_ms, 1) + " ms of the " + number_text(budget, 1) + " ms a frame has (" +
+          why = "encoding takes " + fan::number_text(encode_ms, 1) + " ms of the " + fan::number_text(budget, 1) + " ms a frame has (" +
             encoder_name + (encoder_name.rfind("lib", 0) == 0 ? ", the CPU encoder: try Encode on GPU" : "") + ")";
         }
         else if (capture_ms > budget * 0.8f) {
-          why = "capturing takes " + number_text(capture_ms, 1) + " ms of the " + number_text(budget, 1) + " ms a frame has";
+          why = "capturing takes " + fan::number_text(capture_ms, 1) + " ms of the " + fan::number_text(budget, 1) + " ms a frame has";
         }
         else if (queued > 2) {
           why = std::to_string(queued) + " frames wait to be sent: the bitrate is too high for the upload";
         }
         else if (perf_log.screen_ms > budget * 0.8f) {
-          why = "the screen gave " + number_text(perf_log.screen_fps, 0) + " new frames, getting each took " +
-            number_text(perf_log.screen_ms, 1) + " ms (waiting for the screen included): the screen or the compositor gives no more";
+          why = "the screen gave " + fan::number_text(perf_log.screen_fps, 0) + " new frames, getting each took " +
+            fan::number_text(perf_log.screen_ms, 1) + " ms (waiting for the screen included): the screen or the compositor gives no more";
         }
         else {
-          why = "the screen gave " + number_text(perf_log.screen_fps, 0) + " new frames in the last second, each in " +
-            number_text(perf_log.screen_ms, 1) + " ms, encoding " + number_text(encode_ms, 1) +
+          why = "the screen gave " + fan::number_text(perf_log.screen_fps, 0) + " new frames in the last second, each in " +
+            fan::number_text(perf_log.screen_ms, 1) + " ms, encoding " + fan::number_text(encode_ms, 1) +
             " ms: a still screen, or a game capped below " + std::to_string(target) + " fps";
         }
-        perf_warn("share_fps", "sending " + number_text(debug_sample.share_fps, 0) + " of " + std::to_string(target) + " fps: " + why);
+        perf_warn("share_fps", "sending " + fan::number_text(debug_sample.share_fps, 0) + " of " + std::to_string(target) + " fps: " + why);
       }
     }
     else {
@@ -298,8 +298,8 @@
       bool behind = debug_sample.assembled_fps > debug_sample.decoded_fps + 3.f;
       perf_log.decode_behind_seconds = behind ? perf_log.decode_behind_seconds + 1 : 0;
       if (perf_log.decode_behind_seconds == 5) {
-        perf_warn("decode", "this computer decodes too slowly: " + number_text(debug_sample.assembled_fps, 0) + " frames/s come in, " +
-          number_text(debug_sample.decoded_fps, 0) + " decoded, decode takes " + number_text(stage_times.decode.ms.load(), 1) +
+        perf_warn("decode", "this computer decodes too slowly: " + fan::number_text(debug_sample.assembled_fps, 0) + " frames/s come in, " +
+          fan::number_text(debug_sample.decoded_fps, 0) + " decoded, decode takes " + fan::number_text(stage_times.decode.ms.load(), 1) +
           " ms (" + decoder_name + (decoder.using_hardware_ ? "" : ": try Decode on GPU") + ")");
       }
       // decoded in time but drawn less often: the window, not the stream
@@ -307,9 +307,9 @@
       bool draw_behind = draw_fps < debug_sample.decoded_fps * 0.8f && debug_sample.decoded_fps > 10.f;
       perf_log.draw_behind_seconds = draw_behind ? perf_log.draw_behind_seconds + 1 : 0;
       if (perf_log.draw_behind_seconds == 5) {
-        perf_warn("draw", "this window draws only " + number_text(draw_fps, 0) + " times a second (slowest frame " +
-          number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms) while " +
-          number_text(debug_sample.decoded_fps, 0) + " frames/s are decoded: the stream shows at the window's rate. Near the monitor's refresh rate that is the most it can show");
+        perf_warn("draw", "this window draws only " + fan::number_text(draw_fps, 0) + " times a second (slowest frame " +
+          fan::number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms) while " +
+          fan::number_text(debug_sample.decoded_fps, 0) + " frames/s are decoded: the stream shows at the window's rate. Near the monitor's refresh rate that is the most it can show");
       }
       if (frames >= 5 && frame_loss > 5.f) {
         std::uint64_t here = std::min(frames_lost, queue_full + decode_failed);
@@ -324,9 +324,9 @@
         else {
           why = "data is lost between the sharer, the server and here";
         }
-        perf_warn("frame_loss", "lost " + number_text(frame_loss, 0) + "% of frames in the last second (" + std::to_string(frames_lost) +
-          " of " + std::to_string(frames) + "), " + number_text(packet_loss, 1) + "% of packets, ping " +
-          number_text(ecps_backend.ping_ms, 0) + " ms: " + why);
+        perf_warn("frame_loss", "lost " + fan::number_text(frame_loss, 0) + "% of frames in the last second (" + std::to_string(frames_lost) +
+          " of " + std::to_string(frames) + "), " + fan::number_text(packet_loss, 1) + "% of packets, ping " +
+          fan::number_text(ecps_backend.ping_ms, 0) + " ms: " + why);
       }
       // held back while waiting for a keyframe: normal for a moment after watching starts or a frame is lost
       if (keyframe_waits >= 30) {
@@ -339,7 +339,7 @@
     }
 
     if ((sharing || watching) && ecps_backend.ping_ms > 150.f) {
-      perf_warn("ping", "ping to the server is " + number_text(ecps_backend.ping_ms, 0) + " ms");
+      perf_warn("ping", "ping to the server is " + fan::number_text(ecps_backend.ping_ms, 0) + " ms");
     }
 
     // the sums cover the time since the last summary, which is 30 s only when this ran every second: divided by
@@ -359,35 +359,35 @@
       f64_t seconds = std::max(1.0, std::chrono::duration<f64_t>(now - perf_log.summary_at).count());
       perf_log.summary_at = now;
       if (sharing) {
-        fan::print("perf: sending " + size_label(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " " +
-          number_text(debug_sample.share_fps, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
-          number_text(debug_sample.share_kbps / 1000.0, 1) + " Mbit/s, capture " + number_text(stage_times.capture.ms.load(), 1) +
-          " ms, encode " + number_text(stage_times.encode.ms.load(), 1) + " ms (" + encoder_name + "), " +
-          std::to_string(queued) + " frames queued, the screen gave " + number_text(perf_log.sum_new_frames / seconds, 1) +
-          " new frames/s, " + number_text(perf_log.sum_new_frames ? perf_log.sum_wait_ns / 1e6 / perf_log.sum_new_frames : 0.0, 1) +
+        fan::print("perf: sending " + fan::size_text(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " " +
+          fan::number_text(debug_sample.share_fps, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
+          fan::bitrate_text(debug_sample.share_kbps) + ", capture " + fan::number_text(stage_times.capture.ms.load(), 1) +
+          " ms, encode " + fan::number_text(stage_times.encode.ms.load(), 1) + " ms (" + encoder_name + "), " +
+          std::to_string(queued) + " frames queued, the screen gave " + fan::number_text(perf_log.sum_new_frames / seconds, 1) +
+          " new frames/s, " + fan::number_text(perf_log.sum_new_frames ? perf_log.sum_wait_ns / 1e6 / perf_log.sum_new_frames : 0.0, 1) +
           " ms each (waiting for the screen included)");
         // where the frames went: sent whole, thrown away for a keyframe, or lost before the queue. And how the network
         // loop kept up: packets per pass, passes stopped by the packet limit or the bitrate budget, the longest stall
         auto& p = perf_log;
-        fan::print("perf: send path " + number_text(p.queued / seconds, 1) + " frames/s queued, " + number_text(p.sent / seconds, 1) +
+        fan::print("perf: send path " + fan::number_text(p.queued / seconds, 1) + " frames/s queued, " + fan::number_text(p.sent / seconds, 1) +
           " sent, " + std::to_string(p.flushed) + " thrown away (" + std::to_string(p.backlog_idrs) + " keyframes for a long queue), " +
           std::to_string(p.lock_misses) + " lost to a locked queue, most waiting " + std::to_string(p.max_queue) + ". " +
-          number_text(p.passes / seconds, 0) + " passes/s, " + number_text(p.passes ? (f64_t)p.chunks / p.passes : 0.0, 1) +
-          " packets each, " + number_text(p.passes ? p.send_us / 1000.0 / p.passes : 0.0, 2) + " ms each (longest " +
-          number_text(p.max_send_us / 1000.0, 1) + " ms), " + std::to_string(p.cap_stops) + " stopped at the packet limit, " +
-          std::to_string(p.bucket_stops) + " at the bitrate budget, longest stall " + number_text(p.max_gap_us / 1000.0, 1) + " ms");
+          fan::number_text(p.passes / seconds, 0) + " passes/s, " + fan::number_text(p.passes ? (f64_t)p.chunks / p.passes : 0.0, 1) +
+          " packets each, " + fan::number_text(p.passes ? p.send_us / 1000.0 / p.passes : 0.0, 2) + " ms each (longest " +
+          fan::number_text(p.max_send_us / 1000.0, 1) + " ms), " + std::to_string(p.cap_stops) + " stopped at the packet limit, " +
+          std::to_string(p.bucket_stops) + " at the bitrate budget, longest stall " + fan::number_text(p.max_gap_us / 1000.0, 1) + " ms");
       }
       reset_sums();
       if (watching) {
         // "fps" is what arrives whole. Lower than the sharer sends: lost on the way. Decoded lower than that: this computer
-        fan::print("perf: receiving " + size_label(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) + " " +
-          number_text(debug_sample.assembled_fps, 0) + " fps " + number_text(debug_sample.view_kbps / 1000.0, 1) +
-          " Mbit/s, decoded " + number_text(debug_sample.decoded_fps, 0) + "/s, decode " + number_text(stage_times.decode.ms.load(), 1) +
-          " ms (" + decoder_name + "), upload " + number_text(stage_times.upload.ms.load(), 1) + " ms, lost " +
-          number_text(frame_loss, 1) + "% frames " + number_text(packet_loss, 1) + "% packets, ping " +
-          number_text(ecps_backend.ping_ms, 0) + " ms, shown " + number_text(rt->displayed_fps, 0) + "/s, window draws " +
-          number_text(draw_rate.fps.load(std::memory_order_relaxed), 0) + "/s (slowest " +
-          number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms)");
+        fan::print("perf: receiving " + fan::size_text(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y) + " " +
+          fan::number_text(debug_sample.assembled_fps, 0) + " fps " + fan::bitrate_text(debug_sample.view_kbps) +
+          ", decoded " + fan::number_text(debug_sample.decoded_fps, 0) + "/s, decode " + fan::number_text(stage_times.decode.ms.load(), 1) +
+          " ms (" + decoder_name + "), upload " + fan::number_text(stage_times.upload.ms.load(), 1) + " ms, lost " +
+          fan::number_text(frame_loss, 1) + "% frames " + fan::number_text(packet_loss, 1) + "% packets, ping " +
+          fan::number_text(ecps_backend.ping_ms, 0) + " ms, shown " + fan::number_text(rt->displayed_fps, 0) + "/s, window draws " +
+          fan::number_text(draw_rate.fps.load(std::memory_order_relaxed), 0) + "/s (slowest " +
+          fan::number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms)");
       }
     }
   }
@@ -400,11 +400,7 @@
     engine.viewport_set(engine.orthographic_render_view.viewport, 0, engine.window.get_size());
 
 
-    auto number = [](double value, int decimals) {
-      char text[40];
-      std::snprintf(text, sizeof(text), "%.*f", decimals, value);
-      return std::string(text);
-    };
+    auto number = [](double value, int decimals) { return fan::number_text(value, decimals); };
     f32_t value_column = gui::get_cursor_pos_x() + gui::calc_text_size("Viewers may play here").x + 28.f;
     auto row = [value_column](const char* label, const std::string& value) {
       f32_t start = gui::get_cursor_pos_x();
@@ -452,7 +448,7 @@
     auto* rt = get_render_thread();
     auto& io = gui::get_io();
 
-    section_title("Program");
+    gui::simple_section("Program");
     row("Version", std::string(ecps_version) + (ecps_update_marker[0] ? std::string(" [") + ecps_update_marker + "]" : std::string()));
     row("Build", updater.build_short().empty() ? std::string("unknown commit") : updater.build_short());
     row("Server", ecps_backend.ip + ":" + std::to_string(ecps_backend.port));
@@ -463,14 +459,14 @@
     graph("Ping", debug_sample.ping_history, "ms");
 
     if (rt) {
-      section_title("Capture and encoder (this computer shares)");
+      gui::simple_section("Capture and encoder (this computer shares)");
       auto& geometry = rt->screen_encoder.mdscr.Geometry;
       row("Screen captured at", size_text(geometry.Resolution.x, geometry.Resolution.y) +
         (geometry.Resolution.x == 0 || geometry.Resolution.y == 0 ? "" :
           geometry.Resolution.y > geometry.Resolution.x ? "  (portrait)" : "  (landscape)"));
       row("Encoded as", size_text(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " @ " +
         std::to_string((long long)rt->screen_encoder.config_.frame_rate) + " fps");
-      row("Bitrate", number(rt->screen_encoder.config_.bitrate / 1e6, 1) + " Mbit/s");
+      row("Bitrate", fan::bitrate_text(rt->screen_encoder.config_.bitrate / 1000.0));
       row("Encoder", rt->screen_encoder.name);
       row("Capture time", number(stage_times.capture.ms.load(), 2) + " ms");
       row("Encode time", number(stage_times.encode.ms.load(), 2) + " ms");
@@ -479,7 +475,7 @@
       graph("Sending", debug_sample.share_kbps_history, "kbit/s");
       graph("Frames encoded", debug_sample.share_fps_history, "fps");
 
-      section_title("Decoder (this computer watches)");
+      gui::simple_section("Decoder (this computer watches)");
       row("Picture", size_text(rt->screen_decoder.decoded_size.x, rt->screen_decoder.decoded_size.y));
       row("Decode time", number(stage_times.decode.ms.load(), 2) + " ms");
       row("Receiving", number(debug_sample.view_kbps, 0) + " kbit/s, " + number(debug_sample.view_pps, 0) + " packets/s (" +
@@ -495,9 +491,9 @@
         std::to_string((unsigned long long)stats.Packet_Total) + ", repaired frames " + std::to_string((unsigned long long)stats.Frame_Corrected));
     }
 
-    section_title("Channels");
+    gui::simple_section("Channels");
     if (ecps_backend.channel_info.empty()) {
-      text_wrapped_disabled("Not in any channel");
+      gui::text_wrapped_disabled("Not in any channel");
     }
     for (const auto& channel : ecps_backend.channel_info) {
       std::string line = "Channel " + std::to_string((long long)channel.channel_id.i) +
@@ -518,7 +514,7 @@
     }
     row("Watching", watch_active ? session_label(ecps_backend_t::Protocol_ChannelID_t{ (uint16_t)watch_channel }, watch_source) : std::string("nobody"));
 
-    section_title("MIDI");
+    gui::simple_section("MIDI");
     row("Keyboard", midi_io.is_open() ? "connected" : "not connected");
     row("Keyboards found", std::to_string((unsigned long long)midi_io.devices().size()));
     row("Playing notes here", std::to_string((unsigned long long)debug_sample.voices));

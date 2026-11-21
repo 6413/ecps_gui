@@ -1,28 +1,5 @@
 // Part of ecps_gui_t, included inside the struct by gui.h: the share button, drawn icons, icon and pill buttons, the splitter, the stream picture placement.
 
-  // The window is drawn through an sRGB swapchain, which brightens what it is given as if it were linear. Screen
-  // pixels are sRGB already, so they go in through this table, or the pictures look washed out
-  static inline const std::array<std::uint8_t, 256> srgb_to_linear = [] {
-    std::array<std::uint8_t, 256> table{};
-    for (int i = 0; i < 256; ++i) {
-      f64_t c = i / 255.0;
-      f64_t linear = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
-      table[i] = (std::uint8_t)std::lround(linear * 255.0);
-    }
-    return table;
-  }();
-
-  // a title cut to fit width pixels, so a long one doesn't push its neighbours around
-  static std::string fit_title(std::string title, f32_t width) {
-    if (gui::calc_text_size(title).x <= width) {
-      return title;
-    }
-    while (title.size() > 1 && gui::calc_text_size(title + "...").x > width) {
-      title.pop_back();
-    }
-    return title + "...";
-  }
-
   struct stream_button_renderer_t {
     // Sharing is one action for the whole program and always goes into your own channel, so it doesn't depend on
     // which channel is selected, or on being in somebody else's
@@ -107,7 +84,7 @@
       fan::vec2 available_area,
       fan::vec2 window_content_size,
       f32_t bottom_margin = 50.0f) {
-      fan::vec2 button_size(pill_button_width(share_button_text(false)), gui::get_frame_height());
+      fan::vec2 button_size(gui::pill_button_width(share_button_text(false)), gui::get_frame_height());
 
       fan::vec2 button_pos = fan::vec2(
         (available_area.x - button_size.x) / 2,
@@ -244,161 +221,36 @@
 
   enum class icon_style_e { plain, danger, accent, overlay };
 
-  // a square button with an icon and a tooltip
-  static bool icon_button(const char* id, icon_e icon, std::string_view tooltip, f32_t size = 0.f, icon_style_e style = icon_style_e::plain) {
-    if (size <= 0.f) {
-      size = gui::get_frame_height();
-    }
-    fan::vec2 at = gui::get_cursor_screen_pos();
-    bool clicked = gui::invisible_button(id, fan::vec2(size, size));
-    bool hovered = gui::is_item_hovered();
-    bool held = gui::is_item_active();
-    auto* list = gui::get_window_draw_list();
-    fan::vec2 c = at + fan::vec2(size, size) * 0.5f;
-    std::uint32_t icon_color = hovered ? 0xffffffffu : 0xffff9e6au;
-    f32_t rounding = size * 0.28f;
+  static gui::icon_button_style_t icon_button_style(icon_style_e style) {
     switch (style) {
-      case icon_style_e::plain:
-        list->AddRectFilled(at, at + fan::vec2(size, size), held ? 0xff61210fu : hovered ? 0xff3a170cu : 0xff0f0907u, rounding);
-        break;
-      case icon_style_e::danger:
-        list->AddRectFilled(at, at + fan::vec2(size, size), held ? 0xff0c0c70u : hovered ? 0xff0a0a52u : 0xff05051au, rounding);
-        icon_color = hovered ? 0xffffffffu : 0xff6a6affu;
-        break;
-      case icon_style_e::accent:
-        list->AddRectFilled(at, at + fan::vec2(size, size), held ? 0xff61210fu : hovered ? 0xff4a1a0du : 0xff2a1009u, rounding);
-        icon_color = hovered ? 0xffffffffu : 0xffff7a33u;
-        break;
-      case icon_style_e::overlay:
-        list->AddCircleFilled(c, size * 0.5f, hovered ? 0xb4000000u : 0x64000000u, 24);
-        icon_color = hovered ? 0xffffffffu : 0xffe0e0e0u;
-        break;
+      case icon_style_e::danger: return gui::icon_button_style_t::danger;
+      case icon_style_e::accent: return gui::icon_button_style_t::accent;
+      case icon_style_e::overlay: return gui::icon_button_style_t::overlay;
+      default: return gui::icon_button_style_t::plain;
     }
-    if (style == icon_style_e::overlay) {
-      draw_icon_outlined(list, icon, c, size * 0.56f, icon_color);
-    }
-    else {
-      draw_icon(list, icon, c, size * 0.56f, icon_color);
-    }
-    if (hovered && !tooltip.empty()) {
-      gui::set_tooltip(tooltip);
-    }
-    return clicked;
   }
 
-  // a rounded button with a small icon in front of its word, coloured by what it does
-  static f32_t pill_button_width(std::string_view text) {
-    f32_t height = gui::get_frame_height();
-    return height * 0.62f + 8.f + gui::calc_text_size(text).x + 30.f;
+  // a square button with an icon and a tooltip; the icon paths stay here, the button itself is in fan
+  static bool icon_button(const char* id, icon_e icon, std::string_view tooltip, f32_t size = 0.f, icon_style_e style = icon_style_e::plain) {
+    auto style_fan = icon_button_style(style);
+    return gui::icon_button(id, tooltip, size, style_fan, [=](gui::draw_list_t* list, fan::vec2 c, f32_t s,
+      std::uint32_t color, bool outlined) {
+      if (outlined) {
+        draw_icon_outlined(list, icon, c, s, color);
+      }
+      else {
+        draw_icon(list, icon, c, s, color);
+      }
+    });
   }
 
   static bool pill_button(const char* id, icon_e icon, std::string_view text, std::uint32_t color, std::uint32_t hover_color,
     bool enabled = true, f32_t width = 0.f, f32_t height = 0.f) {
-    if (height <= 0.f) {
-      height = gui::get_frame_height();
-    }
-    if (width <= 0.f) {
-      width = pill_button_width(text);
-    }
-    fan::vec2 at = gui::get_cursor_screen_pos();
-    bool clicked = gui::invisible_button(id, fan::vec2(width, height));
-    bool hovered = gui::is_item_hovered(gui::hovered_flags_allow_when_disabled);
-    auto* list = gui::get_window_draw_list();
-    std::uint32_t fill = !enabled ? 0xff141414u : hovered ? hover_color : color;
-    list->AddRectFilled(at, at + fan::vec2(width, height), fill, height * 0.5f);
-    f32_t icon_size = height * 0.62f;
-    f32_t content = icon_size + 8.f + gui::calc_text_size(text).x;
-    fan::vec2 start = at + fan::vec2((width - content) * 0.5f, 0);
-    std::uint32_t ink = enabled ? 0xffffffffu : 0xff606060u;
-    draw_icon(list, icon, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size * 0.8f, ink);
-    std::string label(text);
-    list->AddText(start + fan::vec2(icon_size + 8.f, (height - gui::get_font_size()) * 0.5f), ink, label.c_str());
-    return clicked && enabled;
+    return gui::pill_button(id, text, color, hover_color, enabled, width, height,
+      [=](gui::draw_list_t* list, fan::vec2 c, f32_t s, std::uint32_t ink, bool) {
+        draw_icon(list, icon, c, s, ink);
+      });
   }
-
-  // a small rounded label, like HOST or LIVE, on the current line
-  static void badge(std::string_view text, std::uint32_t fill, std::uint32_t ink) {
-    std::string label(text);
-    fan::vec2 size = gui::calc_text_size(label);
-    fan::vec2 at = gui::get_cursor_screen_pos() + fan::vec2(0, -1.f);
-    fan::vec2 box = size + fan::vec2(14.f, 2.f);
-    gui::get_window_draw_list()->AddRectFilled(at, at + box, fill, box.y * 0.5f);
-    gui::get_window_draw_list()->AddText(at + fan::vec2(7.f, 1.f), ink, label.c_str());
-    gui::dummy(box - fan::vec2(0, 2.f));
-  }
-
-  // a badge whose fill is a level meter: level (0..1) of its width is filled with the meter colour
-  static void level_badge(std::string_view text, f32_t level, std::uint32_t fill, std::uint32_t meter, std::uint32_t ink) {
-    std::string label(text);
-    fan::vec2 size = gui::calc_text_size(label);
-    fan::vec2 at = gui::get_cursor_screen_pos() + fan::vec2(0, -1.f);
-    fan::vec2 box = size + fan::vec2(14.f, 2.f);
-    auto* list = gui::get_window_draw_list();
-    list->AddRectFilled(at, at + box, fill, box.y * 0.5f);
-    if (level > 0.f) {
-      list->PushClipRect(at, at + fan::vec2(box.x * std::min(level, 1.f), box.y), true);
-      list->AddRectFilled(at, at + box, meter, box.y * 0.5f);
-      list->PopClipRect();
-    }
-    list->AddText(at + fan::vec2(7.f, 1.f), ink, label.c_str());
-    gui::dummy(box - fan::vec2(0, 2.f));
-  }
-
-  struct splitter_renderer_t {
-    static void render_vertical_splitter(const char* id, f32_t content_height,
-      f32_t& unclamped_width, f32_t& clamped_width,
-      f32_t min_width, f32_t max_width, bool& is_resizing) {
-      gui::push_style_color(gui::col_button, fan::vec4(0.5f, 0.5f, 0.5f, 0.3f));
-      gui::push_style_color(gui::col_button_hovered, fan::vec4(0.7f, 0.7f, 0.7f, 0.5f));
-      gui::push_style_color(gui::col_button_active, fan::vec4(0.8f, 0.8f, 0.8f, 0.7f));
-
-      f32_t hitbox_width = 8.0f;
-      f32_t splitter_width = 2.0f;
-      f32_t visual_offset = (hitbox_width - splitter_width) * 0.5f;
-
-      if (gui::invisible_button(id, fan::vec2(hitbox_width, content_height))) {}
-
-      if (gui::is_item_active() && gui::is_mouse_dragging(0)) {
-        unclamped_width -= gui::get_io().MouseDelta.x;
-        clamped_width = std::clamp(unclamped_width, min_width, max_width);
-        is_resizing = true;
-        gui::set_mouse_cursor(gui::mouse_cursor_resize_ew);
-      }
-      else if (is_resizing && !gui::is_mouse_dragging(0)) {
-        is_resizing = false;
-      }
-
-      if (gui::is_item_hovered()) {
-        gui::set_mouse_cursor(gui::mouse_cursor_resize_ew);
-      }
-
-      fan::vec2 splitter_pos = gui::get_item_rect_min();
-      splitter_pos.x += visual_offset;
-      fan::vec2 splitter_max = fan::vec2(splitter_pos.x + splitter_width, splitter_pos.y + content_height);
-
-      gui::get_window_draw_list()->AddRectFilled(
-        splitter_pos, splitter_max,
-        gui::is_item_hovered() ? gui::get_color_u32(gui::col_button_hovered) : gui::get_color_u32(gui::col_button)
-      );
-
-      gui::pop_style_color(3);
-    }
-  };
-
-  struct stream_area_calculator_t {
-    static fan::vec2 calculate_fitted_size(fan::vec2 available_area, fan::vec2 decoded_size) {
-      f32_t aspect = 16.0f / 9.0f;
-      if (decoded_size.x > 0 && decoded_size.y > 0) {
-        aspect = decoded_size.x / decoded_size.y;
-      }
-
-      fan::vec2 full_size = (available_area.x / available_area.y > aspect)
-        ? fan::vec2(available_area.y * aspect, available_area.y)
-        : fan::vec2(available_area.x, available_area.x / aspect);
-
-      return full_size / 2;
-    }
-  };
 
   struct network_frame_helper_t {
     #undef This
@@ -413,7 +265,7 @@
       if (!rt) return;
 
       fan::vec2 center = available_area / 2;
-      fan::vec2 fitted_size = stream_area_calculator_t::calculate_fitted_size(
+      fan::vec2 fitted_size = gui::fit_size(
         available_area, rt->screen_decoder.decoded_size);
 
       // called inside the stream's window: its top left is the stream's

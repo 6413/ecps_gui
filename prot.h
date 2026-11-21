@@ -223,6 +223,27 @@ struct ProtocolUDP {
   }S2C;
 };
 
+// Message metadata lives next to the messages so senders do not keep their own copies of retry counts and
+// server-support rules. A message an old server does not know is simply ignored, never answered with an error.
+struct Protocol_MessageTraits {
+  template <typename Message>
+  static constexpr int retries() {
+    if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Probe_t>) return 5;
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Rename_t>) return 10;
+    else return 0;
+  }
+  template <typename Message>
+  static constexpr bool optional() {
+    return retries<Message>() > 0;
+  }
+  template <typename Message>
+  static constexpr const char* name() {
+    if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Probe_t>) return "Channel_Chat_Probe";
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Rename_t>) return "Channel_Rename";
+    else return "";
+  }
+};
+
 struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
   __dme(KeepAlive);
 

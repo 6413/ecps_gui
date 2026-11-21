@@ -100,38 +100,38 @@
     if (!rt) {
       return;
     }
-    settings_section("VIDEO");
+    gui::settings_section("VIDEO");
 
     // GPU stays choosable even when none was found: the check can miss a driver, and the encoder falls back to the
     // CPU by itself when no GPU encoder opens. "In use" tells what it got
     const auto& gpus = gpu_encoders();
     bool gpu_encoding_found = !gpus.empty();
-    settings_row("Encode on", [&] {
+    gui::settings_row("Encode on", [&] {
       if (choice_pair("##encode_on", &encode_on_gpu, "GPU", "CPU", true, "")) {
         apply_encode_choice();
         save_ui_config();
       }
     });
     if (ecps_backend.is_streaming_to_any_channel()) {
-      text_wrapped_disabled("In use: " + rt->screen_encoder.encoder_.get_codec_name());
+      gui::text_wrapped_disabled("In use: " + rt->screen_encoder.encoder_.get_codec_name());
     }
     else {
-      text_wrapped_disabled(gpu_encoding_found ? "GPU: " + join_names(gpus) : std::string("GPU: none found, it will use the CPU (x264)"));
+      gui::text_wrapped_disabled(gpu_encoding_found ? "GPU: " + join_names(gpus) : std::string("GPU: none found, it will use the CPU (x264)"));
     }
 
     auto& decoder = rt->screen_decoder.decoder_;
     bool gpu_decoding_usable = decoder.has_hardware_support();
-    settings_row("Decode on", [&] {
+    gui::settings_row("Decode on", [&] {
       if (choice_pair("##decode_on", &decode_on_gpu, "GPU", "CPU", gpu_decoding_usable, "No GPU video decoder opened on this computer")) {
         apply_decode_choice();
         save_ui_config();
       }
     });
     if (ecps_backend.is_viewing_any_channel()) {
-      text_wrapped_disabled("In use: " + std::string(decoder.using_hardware_ ? decoder.get_hardware_type_string() : "CPU") +
+      gui::text_wrapped_disabled("In use: " + std::string(decoder.using_hardware_ ? decoder.get_hardware_type_string() : "CPU") +
         (rt->screen_decoder.zero_copy_active() ? ", zero copy" : ""));
     }
     else {
-      text_wrapped_disabled(gpu_decoding_usable ? "GPU: available" : "GPU: none found, CPU is used");
+      gui::text_wrapped_disabled(gpu_decoding_usable ? "GPU: available" : "GPU: none found, CPU is used");
     }
   }

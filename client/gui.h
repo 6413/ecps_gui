@@ -14,8 +14,11 @@ struct ecps_gui_t {
   }
 
   #include "gui/widgets.h"
+  #include "gui/top_bar_component.h"
 
-  ecps_gui_t() {
+  top_bar_t<ecps_gui_t> top_bar;
+
+  ecps_gui_t() : top_bar(*this) {
 
     setup_backdrop();
     // lines are smoothed by their own geometry: the textured way needs the font atlas sampled with filtering,
@@ -38,11 +41,7 @@ struct ecps_gui_t {
       drop_popup_requested = !dropped_files.empty();
     });
 
-    if (fan::io::file::exists(config_path)) {
-      std::string data;
-      fan::io::file::read(std::string(config_path), &data);
-      config = fan::json::parse(data);
-    }
+    config.load(config_path);
 
     ecps_backend.passwords_changed = [this] { passwords_dirty.store(true); };
 
@@ -196,7 +195,7 @@ struct ecps_gui_t {
 
   #include "gui/theme.h"
 
-  #include "gui/top_bar.h"
+  #include "gui/top_bar_state.h"
 
   #include "gui/logs_midi.h"
 
@@ -252,8 +251,7 @@ struct ecps_gui_t {
 
   inline static const char* config_path = "config.json";
   void write_to_config(const std::string& key, auto value) {
-    config[key] = value;
-    fan::io::file::write(config_path, config.dump(2), std::ios_base::binary);
+    config.write(key, std::move(value));
   }
 
   bool is_fullscreen_stream = false;
@@ -265,7 +263,7 @@ struct ecps_gui_t {
     std::vector<std::uint8_t> held_buttons;
   } input_forward;
 
-  fan::json config;
+  fan::config_store_t config;
 
   bool show_own_stream = false;
   ecps_backend_t::Protocol_ChannelID_t selected_channel_id{ (uint16_t)-1 };

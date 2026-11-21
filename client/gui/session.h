@@ -76,7 +76,7 @@
     gui::push_item_width(320);
     bool enter = gui::input_text("##username_input", &username_input, gui::input_text_flags_enter_returns_true);
     gui::pop_item_width();
-    text_wrapped_disabled("1 to 24 letters, digits, spaces, _ . or -. Nobody else can use the same name at the same time.");
+    gui::text_wrapped_disabled("1 to 24 letters, digits, spaces, _ . or -. Nobody else can use the same name at the same time.");
     if (!username_error.empty()) {
       gui::text(fan::color(1.f, 0.5f, 0.45f, 1.f), username_error);
     }
@@ -136,7 +136,7 @@
     }
     bool enter = gui::input_text("##new_channel_name", &channel_rename_input, gui::input_text_flags_enter_returns_true);
     gui::pop_item_width();
-    text_wrapped_disabled("Empty uses your name. You can rename it later in the channel's settings");
+    gui::text_wrapped_disabled("Empty uses your name. You can rename it later in the channel's settings");
     if (gui::button("Create") || enter) {
       std::string name = channel_rename_input;
       write_to_config("channel_title", name);
@@ -203,7 +203,7 @@
     gui::pop_item_width();
     // the dots hide a typo, this shows what is being sent
     gui::checkbox("Show password", &password_prompt_show);
-    text_wrapped_disabled("It is remembered on this computer, you are not asked again for this channel.");
+    gui::text_wrapped_disabled("It is remembered on this computer, you are not asked again for this channel.");
     bool can_join = !password_input.empty();
     gui::begin_disabled(!can_join);
     if (gui::button("Join") || (enter && can_join)) {
@@ -233,8 +233,8 @@
 
   // the host's part, in the channel's controls
   void render_channel_password_controls(ecps_backend_t::Protocol_ChannelID_t channel_id) {
-    settings_section("NAME");
-    text_wrapped_disabled("What everyone sees this channel as. Empty uses your name");
+    gui::settings_section("NAME");
+    gui::text_wrapped_disabled("What everyone sees this channel as. Empty uses your name");
     gui::push_item_width(-1.f);
     bool rename_enter = gui::input_text("##channel_rename", &channel_rename_input, gui::input_text_flags_enter_returns_true);
     gui::pop_item_width();
@@ -246,9 +246,9 @@
         co_return;
       });
     }
-    settings_section("PASSWORD");
+    gui::settings_section("PASSWORD");
     if (!ecps_backend.channel_passwords_supported(channel_id)) {
-      text_wrapped_disabled("This server is too old for channel passwords, update it first");
+      gui::text_wrapped_disabled("This server is too old for channel passwords, update it first");
       return;
     }
     bool has_password = false;
@@ -257,7 +257,7 @@
         has_password = channel.is_password_protected;
       }
     }
-    text_wrapped_disabled(has_password
+    gui::text_wrapped_disabled(has_password
       ? "People need the password to join. They are asked once, then it is remembered"
       : "Anyone can join. Set a password to keep others out");
     gui::push_item_width(-1.f);
@@ -269,7 +269,7 @@
       std::string current = ecps_backend.own_saved_password();
       if (!current.empty()) {
         gui::same_line();
-        text_wrapped_disabled("Current: " + (channel_password_show ? current : std::string(current.size(), '*')));
+        gui::text_wrapped_disabled("Current: " + (channel_password_show ? current : std::string(current.size(), '*')));
       }
     }
     gui::begin_disabled(channel_password_input.empty());
