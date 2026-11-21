@@ -632,6 +632,14 @@ struct voice_chat_t {
       }
       return gone;
     });
+    for (auto it = speaker_volumes.begin(); it != speaker_volumes.end();) {
+      if (std::find(members.begin(), members.end(), it->first) == members.end()) {
+        it = speaker_volumes.erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
   }
 
   bool has_work() const {
@@ -720,6 +728,10 @@ struct voice_chat_t {
       return;
     }
     std::lock_guard<std::mutex> lock(speakers_mutex);
+    f32_t gain = 1.f;
+    if (auto it = speaker_volumes.find(session); it != speaker_volumes.end()) {
+      gain = it->second;
+    }
     auto& speaker = speakers[session];
     if (!speaker) {
       speaker = std::make_unique<speaker_t>();
@@ -736,6 +748,11 @@ struct voice_chat_t {
     std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> pcm;
     for (std::int16_t i = 0; speaker->receiving && i < std::min<std::int16_t>(gap, max_concealed); ++i) {
       if (speaker->decoder.conceal(pcm.data()) > 0) {
+        if (gain != 1.f) {
+          for (f32_t& sample : pcm) {
+            sample *= gain;
+          }
+        }
         mixer.push(session, pcm.data(), fan::audio::stream_frame_size);
       }
     }
@@ -743,13 +760,28 @@ struct voice_chat_t {
     speaker->expected_sequence = sequence + 1;
     std::int32_t frames = speaker->decoder.decode(data + sizeof(header_t), (std::int32_t)(size - sizeof(header_t)), pcm.data());
     if (frames > 0) {
-      mixer.push(session, pcm.data(), frames);
       speaker->heard_at_ms = now_ms();
       f32_t peak = 0.f;
       for (std::int32_t i = 0; i < frames * (std::int32_t)fan::audio::stream_channels; ++i) {
         peak = std::max(peak, std::abs(pcm[i]));
       }
       speaker->level = peak;
+      if (gain != 1.f) {
+        for (std::int32_t i = 0; i < frames * (std::int32_t)fan::audio::stream_channels; ++i) {
+          pcm[i] *= gain;
+        }
+      }
+      mixer.push(session, pcm.data(), frames);
+    }
+  }
+
+  void set_user_volume(std::uint32_t session, f32_t volume) {
+    std::lock_guard<std::mutex> lock(speakers_mutex);
+    if (volume >= 0.999f && volume <= 1.001f) {
+      speaker_volumes.erase(session);
+    }
+    else {
+      speaker_volumes[session] = std::clamp(volume, 0.f, 2.f);
     }
   }
 
@@ -810,6 +842,8 @@ struct voice_chat_t {
   std::uint16_t send_sequence = 0;
   std::mutex speakers_mutex;
   std::unordered_map<std::uint32_t, std::unique_ptr<speaker_t>> speakers;
+  // local playback volume per person, kept by session while they talk; the GUI remembers it by name
+  std::unordered_map<std::uint32_t, f32_t> speaker_volumes;
   std::atomic<int> wanted_channel = -1;
   std::atomic<int> active_channel = -1;
   std::atomic<bool> muted = false;

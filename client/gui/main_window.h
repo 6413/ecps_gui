@@ -389,8 +389,20 @@
                     f32_t row_height = button_size + 8.f;
                     f32_t row_width = gui::get_content_region_avail().x;
                     fan::vec2 row_at = gui::get_cursor_screen_pos();
-                    if (gui::is_mouse_hovering_rect(row_at, row_at + fan::vec2(row_width, row_height))) {
-                      gui::get_window_draw_list()->AddRectFilled(row_at, row_at + fan::vec2(row_width, row_height), 0xff0b0706u, 6.f);
+                    // the voice mixer has one gain per speaker id, keep it in step with the name it is saved under
+                    if (!is_me) {
+                      voice_chat.set_user_volume((std::uint32_t)session.session_id.i, This->user_volume(session.username));
+                    }
+                    f32_t hit_width = row_width - (has_buttons ? button_size + 12.f + (is_sharing ? button_size + 4.f : 0.f) : 0.f);
+                    fan::vec2 hit_end = row_at + fan::vec2(std::max(hit_width, 0.f), row_height);
+                    if (gui::is_mouse_hovering_rect(row_at, hit_end)) {
+                      gui::get_window_draw_list()->AddRectFilled(row_at, hit_end, 0xff0b0706u, 6.f);
+                      if (!is_me && fan::window::is_mouse_clicked(1)) {
+                        This->volume_user_session = (std::uint32_t)session.session_id.i;
+                        This->volume_user_name = session.username;
+                        This->volume_user_value = This->user_volume(session.username);
+                        gui::open_popup("##user_volume");
+                      }
                     }
 
                     gui::set_cursor_screen_pos(row_at + fan::vec2(10.f, (row_height - gui::get_font_size()) * 0.5f));
@@ -444,6 +456,7 @@
                   gui::text("No user data loaded.");
                   gui::text("Select a channel to view users.");
                 }
+                This->render_user_volume_popup();
               }
               gui::end_child();
 

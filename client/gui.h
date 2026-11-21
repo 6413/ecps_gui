@@ -102,6 +102,14 @@ struct ecps_gui_t {
       stream_settings.voice_output = voice.value("output", std::string());
       stream_settings.voice_echo_cancel = voice.value("echo_cancel", stream_settings.voice_echo_cancel);
       stream_settings.voice_noise_suppress = voice.value("noise_suppress", stream_settings.voice_noise_suppress);
+      if (voice.contains("user_volumes") && voice["user_volumes"].is_object()) {
+        fan::json users = voice["user_volumes"];
+        for (auto it = users.begin(); it != users.end(); ++it) {
+          if (it.value().is_number()) {
+            voice_user_volumes[it.key()] = (f32_t)it.value().get<double>();
+          }
+        }
+      }
     }
     if (config.contains("audio")) {
       fan::json audio = config["audio"];

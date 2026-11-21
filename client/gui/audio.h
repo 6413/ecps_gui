@@ -263,6 +263,42 @@
     };
   }
 
+  // ---- one person's playback volume, opened by right clicking them in the Users list ------------------------
+  // remembered by name, so it survives that person leaving and joining again under a new session id
+  std::map<std::string, f32_t> voice_user_volumes;
+  std::uint32_t volume_user_session = 0;
+  std::string volume_user_name;
+  f32_t volume_user_value = 1.f;
+
+  f32_t user_volume(const std::string& name) const {
+    auto it = voice_user_volumes.find(name);
+    return it == voice_user_volumes.end() ? 1.f : it->second;
+  }
+  void set_user_volume(const std::string& name, f32_t volume) {
+    voice_user_volumes[name] = volume;
+    voice_chat.set_user_volume(volume_user_session, volume);
+    save_voice_settings();
+  }
+  void render_user_volume_popup() {
+    if (!gui::begin_popup("##user_volume")) {
+      return;
+    }
+    gui::text("Voice volume for " + volume_user_name);
+    gui::slider("##user_volume_slider", &volume_user_value, 0.f, 2.f, gui::slider_flags_always_clamp);
+    if (gui::is_item_deactivated_after_edit()) {
+      set_user_volume(volume_user_name, volume_user_value);
+    }
+    if (gui::button("Reset")) {
+      volume_user_value = 1.f;
+      set_user_volume(volume_user_name, 1.f);
+    }
+    gui::same_line(0, 8.f);
+    if (gui::button("Close")) {
+      gui::close_current_popup();
+    }
+    gui::end_popup();
+  }
+
   // ---- voice chat on or off, per server -----------------------------------------------------------------------
   // config.json "voice_servers": {"ip:port": {"on", "muted", "deafened"}}. Turned on once on a server, the voice chat
   // starts again in the channel you join there, with the microphone and the others muted as you left them
@@ -326,6 +362,11 @@
     voice["volume"] = stream_settings.voice_volume;
     voice["echo_cancel"] = stream_settings.voice_echo_cancel;
     voice["noise_suppress"] = stream_settings.voice_noise_suppress;
+    fan::json users = fan::json::object();
+    for (const auto& [name, volume] : voice_user_volumes) {
+      users[name] = volume;
+    }
+    voice["user_volumes"] = users;
     write_to_config("voice", voice);
   }
 
