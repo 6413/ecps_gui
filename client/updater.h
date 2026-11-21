@@ -255,11 +255,13 @@ struct updater_t {
     }
     auto_check_running = true;
     std::thread([this] {
-      bool changed = probe_for_update();
-      auto_check_running = false;
-      if (changed) {
-        check();
-      }
+    bool changed = probe_for_update();
+    bool probe_failed = last_probe_failed;
+    auto_check_running = false;
+    // if GitHub could not be read at all, still run the full check so the About panel says why
+    if (changed || probe_failed) {
+      check();
+    }
     }).detach();
   }
 
@@ -658,6 +660,7 @@ private:
 
   // for auto_check: is there something newer than this build, by the requests GitHub doesn't rate limit
   bool probe_for_update() {
+    last_probe_failed = false;
 #if defined(_WIN32)
     if (windows) {
       // github.com/<repo>/releases/latest redirects to .../releases/tag/v1.0.4: the headers say the newest version.
@@ -684,9 +687,10 @@ private:
       if (!is_commit(built_ecps)) {
         return false;   // check() would offer every look the same "doesn't know its commit" update
       }
-      std::string ecps = branch_commit("6413/ecps_gui", "main");
-      std::string fan = branch_commit("6413/fan", "master");
-      return (is_commit(ecps) && ecps != built_ecps) || (is_commit(fan) && is_commit(built_fan) && fan != built_fan);
+    std::string ecps = branch_commit("6413/ecps_gui", "main");
+    std::string fan = branch_commit("6413/fan", "master");
+    last_probe_failed = ecps.empty() && fan.empty();
+    return (is_commit(ecps) && ecps != built_ecps) || (is_commit(fan) && is_commit(built_fan) && fan != built_fan);
     }
     // anything else compares version.h, read from GitHub's file host
     std::string found = parse_version(run_capture(std::string("curl -fsSL --max-time 10 ") + version_url));
@@ -814,6 +818,7 @@ private:
   // the first look a few seconds after the start, so it doesn't slow it down
   std::chrono::steady_clock::time_point next_auto_check = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   std::atomic<bool> auto_check_running{false};
+bool last_probe_failed = false;
   std::chrono::steady_clock::time_point restart_at;
   bool notice_loaded = false;
   std::string notice_text;

@@ -57,10 +57,51 @@ import fan.graphics.stb;
 using namespace fan::graphics;
 
 #include <fan/graphics/types.h>
+#include <fan/nativefiledialog/nfd.h>
 #include "midi/midi_synth.h"
 #include "midi/midi_input.h"
 #include "midi/midi_worker.h"
 #include "midi/midi_sac_bank.h"
+
+// GUI fonts: the paths apply on the next start, the scale applies right away. Both live in fan_settings.json.
+static fan::config_store_t fan_font_config;
+static f32_t font_scale = 1.f;
+static std::string font_paths[gui::font::count];
+static int font_drop_type = -1;
+static const char* font_type_names[] = {"regular", "bold", "mono"};
+
+static void load_font_settings() {
+  fan_font_config.load("fan_settings.json");
+  fan::json fonts = fan_font_config.contains("fonts") && fan_font_config["fonts"].is_object()
+    ? fan_font_config["fonts"] : fan::json::object();
+  font_scale = fonts.value("scale", 1.f);
+  for (int t = 0; t < gui::font::count; ++t) {
+    font_paths[t] = fonts.value(font_type_names[t], std::string());
+    if (!font_paths[t].empty()) {
+      gui::set_font_path((gui::font::type_t)t, font_paths[t]);
+    }
+  }
+  gui::set_font_scale(font_scale);
+}
+
+static void save_font_settings() {
+  fan::json fonts = fan::json::object();
+  fonts["scale"] = font_scale;
+  for (int t = 0; t < gui::font::count; ++t) {
+    fonts[font_type_names[t]] = font_paths[t];
+  }
+  fan_font_config.write("fonts", fonts);
+}
+
+static bool pick_font_file(std::string& picked) {
+  nfdchar_t* path = nullptr;
+  if (NFD_OpenDialog("ttf,otf", nullptr, &path) != NFD_OKAY) {
+    return false;
+  }
+  picked = path;
+  std::free(path);
+  return true;
+}
 
 #if defined(_WIN32)
 #include <timeapi.h>
@@ -1787,7 +1828,8 @@ int main() {
   std::promise<void> render_thread_promise;
   std::future<void> render_thread_future = render_thread_promise.get_future();
 
-  // the engine builds its gui fonts on the render thread, so enable emojis before it starts
+  // the engine builds its gui fonts on the render thread, so set the saved fonts and emojis before it starts
+  load_font_settings();
   fan::graphics::gui::load_emojis();
 
   fan::event::thread_create([&render_thread_promise] {
@@ -1984,6 +2026,11 @@ int main() {
       #endif
         // waits for the next frame of the desktop, but a failed read returns at once
         if (!rt->screen_encoder.screen_read()) {
+        #if !defined(_WIN32)
+          if (rt->screen_encoder.take_capture_open_failed()) {
+            rt->ecps_gui.capture_armed = false;
+          }
+        #endif
           ++stats.read_failed;
           rt->screen_encoder.sleep_thread();
           continue;
@@ -2140,6 +2187,10 @@ int main() {
           if (rt->screen_encoder.screen_read()) {
             auto& geometry = rt->screen_encoder.mdscr.Geometry;
             rt->ecps_gui.store_capture_preview(rt->screen_encoder.screen_buffer, geometry.Resolution.x, geometry.Resolution.y, geometry.LineSize);
+          }
+          else if (rt->screen_encoder.take_capture_open_failed()) {
+            // the portal dialog was cancelled: stay cancelled instead of asking again every 100 ms
+            rt->ecps_gui.capture_armed = false;
           }
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
           continue;

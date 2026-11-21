@@ -375,6 +375,7 @@
                 This->render_voice_switch(This->selected_channel_id);
               }
               if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
+                bool open_user_volume = false;
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
                   auto sharing_now = ecps_backend.streamers_of(This->selected_channel_id);
@@ -401,7 +402,8 @@
                         This->volume_user_session = (std::uint32_t)session.session_id.i;
                         This->volume_user_name = session.username;
                         This->volume_user_value = This->user_volume(session.username);
-                        gui::open_popup("##user_volume");
+                        // open after pop_id(): a popup's id includes the id stack, and begin_popup runs outside it
+                        open_user_volume = true;
                       }
                     }
 
@@ -455,6 +457,9 @@
                 else {
                   gui::text("No user data loaded.");
                   gui::text("Select a channel to view users.");
+                }
+                if (open_user_volume) {
+                  gui::open_popup("##user_volume");
                 }
                 This->render_user_volume_popup();
               }
@@ -598,6 +603,39 @@
       gui::settings_section("DISPLAY");
       gui::settings_switch("Stats over the picture", &This->show_stream_stats,
         "Drag the box to move it");
+
+      // ---- the engine's gui fonts
+      gui::settings_section("FONTS");
+      font_drop_type = -1;
+      gui::settings_row("Font size", [&] {
+        gui::slider("##font_scale", &font_scale, 0.75f, 2.f, gui::slider_flags_always_clamp);
+        if (gui::is_item_deactivated_after_edit()) {
+          gui::set_font_scale(font_scale);
+          save_font_settings();
+        }
+      });
+      for (int t = 0; t < gui::font::count; ++t) {
+        const char* label = t == gui::font::bold ? "Bold font" : (t == gui::font::mono ? "Mono font" : "Text font");
+        gui::settings_row(label, [&, t] {
+          if (gui::button("Pick...##font" + std::to_string(t))) {
+            std::string picked;
+            if (pick_font_file(picked)) {
+              font_paths[t] = picked;
+              gui::set_font_path((gui::font::type_t)t, picked);
+              save_font_settings();
+            }
+          }
+          if (gui::is_item_hovered()) {
+            font_drop_type = t;
+            gui::set_tooltip("Or drop a .ttf or .otf here");
+          }
+          gui::same_line();
+          gui::text_disabled(font_paths[t].empty()
+            ? std::string("default")
+            : std::filesystem::path(font_paths[t]).filename().string());
+        });
+      }
+      gui::text_wrapped_disabled("A picked font is saved and loads when the program starts again.");
 
       // ---- the details, folded away
       gui::dummy(fan::vec2(0, 6.f));

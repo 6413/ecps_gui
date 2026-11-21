@@ -29,6 +29,28 @@
   };
   std::unordered_map<std::string, chat_wrapped_t> chat_wrap_cache;
 
+  bool chat_url_clicked = false;
+
+  // http(s):// and www. links in a line of chat, up to the first space or bracket
+  static bool chat_link_at(const std::string& s, std::size_t at, std::size_t& end) {
+    bool link = s.compare(at, 7, "http://") == 0 || s.compare(at, 8, "https://") == 0 || s.compare(at, 4, "www.") == 0;
+    if (!link) {
+      return false;
+    }
+    end = at;
+    while (end < s.size() && (unsigned char)s[end] > 0x20 && s[end] != '<' && s[end] != '>' && s[end] != '"') {
+      ++end;
+    }
+    while (end > at && (s[end - 1] == '.' || s[end - 1] == ',' || s[end - 1] == ';' || s[end - 1] == ')')) {
+      --end;
+    }
+    return end > at;
+  }
+
+  static std::string chat_link_url(const std::string& text) {
+    return text.rfind("www.", 0) == 0 ? "https://" + text : text;
+  }
+
   static void chat_wrap(chat_wrapped_t& wrapped, const std::string& text, f32_t width) {
     wrapped.width = width;
     wrapped.source = text;
@@ -120,6 +142,49 @@
     chat_lines.push_back(std::move(line));
   }
 
+  // one drawn line: plain text, with links blue, underlined and clickable
+  void chat_draw_link_line(const std::string& line, const std::string& line_id, const std::string& after) {
+    fan::vec2 start = gui::get_cursor_screen_pos();
+    std::size_t at = 0;
+    std::size_t plain_start = 0;
+    int part = 0;
+    auto draw_plain = [&](std::size_t from, std::size_t to) {
+      if (to <= from) {
+        return;
+      }
+      gui::text(line.substr(from, to - from));
+      gui::same_line(0, 0.f);
+    };
+    while (at < line.size()) {
+      std::size_t end = 0;
+      if (!chat_link_at(line, at, end)) {
+        ++at;
+        continue;
+      }
+      draw_plain(plain_start, at);
+      std::string url = line.substr(at, end - at);
+      gui::push_id(line_id + std::to_string(part++));
+      gui::text(fan::color(0.3f, 0.6f, 1.f, 1.f), url);
+      fan::vec2 lo = gui::get_item_rect_min();
+      fan::vec2 hi = gui::get_item_rect_max();
+      gui::get_window_draw_list()->AddLine(fan::vec2(lo.x, hi.y - 1.f), fan::vec2(hi.x, hi.y - 1.f), 0xffff9955u, 1.f);
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip("Open link");
+        if (fan::window::is_mouse_clicked(0)) {
+          chat_open_path(chat_link_url(url));
+          chat_url_clicked = true;
+        }
+      }
+      gui::pop_id();
+      gui::same_line(0, 0.f);
+      at = end;
+      plain_start = end;
+    }
+    draw_plain(plain_start, line.size());
+    fan::vec2 max = start + fan::vec2(gui::calc_text_size(line.empty() ? std::string(" ") : line).x, gui::get_text_line_height());
+    chat_add_line(line, after, false, start, max);
+  }
+
   // a plain part of a message, wrapped to the width, one kept line each
   void chat_plain_lines(const std::string& text, const std::string& id) {
     f32_t width = std::max(gui::get_content_region_avail().x - 4.f, 50.f);
@@ -134,8 +199,7 @@
       bool soft = stop != std::string::npos &&
         std::find(wrapped.soft_breaks.begin(), wrapped.soft_breaks.end(), stop) != wrapped.soft_breaks.end();
       std::string line = wrapped.shown.substr(begin, stop == std::string::npos ? std::string::npos : stop - begin);
-      gui::text(line.empty() ? std::string(" ") : line);
-      chat_add_line(line, soft ? "" : "\n", false, gui::get_item_rect_min(), gui::get_item_rect_max());
+      chat_draw_link_line(line.empty() ? std::string(" ") : line, id, soft ? "" : "\n");
       if (stop == std::string::npos) {
         break;
       }
@@ -248,7 +312,7 @@
   void chat_update_mark(const std::vector<ecps_backend_t::chat_message_t>& messages) {
     fan::vec2 m = gui::get_io().MousePos;
     bool over_text = gui::is_window_hovered(gui::hovered_flags_child_windows) && !gui::is_any_item_hovered();
-    if (over_text && fan::window::is_mouse_clicked(0)) {
+    if (over_text && !chat_url_clicked && fan::window::is_mouse_clicked(0)) {
       chat_mark_from = chat_mark_to = chat_hit(m);
       chat_marking = true;
       chat_has_mark = false;
@@ -1072,9 +1136,14 @@
     }
   }
 
+  // a line of only whitespace, like pressing Enter in an empty box, is not a message
+  static bool chat_has_text_content(const std::string& text) {
+    return text.find_first_not_of(" \t\r\n\v\f") != std::string::npos;
+  }
+
   // a message, or a .txt file when it is too long for one
   void chat_send_text(ecps_backend_t::Protocol_ChannelID_t channel_id, const std::string& text) {
-    if (text.empty()) {
+    if (!chat_has_text_content(text)) {
       return;
     }
     if (text.size() <= chat_inline_max) {
@@ -1210,6 +1279,7 @@
 
   void render_chat_tab(ecps_backend_t::Protocol_ChannelID_t channel_id) {
     chat_tab_seen_at = std::chrono::steady_clock::now();
+    chat_url_clicked = false;
     if (!ecps_backend.chat_known(channel_id)) {
       gui::text_wrapped_disabled("Connecting to the chat... If this stays, the server is too old for chat and needs updating.");
       return;
@@ -1245,11 +1315,19 @@
         if (message.from != last_from || message.time - last_time > 300) {
           gui::spacing();
           bool mine = message.from == (std::uint32_t)ecps_backend.session_id.i;
+          // a short bar marks where a new message begins, so a run of lines from one person reads as one message
+          fan::vec2 group_at = gui::get_cursor_screen_pos();
+          gui::get_window_draw_list()->AddRectFilled(group_at + fan::vec2(-4.f, 2.f),
+            group_at + fan::vec2(-2.f, 2.f + gui::get_font_size()), mine ? 0xffff5919u : 0xffffa070u, 1.f);
+          f32_t row_start = group_at.x;
+          f32_t row_width = gui::get_content_region_avail().x;
           gui::text(mine ? fan::color(0.55f, 0.8f, 1.f, 1.f) : fan::color(0.95f, 0.8f, 0.45f, 1.f), message.name);
           fan::vec2 name_min = gui::get_item_rect_min();
-          gui::same_line();
-          gui::text_wrapped_disabled(chat_time_label(message.time));
-          chat_add_line(message.name + "  " + chat_time_label(message.time), "\n", true, name_min, gui::get_item_rect_max());
+          std::string time = chat_time_label(message.time);
+          // time sits at the right edge, on the same line as the name
+          gui::set_cursor_pos_x(row_start + row_width - gui::calc_text_size(time).x);
+          gui::text_disabled(time);
+          chat_add_line(message.name + "  " + time, "\n", true, name_min, gui::get_item_rect_max());
         }
         last_from = message.from;
         last_time = message.time;
@@ -1318,14 +1396,15 @@
       chat_pending_files.insert(chat_pending_files.end(), pasted_files.begin(), pasted_files.end());
     }
     // pasted text too long for a message waits as a file too
-    else if (chat_input.size() > chat_inline_max) {
+    else if (chat_input.size() > chat_inline_max && chat_has_text_content(chat_input)) {
       chat_pending_files.push_back(chat_text_to_file(chat_input));
       chat_input.clear();
     }
 
     gui::same_line();
     bool send = gui::button("Send##chat_send");
-    if ((enter || send) && (!chat_input.empty() || !chat_pending_files.empty())) {
+    bool has_text = chat_has_text_content(chat_input);
+    if ((enter || send) && (has_text || !chat_pending_files.empty())) {
       chat_send_text(channel_id, chat_input);
       chat_input.clear();
       if (!chat_pending_files.empty()) {

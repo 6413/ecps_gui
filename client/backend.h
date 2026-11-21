@@ -1058,7 +1058,7 @@ struct ecps_backend_t {
   // only into a channel whose server answered the probe, an older one would close the connection
   fan::event::task_t send_chat(Protocol_ChannelID_t channel_id, std::string text) {
     auto* channel = find_channel(channel_id);
-    if (!channel || !chat_known(channel_id) || text.empty()) {
+    if (!channel || !chat_known(channel_id) || text.find_first_not_of(" \t\r\n\v\f") == std::string::npos) {
       co_return;
     }
     Protocol_C2S_t::Channel_Chat_Send_t rest;
