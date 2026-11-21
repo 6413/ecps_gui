@@ -30,6 +30,11 @@
         // done: the tab bar needs a frame or two to switch, and without it the Stream View would hide the tabs again
         // a tab asked for elsewhere (main_tab) takes effect here
         if (main_tab != -1) {
+          // 0 was the Channels tab: now the channels panel of the main view
+          if (main_tab == 0) {
+            This->open_side_panel(side_channels);
+            main_tab = 1;
+          }
           current_tab = main_tab;
           main_tab = -1;
         }
@@ -64,12 +69,11 @@
           first_open = true;
         }
 
-        // the bar above holds the tabs, the one chosen fills the rest
+        // the bar above holds the tabs, the one chosen fills the rest. The channels are a panel of the main view
         switch (current_tab) {
-          case 0: render_channels_content(); break;
           case 1: render_stream_view_content(); break;
           case 2: This->render_debug_tab(); break;
-          default: current_tab = 0; break;
+          default: current_tab = 1; break;
         }
         }
       }
@@ -80,17 +84,25 @@
       This->pop_theme();
     }
 
-    void render_channels_content() {
-      if (auto rt = get_render_thread(); rt) {
-        rt->network_frame.set_size(0);
-      }
-      engine.viewport_set(engine.orthographic_render_view.viewport, 0, engine.window.get_size());
+    // the channel list and the selected channel's details: side by side when there is room, else the list above
+    f32_t channels_list_height = 0.f;
+    bool channels_list_resizing = false;
 
+    void render_channels_content() {
       fan::vec2 avail_size = gui::get_content_region_avail();
       if (avail_size.x > 0 && avail_size.y > 0) {
+        bool stacked = avail_size.x < 760.f;
+        f32_t stacked_handle = 12.f;
+        f32_t stacked_list_height = 0.f;
+        if (stacked) {
+          if (channels_list_height <= 0.f) {
+            channels_list_height = avail_size.y * 0.38f;
+          }
+          stacked_list_height = std::clamp(channels_list_height, std::min(160.f, avail_size.y * 0.3f), avail_size.y * 0.7f);
+        }
 
-        f32_t left_window_padding = 8.0f;
-        f32_t right_window_padding = 12.0f;
+        f32_t left_window_padding = 0.0f;
+        f32_t right_window_padding = 0.0f;
         f32_t splitter_spacing = 12.0f;
         f32_t splitter_width = 2.0f;
 
@@ -116,10 +128,12 @@
 
         f32_t channel_list_width = avail_size.x - channel_details_width - total_spacing;
 
-        gui::dummy(fan::vec2(left_window_padding, 0));
-        gui::same_line(0, 0);
+        if (!stacked) {
+          gui::dummy(fan::vec2(left_window_padding, 0));
+          gui::same_line(0, 0);
+        }
 
-        gui::begin_child("##channel_list_panel", fan::vec2(channel_list_width, avail_size.y), true);
+        gui::begin_child("##channel_list_panel", stacked ? fan::vec2(avail_size.x, stacked_list_height) : fan::vec2(channel_list_width, avail_size.y), true);
 
         gui::spacing();
         gui::spacing();
@@ -160,6 +174,7 @@
                 std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
                 std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
                 if (name_lower.find(filter_lower) == std::string::npos) {
+                  gui::pop_id();
                   continue;
                 }
               }
@@ -308,15 +323,37 @@
 
         gui::end_child();
 
-        gui::same_line(0, splitter_spacing);
+        if (stacked) {
+          // the line between the list and the details: dragged, the list gets taller or shorter
+          fan::vec2 at = gui::get_cursor_screen_pos();
+          gui::invisible_button("##channel_stack_handle", fan::vec2(avail_size.x, stacked_handle));
+          bool hot = gui::is_item_hovered() || gui::is_item_active();
+          if (hot) {
+            gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
+          }
+          if (gui::is_item_active()) {
+            channels_list_height = stacked_list_height + gui::get_io().MouseDelta.y;
+            channels_list_resizing = true;
+          }
+          else if (channels_list_resizing) {
+            channels_list_resizing = false;
+            This->save_side_panel_layout();
+          }
+          fan::vec2 c = at + fan::vec2(avail_size.x * 0.5f, stacked_handle * 0.5f);
+          gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), hot ? 0xffff7a33u : 0x30ffffffu, 3.f);
+          gui::begin_child("##channel_details_panel", fan::vec2(avail_size.x, std::max(avail_size.y - stacked_list_height - stacked_handle - gui::get_style().ItemSpacing.y * 2.f, 60.f)), true);
+        }
+        else {
+          gui::same_line(0, splitter_spacing);
 
-        static bool is_resizing_channels = false;
-        gui::render_vertical_splitter("##channel_splitter_hitbox", avail_size.y,
-          unclamped_details_width, channel_details_width, min_details_width, max_details_width, is_resizing_channels);
+          static bool is_resizing_channels = false;
+          gui::render_vertical_splitter("##channel_splitter_hitbox", avail_size.y,
+            unclamped_details_width, channel_details_width, min_details_width, max_details_width, is_resizing_channels);
 
-        gui::same_line(0, splitter_spacing);
+          gui::same_line(0, splitter_spacing);
 
-        gui::begin_child("##channel_details_panel", fan::vec2(channel_details_width, avail_size.y), true);
+          gui::begin_child("##channel_details_panel", fan::vec2(channel_details_width, avail_size.y), true);
+        }
 
         gui::dummy(fan::vec2(12, 0));
         gui::same_line(0, 0);
@@ -429,7 +466,28 @@
                       f32_t dt = std::min(gui::get_io().DeltaTime, 0.1f);
                       shown = target > shown ? shown + (target - shown) * std::min(dt * 30.f, 1.f) : std::max(target, shown - dt * 2.5f);
                       gui::same_line(0, 8.f);
-                      gui::level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
+                      // a click mutes: yourself for the others, someone else just for you
+                      bool badge_muted = is_me ? voice_chat.muted.load() : This->user_volume(session.username) <= 0.f;
+                      if (badge_muted) {
+                        gui::badge("muted", 0x600a0affu, 0xff8080ffu);
+                      }
+                      else {
+                        gui::level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
+                      }
+                      if (gui::is_item_hovered()) {
+                        gui::set_mouse_cursor(gui::mouse_cursor_hand);
+                        gui::set_tooltip(is_me
+                          ? (badge_muted ? "Click to unmute your microphone" : "Click to mute your microphone")
+                          : (badge_muted ? "Click to hear " + session.username + " again" : "Click to mute " + session.username + " for you"));
+                      }
+                      if (gui::is_item_clicked()) {
+                        if (is_me) {
+                          This->toggle_mic_mute();
+                        }
+                        else {
+                          This->toggle_user_mute(speaker, session.username);
+                        }
+                      }
                     }
                     gui::same_line(0, 10.f);
                     gui::text(fan::color(0.3f, 0.3f, 0.34f, 1.f), "#" + std::to_string(session.session_id.i));
@@ -603,39 +661,6 @@
       gui::settings_section("DISPLAY");
       gui::settings_switch("Stats over the picture", &This->show_stream_stats,
         "Drag the box to move it");
-
-      // ---- the engine's gui fonts
-      gui::settings_section("FONTS");
-      font_drop_type = -1;
-      gui::settings_row("Font size", [&] {
-        gui::slider("##font_scale", &font_scale, 0.75f, 2.f, gui::slider_flags_always_clamp);
-        if (gui::is_item_deactivated_after_edit()) {
-          gui::set_font_scale(font_scale);
-          save_font_settings();
-        }
-      });
-      for (int t = 0; t < gui::font::count; ++t) {
-        const char* label = t == gui::font::bold ? "Bold font" : (t == gui::font::mono ? "Mono font" : "Text font");
-        gui::settings_row(label, [&, t] {
-          if (gui::button("Pick...##font" + std::to_string(t))) {
-            std::string picked;
-            if (pick_font_file(picked)) {
-              font_paths[t] = picked;
-              gui::set_font_path((gui::font::type_t)t, picked);
-              save_font_settings();
-            }
-          }
-          if (gui::is_item_hovered()) {
-            font_drop_type = t;
-            gui::set_tooltip("Or drop a .ttf or .otf here");
-          }
-          gui::same_line();
-          gui::text_disabled(font_paths[t].empty()
-            ? std::string("default")
-            : std::filesystem::path(font_paths[t]).filename().string());
-        });
-      }
-      gui::text_wrapped_disabled("A picked font is saved and loads when the program starts again.");
 
       // ---- the details, folded away
       gui::dummy(fan::vec2(0, 6.f));
@@ -842,8 +867,8 @@
       }
     }
 
-    // The stream and its panels: Settings and Chat each on the right, at the bottom or on the left (two on one side
-    // share a panel). The lines between them resize them
+    // The stream and its panels: Channels, Settings and Chat each on the right, at the bottom or on the left (more
+    // on one side share a panel with a tab each). The lines between them resize them
     void process_stream_settings() {
       This->load_side_panel_layout();
       fan::vec2 avail = gui::get_content_region_avail();
@@ -862,7 +887,13 @@
       bool left = !This->panels_on(2).empty();
       f32_t height = bottom ? std::clamp(This->side_panel_height, 150.f, area.y * 0.7f) : 0.f;
       f32_t top_height = area.y - (bottom ? height + handle : 0.f);
-      f32_t width = std::clamp(This->stream_settings.settings_panel_width, 250.f, area.x * (left && right ? 0.35f : 0.6f));
+      // the left one starts wide, the channels in it want room
+      if (This->side_left_width <= 0.f) {
+        This->side_left_width = std::max(area.x * 0.42f, 420.f);
+      }
+      f32_t share = left && right ? 0.4f : 0.7f;
+      f32_t right_width = std::clamp(This->stream_settings.settings_panel_width, 250.f, std::max(250.f, area.x * share));
+      f32_t left_width = std::clamp(This->side_left_width, 250.f, std::max(250.f, area.x * share));
       auto panel = [&](int side, fan::vec2 at, fan::vec2 size) {
         gui::set_cursor_screen_pos(at);
         gui::begin_child(("##side_panel_" + std::to_string(side)).c_str(), size, true);
@@ -871,18 +902,18 @@
       };
       f32_t x = origin.x;
       if (left) {
-        panel(2, origin, fan::vec2(width, top_height));
-        gui::set_cursor_screen_pos(fan::vec2(origin.x + width, origin.y));
+        panel(2, origin, fan::vec2(left_width, top_height));
+        gui::set_cursor_screen_pos(fan::vec2(origin.x + left_width, origin.y));
         This->render_side_panel_handle(fan::vec2(handle, top_height), 2);
-        x += width + handle;
+        x += left_width + handle;
       }
-      f32_t stream_width = area.x - (left ? width + handle : 0.f) - (right ? width + handle : 0.f);
+      f32_t stream_width = area.x - (left ? left_width + handle : 0.f) - (right ? right_width + handle : 0.f);
       gui::set_cursor_screen_pos(fan::vec2(x, origin.y));
       render_stream_area("##stream_display_split", fan::vec2(stream_width, top_height));
       if (right) {
         gui::set_cursor_screen_pos(fan::vec2(x + stream_width, origin.y));
         This->render_side_panel_handle(fan::vec2(handle, top_height), 0);
-        panel(0, fan::vec2(x + stream_width + handle, origin.y), fan::vec2(width, top_height));
+        panel(0, fan::vec2(x + stream_width + handle, origin.y), fan::vec2(right_width, top_height));
       }
       if (bottom) {
         gui::set_cursor_screen_pos(fan::vec2(origin.x, origin.y + top_height));
@@ -965,7 +996,7 @@
       f32_t content_height = avail_size.y - gui::get_style().ItemSpacing.y;
 
       if (avail_size.x > 0 && content_height > 0) {
-        if (This->stream_settings.show_in_stream_view) {
+        if (This->any_side_panel_open()) {
           process_stream_settings();
         }
         else {
@@ -976,9 +1007,9 @@
       gui::spacing();
     }
 
-    int main_tab = 0;
+    int main_tab = -1;
     int detail_tab = 0;
-    int current_tab = 0;
+    int current_tab = 1; // 1 the main view, 2 Debug
     bool p_open = true;
     bool auto_refresh = true;
     int refresh_interval = 1;

@@ -26,9 +26,10 @@ struct top_bar_t {
 
     // the tabs, as words: the one you are on is white and underlined
     gui::set_cursor_pos(fan::vec2(6.f, row_y));
-    gui::nav_tabs(list, {"Channels", "Stream View", "Debug"}, gui.window_handler.current_tab,
+    // Home is the stream with the channels, chat and settings panels around it
+    gui::nav_tabs(list, {"Home", "Debug"}, gui.window_handler.current_tab - 1,
       frame_height, y_offset, Gui::accent_u32, faded,
-      [this](int index) { gui.window_handler.main_tab = index; });
+      [this](int index) { gui.window_handler.main_tab = index + 1; });
 
     // what goes out and comes in is written after the tabs, once the right side is placed and the room is known
     gui::same_line(0, 22.f);
@@ -114,7 +115,7 @@ struct top_bar_t {
     gui::set_cursor_pos(fan::vec2(right, text_y));
     gui::text(fan::color(0.7f, 0.7f, 0.75f, 1.f), "Audio");
     if (gui::is_item_clicked()) {
-      gui.window_handler.current_tab = 0;
+      gui.window_handler.main_tab = 0; // the channels panel, where the voice settings are
       gui.voice_settings_open = true;
     }
     if (gui::is_item_hovered()) {

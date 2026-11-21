@@ -444,6 +444,10 @@ struct ecps_backend_t {
             p.keyframe = (head->GetFlag() & ProtocolChannel::ScreenShare::StreamHeadFlag::KeyFrame) != 0;
             header_size = sizeof(ScreenShare_StreamHeader_Head_t);
           }
+          // waiting for a keyframe and this frame is not one: ask at its first packet, not once all of it is here
+          if (p.head && !p.keyframe && view_need_keyframe.load(std::memory_order_relaxed)) {
+            view.RequestKeyframe();
+          }
           p.data = stream_data + header_size;
           p.size = relative_size - header_size;
           view.assembler.set_rtt_ms(ping_ms);

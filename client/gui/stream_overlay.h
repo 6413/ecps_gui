@@ -29,15 +29,23 @@
       }
     }
     lines.insert(lines.begin(), "In channel  " + std::to_string(lines.size()));
-    f32_t width = 180.f;
+    // sized to the text with the child's own padding and border, so nothing is cut or scrolled
+    fan::vec2 padding = gui::get_style().WindowPadding;
+    f32_t width = 0.f;
     for (const auto& line : lines) {
-      width = std::max(width, gui::calc_text_size(line).x + 24.f);
+      width = std::max(width, gui::calc_text_size(line).x);
     }
-    f32_t height = lines.size() * gui::get_text_line_height_with_spacing() + 12.f;
+    width += padding.x * 2.f + 4.f;
+    f32_t height = lines.size() * gui::get_text_line_height_with_spacing() - gui::get_style().ItemSpacing.y + padding.y * 2.f + 2.f;
+    f32_t max_height = gui::get_window_size().y - 20.f;
+    if (height > max_height) {
+      height = max_height;
+      width += gui::get_style().ScrollbarSize;
+    }
     fan::vec2 at = gui::get_window_pos() + fan::vec2(std::max(0.f, gui::get_window_size().x - width - 10.f), 10.f + stream_top_offset());
     gui::set_cursor_screen_pos(at);
     gui::push_style_color(gui::col_child_bg, fan::color(0.f, 0.f, 0.f, 0.6f));
-    if (gui::begin_child("##stream_users", fan::vec2(width, std::min(height, gui::get_window_size().y - 20.f)), true)) {
+    if (gui::begin_child("##stream_users", fan::vec2(width, height), true)) {
       for (std::size_t i = 0; i < lines.size(); ++i) {
         if (i == 0) {
           gui::text_disabled(lines[i]);
@@ -86,8 +94,19 @@
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
     gui::same_line();
-    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f - 68.f);
-    if (gui::button("Users##btn_users", fan::vec2(60.f, frame_height))) {
+    f32_t users_width = gui::calc_text_size("Users").x + gui::get_style().FramePadding.x * 2.f;
+    // the channel list beside the stream, closed and opened again from here
+    f32_t channels_width = gui::calc_text_size("Channels").x + gui::get_style().FramePadding.x * 2.f;
+    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f - users_width - 8.f - channels_width - 8.f);
+    if (gui::button("Channels##btn_channels", fan::vec2(channels_width, frame_height))) {
+      toggle_side_panel(side_channels);
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip(panel_shown(side_channels) ? "Hide the channels" : "Show the channels");
+    }
+    gui::same_line(0, 8.f);
+    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f - users_width - 8.f);
+    if (gui::button("Users##btn_users", fan::vec2(users_width, frame_height))) {
       show_stream_users = !show_stream_users;
     }
     if (gui::is_item_hovered()) {

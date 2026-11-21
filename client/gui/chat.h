@@ -119,6 +119,225 @@
     bool whole = false;
   };
   std::vector<chat_line_t> chat_lines;
+  static constexpr f32_t chat_text_indent = 10.f;
+  // ---- replies and pins go as ordinary messages with a tag in front, so a server or client without them still
+  // shows readable text: "[reply #12 name] first words" on the line before a reply, "[pin #12] first words", "[unpin #12]"
+  struct chat_tag_t {
+    enum kind_e { none, reply, pin, unpin };
+    kind_e kind = none;
+    std::uint32_t id = 0;
+    std::string name;  // reply: whose message it answers
+    std::string quote; // the first words of that message
+    std::string body;  // what is shown as the message itself
+  };
+  static chat_tag_t chat_parse_tag(const std::string& text) {
+    chat_tag_t tag;
+    tag.body = text;
+    auto parse = [&](const char* prefix, chat_tag_t::kind_e kind) {
+      std::size_t n = std::strlen(prefix);
+      if (text.compare(0, n, prefix) != 0) {
+        return false;
+      }
+      std::size_t at = n;
+      std::uint64_t id = 0;
+      std::size_t digits = 0;
+      while (at < text.size() && std::isdigit((unsigned char)text[at]) && digits < 10) {
+        id = id * 10 + (std::uint64_t)(text[at] - '0');
+        ++at;
+        ++digits;
+      }
+      std::size_t line_end = text.find('\n');
+      std::size_t close = text.find(']', at);
+      if (!digits || close == std::string::npos || (line_end != std::string::npos && close > line_end)) {
+        return false;
+      }
+      if (kind == chat_tag_t::reply) {
+        if (text[at] != ' ') {
+          return false;
+        }
+        tag.name = text.substr(at + 1, close - at - 1);
+      }
+      else if (close != at) {
+        return false;
+      }
+      tag.kind = kind;
+      tag.id = (std::uint32_t)id;
+      std::size_t after = close + 1;
+      if (after < text.size() && text[after] == ' ') {
+        ++after;
+      }
+      tag.quote = text.substr(after, line_end == std::string::npos ? std::string::npos : line_end - after);
+      if (kind == chat_tag_t::reply) {
+        tag.body = line_end == std::string::npos ? std::string() : text.substr(line_end + 1);
+      }
+      else {
+        tag.body.clear();
+      }
+      return true;
+    };
+    if (!parse("[reply #", chat_tag_t::reply) && !parse("[pin #", chat_tag_t::pin)) {
+      parse("[unpin #", chat_tag_t::unpin);
+    }
+    return tag;
+  }
+  // the first words of a message on one line, for a reply or a pin
+  static std::string chat_snippet(const std::string& text, std::size_t max = 60) {
+    std::string body = chat_parse_tag(text).body;
+    std::string out;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+      if (body.compare(i, 3, "```") == 0) {
+        i += 2;
+        continue;
+      }
+      char c = body[i];
+      if (c == '\n' || c == '\r' || c == '\t') {
+        if (!out.empty() && out.back() != ' ') {
+          out += ' ';
+        }
+        continue;
+      }
+      out += c;
+    }
+    std::size_t first = out.find_first_not_of(' ');
+    out = first == std::string::npos ? std::string() : out.substr(first);
+    while (!out.empty() && out.back() == ' ') {
+      out.pop_back();
+    }
+    if (out.size() > max) {
+      std::size_t cut = max;
+      while (cut > 0 && ((unsigned char)out[cut] & 0xC0) == 0x80) {
+        --cut;
+      }
+      out = out.substr(0, cut) + "...";
+    }
+    return out.empty() ? std::string("a message") : out;
+  }
+  // the pinned messages of a channel, oldest pin first, with the words the pin carried for one no longer here
+  struct chat_pin_t {
+    std::uint32_t id = 0;
+    std::string quote;
+  };
+  static std::vector<chat_pin_t> chat_pins(const std::vector<ecps_backend_t::chat_message_t>& messages) {
+    std::vector<chat_pin_t> pins;
+    for (const auto& message : messages) {
+      chat_tag_t tag = chat_parse_tag(message.text);
+      if (tag.kind != chat_tag_t::pin && tag.kind != chat_tag_t::unpin) {
+        continue;
+      }
+      std::erase_if(pins, [&](const chat_pin_t& p) { return p.id == tag.id; });
+      if (tag.kind == chat_tag_t::pin) {
+        pins.push_back({tag.id, tag.quote});
+      }
+    }
+    return pins;
+  }
+  // replying: the message answered, shown above the input until sent or dropped
+  std::uint32_t chat_reply_id = 0;
+  std::uint32_t chat_reply_channel = (std::uint32_t)-1;
+  std::string chat_reply_name;
+  std::string chat_reply_quote;
+  // a message to scroll to (a reply's quote or a pin clicked) and the one shown lit for a moment after
+  std::uint32_t chat_jump_id = 0;
+  std::uint32_t chat_flash_id = 0;
+  std::chrono::steady_clock::time_point chat_flash_at{};
+  // the message under the mouse last frame: its Reply and Pin buttons are drawn this frame
+  std::uint32_t chat_hover_id = 0;
+
+  void chat_send_pin(ecps_backend_t::Protocol_ChannelID_t channel_id, std::uint32_t id, const std::string& text, bool pin) {
+    chat_send_text(channel_id, pin ? "[pin #" + std::to_string(id) + "] " + chat_snippet(text) : "[unpin #" + std::to_string(id) + "]");
+  }
+
+  void render_chat_pins(ecps_backend_t::Protocol_ChannelID_t channel_id, const std::vector<ecps_backend_t::chat_message_t>& messages) {
+    auto pins = chat_pins(messages);
+    if (pins.empty()) {
+      return;
+    }
+    if (gui::button("Pinned (" + std::to_string(pins.size()) + ")##chat_pins")) {
+      gui::open_popup("##chat_pins_popup");
+    }
+    if (gui::is_item_hovered()) {
+      gui::set_tooltip("The messages pinned in this channel");
+    }
+    if (gui::begin_popup("##chat_pins_popup")) {
+      gui::text_disabled("Pinned messages");
+      gui::separator();
+      for (auto it = pins.rbegin(); it != pins.rend(); ++it) {
+        const ecps_backend_t::chat_message_t* original = nullptr;
+        for (const auto& message : messages) {
+          if (message.id == it->id) {
+            original = &message;
+          }
+        }
+        gui::push_id((int)it->id);
+        std::string line = original ? original->name + ": " + chat_snippet(original->text) : it->quote;
+        if (gui::selectable(line, false, 0, fan::vec2(std::min(gui::calc_text_size(line).x, 420.f), 0))) {
+          if (original) {
+            chat_jump_id = it->id;
+          }
+        }
+        if (!original && gui::is_item_hovered()) {
+          gui::set_tooltip("Older than the messages kept here");
+        }
+        gui::same_line(0, 12.f);
+        if (gui::button("Unpin")) {
+          chat_send_pin(channel_id, it->id, std::string(), false);
+        }
+        gui::pop_id();
+      }
+      gui::end_popup();
+    }
+  }
+
+  // a reply's quote above its text: who it answers and their first words, a click goes to the message
+  void render_chat_reply_quote(const chat_tag_t& tag) {
+    std::string line = tag.name + ": " + tag.quote;
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::set_cursor_screen_pos(at + fan::vec2(14.f, 0.f));
+    gui::text(fan::color(0.6f, 0.62f, 0.7f, 1.f), line);
+    fan::vec2 lo = gui::get_item_rect_min();
+    fan::vec2 hi = gui::get_item_rect_max();
+    // the little hook from the quote down to the reply
+    auto* list = gui::get_window_draw_list();
+    f32_t mid = (lo.y + hi.y) * 0.5f;
+    list->AddLine(fan::vec2(at.x + 4.f, hi.y + 2.f), fan::vec2(at.x + 4.f, mid), 0xff707070u, 1.5f);
+    list->AddLine(fan::vec2(at.x + 4.f, mid), fan::vec2(lo.x - 3.f, mid), 0xff707070u, 1.5f);
+    if (gui::is_item_hovered()) {
+      gui::set_mouse_cursor(gui::mouse_cursor_hand);
+      gui::set_tooltip("Go to the message");
+      if (fan::window::is_mouse_clicked(0)) {
+        chat_jump_id = tag.id;
+        chat_url_clicked = true;
+      }
+    }
+    chat_add_line(line, "\n", true, lo, hi);
+  }
+
+  // Reply and Pin at the right of the message under the mouse, drawn before the message so its lines follow as usual
+  void render_chat_message_buttons(ecps_backend_t::Protocol_ChannelID_t channel_id, const ecps_backend_t::chat_message_t& message,
+    const chat_tag_t& tag, bool pinned) {
+    fan::vec2 back = gui::get_cursor_screen_pos();
+    const char* pin_label = pinned ? "Unpin" : "Pin";
+    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(6.f, 1.f));
+    f32_t width = gui::calc_text_size("Reply").x + gui::calc_text_size(pin_label).x + 24.f + gui::get_style().ItemSpacing.x;
+    f32_t right = back.x + gui::get_content_region_avail().x;
+    gui::set_cursor_screen_pos(fan::vec2(right - width, back.y - 2.f));
+    gui::push_id((int)message.id);
+    if (gui::button("Reply")) {
+      chat_reply_id = message.id;
+      chat_reply_channel = (std::uint32_t)channel_id.i;
+      chat_reply_name = message.name;
+      chat_reply_quote = chat_snippet(tag.body);
+      chat_focus_input = true;
+    }
+    gui::same_line();
+    if (gui::button(pin_label)) {
+      chat_send_pin(channel_id, message.id, tag.body, !pinned);
+    }
+    gui::pop_id();
+    gui::pop_style_var();
+    gui::set_cursor_screen_pos(back);
+  }
+
   std::uint32_t chat_line_message = 0;
   std::uint32_t chat_line_number = 0;
   struct chat_mark_t {
@@ -181,6 +400,8 @@
       plain_start = end;
     }
     draw_plain(plain_start, line.size());
+    // every part above leaves the cursor on its row: end the row, or the next line or message would go on it
+    gui::new_line();
     fan::vec2 max = start + fan::vec2(gui::calc_text_size(line.empty() ? std::string(" ") : line).x, gui::get_text_line_height());
     chat_add_line(line, after, false, start, max);
   }
@@ -360,7 +581,7 @@
       else if (int i = chat_line_index(chat_hit(m).key); i >= 0) {
         for (const auto& message : messages) {
           if (message.id == chat_lines[i].message_id) {
-            engine.window.set_clipboard(message.text);
+            engine.window.set_clipboard(chat_parse_tag(message.text).body);
           }
         }
       }
@@ -824,32 +1045,56 @@
     render_chat_file_actions(text, message_id, from);
   }
 
-  // ---- the panels of the stream view: Settings and Chat. Each is open or closed and sits on the right, at the
-  // bottom or on the left: drag its tab near an edge of the stream. Two on the same side share one panel with a tab
-  // each. The sides and sizes are kept in the config
-  bool settings_panel_open = false;
-  bool chat_panel_open = false;
-  int settings_panel_side = 0; // 0 right, 1 bottom, 2 left
-  int chat_panel_side = 0;
-  bool side_panel_chat = false; // the tab shown when both share a side
+  // ---- the panels of the main view: Channels, Settings and Chat. Each is open or closed and sits on the right, at
+  // the bottom or on the left: drag its tab near an edge of the stream. Those on the same side share one panel with
+  // a tab each. Channels starts open on the left. The sides, sizes and what is open are kept in the config
+  enum side_panel_e { side_settings, side_chat, side_channels, side_panel_count };
+  bool side_open[side_panel_count] = {false, false, true};
+  int side_of[side_panel_count] = {0, 0, 2}; // 0 right, 1 bottom, 2 left
+  // the tab shown on each side when panels share it, and [3] in full screen, where Settings and Chat share one panel
+  int side_front[4] = {-1, -1, -1, -1};
   f32_t side_panel_height = 300.f;
+  f32_t side_left_width = 0.f; // 0 until the first frame sets it from the window
   bool side_panel_loaded = false;
   // the stream view this frame: where a dragged tab can be dropped
   fan::vec2 side_view_min = 0;
   fan::vec2 side_view_max = 0;
-  int side_panel_moving = -1; // the tab being dragged: 0 settings, 1 chat
+  int side_panel_moving = -1; // the panel whose tab is being dragged
   int side_panel_drop = -1;
   bool side_panel_resizing = false;
 
-  int& panel_side(bool chat) {
-    return chat ? chat_panel_side : settings_panel_side;
+  static const char* side_panel_name(int panel) {
+    return panel == side_chat ? "Chat" : panel == side_channels ? "Channels" : "Settings";
   }
-  bool& panel_open(bool chat) {
-    return chat ? chat_panel_open : settings_panel_open;
+  // the panels on a side, -1 for full screen: there only Settings and Chat, the stream keeps the rest
+  std::vector<int> panels_on(int side) {
+    std::vector<int> out;
+    for (int panel = 0; panel < side_panel_count; ++panel) {
+      if (side_open[panel] && (side < 0 ? panel != side_channels : side_of[panel] == side)) {
+        out.push_back(panel);
+      }
+    }
+    return out;
   }
-  // open, and not the hidden tab of a shared panel
-  bool panel_shown(bool chat) {
-    return panel_open(chat) && (!panel_open(!chat) || panel_side(chat) != panel_side(!chat) || side_panel_chat == chat);
+  // the tab shown on a side
+  int side_shown(int side) {
+    auto panels = panels_on(side);
+    if (panels.empty()) {
+      return -1;
+    }
+    int front = side_front[side < 0 ? 3 : side];
+    return std::find(panels.begin(), panels.end(), front) != panels.end() ? front : panels.front();
+  }
+  // open, and the tab shown where it is
+  bool panel_shown(int panel) {
+    return side_open[panel] && (side_shown(side_of[panel]) == panel || (panel != side_channels && is_fullscreen_stream && side_shown(-1) == panel));
+  }
+  bool any_side_panel_open() const {
+    return side_open[side_settings] || side_open[side_chat] || side_open[side_channels];
+  }
+  // Settings or Chat: what full screen shows beside the stream
+  void sync_panels_shown() {
+    stream_settings.show_in_stream_view = side_open[side_settings] || side_open[side_chat];
   }
 
   void load_side_panel_layout() {
@@ -857,22 +1102,39 @@
       return;
     }
     side_panel_loaded = true;
-    settings_panel_open = stream_settings.show_in_stream_view;
+    side_open[side_settings] = stream_settings.show_in_stream_view;
     if (config.contains("side_panel")) {
       fan::json layout = config["side_panel"];
-      settings_panel_side = std::clamp(layout.value("settings_side", layout.value("side", 0)), 0, 2);
-      chat_panel_side = std::clamp(layout.value("chat_side", settings_panel_side), 0, 2);
+      side_of[side_settings] = std::clamp(layout.value("settings_side", layout.value("side", 0)), 0, 2);
+      side_of[side_chat] = std::clamp(layout.value("chat_side", side_of[side_settings]), 0, 2);
+      side_of[side_channels] = std::clamp(layout.value("channels_side", 2), 0, 2);
       side_panel_height = layout.value("height", side_panel_height);
       stream_settings.settings_panel_width = layout.value("width", stream_settings.settings_panel_width);
+      side_left_width = layout.value("left_width", 0.f);
+      window_handler.channels_list_height = layout.value("channels_list_height", 0.f);
+      if (layout.contains("open") && layout["open"].is_array() && layout["open"].size() == side_panel_count) {
+        for (int panel = 0; panel < side_panel_count; ++panel) {
+          side_open[panel] = layout["open"][panel].is_boolean() && layout["open"][panel].get<bool>();
+        }
+      }
     }
+    sync_panels_shown();
   }
 
   void save_side_panel_layout() {
     fan::json layout;
-    layout["settings_side"] = settings_panel_side;
-    layout["chat_side"] = chat_panel_side;
+    layout["settings_side"] = side_of[side_settings];
+    layout["chat_side"] = side_of[side_chat];
+    layout["channels_side"] = side_of[side_channels];
     layout["height"] = side_panel_height;
     layout["width"] = stream_settings.settings_panel_width;
+    layout["left_width"] = side_left_width;
+    layout["channels_list_height"] = window_handler.channels_list_height;
+    fan::json open = fan::json::array();
+    for (int panel = 0; panel < side_panel_count; ++panel) {
+      open.push_back(side_open[panel]);
+    }
+    layout["open"] = open;
     write_to_config("side_panel", layout);
   }
 
@@ -883,27 +1145,40 @@
       ecps_backend.chat_known(selected_channel_id);
   }
 
-  // the gear and the chat icon: open their panel (or its tab), the same again closes it
-  void toggle_side_panel(bool chat) {
+  void open_side_panel(int panel) {
     load_side_panel_layout();
-    if (panel_shown(chat)) {
-      panel_open(chat) = false;
+    side_open[panel] = true;
+    side_front[side_of[panel]] = panel;
+    if (panel != side_channels) {
+      side_front[3] = panel;
+    }
+    if (panel == side_chat) {
+      chat_focus_input = true;
+    }
+    sync_panels_shown();
+    save_side_panel_layout();
+  }
+  void close_side_panel(int panel) {
+    side_open[panel] = false;
+    sync_panels_shown();
+    save_side_panel_layout();
+  }
+  // the toolbar buttons: open their panel (or its tab), the same again closes it
+  void toggle_side_panel(int panel) {
+    load_side_panel_layout();
+    if (panel_shown(panel)) {
+      close_side_panel(panel);
     }
     else {
-      panel_open(chat) = true;
-      side_panel_chat = chat;
-      if (chat) {
-        chat_focus_input = true;
-      }
+      open_side_panel(panel);
     }
-    stream_settings.show_in_stream_view = settings_panel_open || chat_panel_open;
   }
 
   // the chat icon of the stream toolbars, with a dot while there is something unread
   void render_side_chat_button(const char* id, f32_t size) {
     fan::vec2 at = gui::get_cursor_screen_pos();
-    if (icon_button(id, icon_e::chat, panel_shown(true) ? "Hide chat" : "Chat", size, icon_style_e::overlay)) {
-      toggle_side_panel(true);
+    if (icon_button(id, icon_e::chat, panel_shown(side_chat) ? "Hide chat" : "Chat", size, icon_style_e::overlay)) {
+      toggle_side_panel(side_chat);
     }
     if (chat_unread()) {
       gui::get_window_draw_list()->AddCircleFilled(at + fan::vec2(size * 0.86f, size * 0.14f), size * 0.16f, 0xff4040ffu, 16);
@@ -912,44 +1187,33 @@
 
   // the gear of the stream toolbars
   void render_side_settings_button(const char* id, f32_t size) {
-    if (icon_button(id, icon_e::gear, panel_shown(false) ? "Hide settings" : "Settings", size, icon_style_e::overlay)) {
-      toggle_side_panel(false);
+    if (icon_button(id, icon_e::gear, panel_shown(side_settings) ? "Hide settings" : "Settings", size, icon_style_e::overlay)) {
+      toggle_side_panel(side_settings);
     }
-  }
-
-  // the panels on a side (-1: every open one, for full screen)
-  std::vector<bool> panels_on(int side) {
-    std::vector<bool> out;
-    for (bool chat : {false, true}) {
-      if (panel_open(chat) && (side < 0 || panel_side(chat) == side)) {
-        out.push_back(chat);
-      }
-    }
-    return out;
   }
 
   // the tabs at the top of a panel, and an X that closes the one shown. Dragging a tab moves that panel
-  void render_side_panel_header(const std::vector<bool>& panels) {
+  void render_side_panel_header(const std::vector<int>& panels, int shown) {
     f32_t height = gui::get_frame_height();
     f32_t close_width = height;
     f32_t width = (gui::get_content_region_avail().x - close_width - 4.f * panels.size()) / panels.size();
-    bool shown_chat = panels.size() == 2 ? side_panel_chat : panels[0];
-    for (std::size_t i = 0; i < panels.size(); ++i) {
-      bool chat = panels[i];
-      bool selected = chat == shown_chat;
-      const char* text = chat ? "Chat" : "Settings";
+    for (int panel : panels) {
+      bool selected = panel == shown;
+      const char* text = side_panel_name(panel);
       fan::vec2 at = gui::get_cursor_screen_pos();
-      bool clicked = gui::invisible_button(chat ? "##side_tab_chat" : "##side_tab_settings", fan::vec2(width, height));
+      gui::push_id(panel);
+      bool clicked = gui::invisible_button("##side_tab", fan::vec2(width, height));
+      gui::pop_id();
       bool hovered = gui::is_item_hovered();
       if (!is_fullscreen_stream && gui::is_item_active() && gui::is_mouse_dragging(0, 6.f)) {
-        side_panel_moving = chat ? 1 : 0;
+        side_panel_moving = panel;
       }
       if (hovered && side_panel_moving < 0 && !is_fullscreen_stream) {
-        gui::set_tooltip("Drag to move it to the right, the bottom or the left. Drop it on the other one to share a panel");
+        gui::set_tooltip("Drag to move it to the right, the bottom or the left. Drop it on another one to share a panel");
       }
       if (clicked && side_panel_moving < 0) {
-        side_panel_chat = chat;
-        if (chat) {
+        side_front[is_fullscreen_stream ? 3 : side_of[panel]] = panel;
+        if (panel == side_chat) {
           chat_focus_input = true;
         }
       }
@@ -960,22 +1224,23 @@
         list->AddRectFilled(at + fan::vec2(6.f, height - 2.f), at + fan::vec2(width - 6.f, height), 0xffff7a33u, 1.f);
       }
       f32_t icon_size = height * 0.55f;
-      f32_t content = icon_size + 6.f + gui::calc_text_size(text).x;
-      fan::vec2 start = at + fan::vec2((width - content) * 0.5f, 0);
+      std::string shown_text = gui::fit_title(text, std::max(width - icon_size - 18.f, 10.f));
+      f32_t content = icon_size + 6.f + gui::calc_text_size(shown_text).x;
+      fan::vec2 start = at + fan::vec2(std::max((width - content) * 0.5f, 4.f), 0);
       std::uint32_t ink = selected || hovered ? 0xffffffffu : 0xffa0a0a0u;
-      draw_icon(list, chat ? icon_e::chat : icon_e::gear, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size, ink);
-      list->AddText(start + fan::vec2(icon_size + 6.f, (height - gui::get_font_size()) * 0.5f), ink, text);
-      if (chat && chat_unread()) {
+      icon_e icon = panel == side_chat ? icon_e::chat : panel == side_channels ? icon_e::server : icon_e::gear;
+      draw_icon(list, icon, start + fan::vec2(icon_size * 0.5f, height * 0.5f), icon_size, ink);
+      list->AddText(start + fan::vec2(icon_size + 6.f, (height - gui::get_font_size()) * 0.5f), ink, shown_text.c_str());
+      if (panel == side_chat && chat_unread()) {
         list->AddCircleFilled(start + fan::vec2(content + 7.f, height * 0.3f), 3.5f, 0xff4040ffu, 12);
       }
       gui::same_line(0, 4.f);
     }
     if (gui::button("x##side_panel_close", fan::vec2(close_width, height))) {
-      panel_open(shown_chat) = false;
-      stream_settings.show_in_stream_view = settings_panel_open || chat_panel_open;
+      close_side_panel(shown);
     }
     if (gui::is_item_hovered()) {
-      gui::set_tooltip(shown_chat ? "Close the chat" : "Close the settings");
+      gui::set_tooltip(std::string("Close ") + side_panel_name(shown) + ". The toolbar under the stream opens it again");
     }
     gui::spacing();
   }
@@ -987,15 +1252,18 @@
     if (panels.empty()) {
       return;
     }
-    render_side_panel_header(panels);
-    bool chat = panels.size() == 2 ? side_panel_chat : panels[0];
-    if (chat) {
+    int shown = side_shown(side);
+    render_side_panel_header(panels, shown);
+    if (shown == side_chat) {
       if (ecps_backend.channel_info.empty()) {
         gui::text_wrapped_disabled("Join a channel to chat");
       }
       else {
         render_chat_tab(selected_channel_id);
       }
+    }
+    else if (shown == side_channels) {
+      window_handler.render_channels_content();
     }
     else {
       window_handler.render_stream_settings_content_compact();
@@ -1018,9 +1286,11 @@
       if (side == 1) {
         side_panel_height = std::clamp(side_panel_height - delta.y, 150.f, area.y * 0.7f);
       }
+      else if (side == 0) {
+        stream_settings.settings_panel_width = std::clamp(stream_settings.settings_panel_width - delta.x, 250.f, area.x * 0.7f);
+      }
       else {
-        stream_settings.settings_panel_width = std::clamp(stream_settings.settings_panel_width + (side == 0 ? -delta.x : delta.x),
-          250.f, area.x * 0.6f);
+        side_left_width = std::clamp(side_left_width + delta.x, 250.f, area.x * 0.7f);
       }
       side_panel_resizing = true;
     }
@@ -1043,11 +1313,11 @@
     if (side_panel_moving < 0) {
       return;
     }
-    bool chat = side_panel_moving == 1;
+    int moving = side_panel_moving;
     if (!fan::window::is_mouse_down(0)) {
-      if (side_panel_drop >= 0 && side_panel_drop != panel_side(chat)) {
-        panel_side(chat) = side_panel_drop;
-        side_panel_chat = chat;
+      if (side_panel_drop >= 0 && side_panel_drop != side_of[moving]) {
+        side_of[moving] = side_panel_drop;
+        side_front[side_panel_drop] = moving;
         save_side_panel_layout();
       }
       side_panel_moving = -1;
@@ -1062,7 +1332,12 @@
     f32_t to_bottom = (max.y - m.y) / size.y;
     f32_t to_left = (m.x - min.x) / size.x;
     side_panel_drop = to_right <= to_bottom && to_right <= to_left ? 0 : to_bottom <= to_left ? 1 : 2;
-    bool joins = panel_open(!chat) && panel_side(!chat) == side_panel_drop;
+    std::string others;
+    for (int panel : panels_on(side_panel_drop)) {
+      if (panel != moving) {
+        others += std::string(others.empty() ? "" : " and ") + side_panel_name(panel);
+      }
+    }
     fan::vec2 a, b;
     std::string where;
     switch (side_panel_drop) {
@@ -1070,7 +1345,8 @@
       case 1: a = fan::vec2(min.x, max.y - size.y * 0.35f); b = max; where = "at the bottom"; break;
       default: a = min; b = fan::vec2(min.x + size.x * 0.28f, max.y); where = "on the left"; break;
     }
-    where = joins ? std::string("Together with ") + (chat ? "Settings " : "Chat ") + where : (chat ? "Chat " : "Settings ") + where;
+    where = others.empty() ? std::string(side_panel_name(moving)) + " " + where
+      : "Together with " + others + " " + where;
     auto* list = gui::get_foreground_draw_list();
     list->AddRectFilled(min, max, 0x40000000u, 8.f);
     list->AddRectFilled(a, b, 0x50ff7a33u, 8.f);
@@ -1293,12 +1569,17 @@
     }
 
     auto messages = ecps_backend.chat_of(channel_id);
+    render_chat_pins(channel_id, messages);
+    bool replying = chat_reply_id != 0 && chat_reply_channel == (std::uint32_t)channel_id.i;
     // the input grows with its lines, up to six
     std::size_t input_lines = std::clamp<std::size_t>(1 + (std::size_t)std::count(chat_input.begin(), chat_input.end(), '\n'), 1, 6);
     f32_t input_box = input_lines * gui::get_text_line_height() + gui::get_style().FramePadding.y * 2;
     f32_t input_height = input_box + gui::get_style().ItemSpacing.y * 2;
     if (!chat_pending_files.empty()) {
       input_height += chat_pending_height + gui::get_style().ItemSpacing.y;
+    }
+    if (replying) {
+      input_height += gui::get_frame_height() + gui::get_style().ItemSpacing.y;
     }
     fan::vec2 avail = gui::get_content_region_avail();
     chat_lines.clear();
@@ -1309,10 +1590,31 @@
       std::uint32_t last_from = (std::uint32_t)-1;
       std::int64_t last_time = 0;
       bool first_group = true;
+      std::vector<chat_pin_t> pins = chat_pins(messages);
+      std::uint32_t hovered_now = 0;
+      bool log_hovered = gui::is_window_hovered(gui::hovered_flags_child_windows);
       for (const auto& message : messages) {
         // a run of messages from the same person within a few minutes shares one name line
         chat_line_message = message.id;
         chat_line_number = 0;
+        chat_tag_t tag = chat_parse_tag(message.text);
+        // a pin or unpin is a short grey line of its own, a click on a pin goes to the message
+        if (tag.kind == chat_tag_t::pin || tag.kind == chat_tag_t::unpin) {
+          gui::spacing();
+          std::string line = message.name + (tag.kind == chat_tag_t::pin ? " pinned: " + tag.quote : std::string(" unpinned a message"));
+          gui::text_disabled(line);
+          if (tag.kind == chat_tag_t::pin && gui::is_item_hovered()) {
+            gui::set_mouse_cursor(gui::mouse_cursor_hand);
+            gui::set_tooltip("Go to the message");
+            if (fan::window::is_mouse_clicked(0)) {
+              chat_jump_id = tag.id;
+              chat_url_clicked = true;
+            }
+          }
+          chat_add_line(line, "\n", true, gui::get_item_rect_min(), gui::get_item_rect_max());
+          last_from = (std::uint32_t)-1;
+          continue;
+        }
         if (message.from != last_from || message.time - last_time > 300) {
           // a blank line between messages, so a new message never reads as another line of the last one
           if (!first_group) {
@@ -1336,7 +1638,45 @@
         }
         last_from = message.from;
         last_time = message.time;
-        render_chat_text(message.text, message.id, message.from);
+        if (chat_jump_id == message.id) {
+          gui::set_scroll_here_y();
+          chat_jump_id = 0;
+          chat_flash_id = message.id;
+          chat_flash_at = std::chrono::steady_clock::now();
+        }
+        bool pinned = std::find_if(pins.begin(), pins.end(), [&](const chat_pin_t& p) { return p.id == message.id; }) != pins.end();
+        if (chat_hover_id == message.id) {
+          render_chat_message_buttons(channel_id, message, tag, pinned);
+        }
+        fan::vec2 top = gui::get_cursor_screen_pos();
+        f32_t row_right = top.x + gui::get_content_region_avail().x;
+        // the text a little in from the name, so where one person's run starts is easy to see
+        gui::indent(chat_text_indent);
+        if (tag.kind == chat_tag_t::reply) {
+          render_chat_reply_quote(tag);
+        }
+        render_chat_text(tag.body, message.id, message.from);
+        gui::unindent(chat_text_indent);
+        fan::vec2 bottom(row_right, gui::get_cursor_screen_pos().y);
+        top.x -= 6.f;
+        auto* list = gui::get_window_draw_list();
+        if (log_hovered && gui::is_mouse_hovering_rect(top - fan::vec2(0, 2.f), bottom)) {
+          hovered_now = message.id;
+          list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, 0x0cffffffu, 4.f);
+        }
+        if (pinned) {
+          list->AddRectFilled(fan::vec2(top.x, top.y), fan::vec2(top.x + 2.f, bottom.y - 3.f), 0xff40b0ffu, 1.f);
+        }
+        if (chat_flash_id == message.id) {
+          f32_t t = std::chrono::duration<f32_t>(std::chrono::steady_clock::now() - chat_flash_at).count();
+          if (t < 1.6f) {
+            std::uint32_t alpha = (std::uint32_t)(0x50 * (1.f - t / 1.6f));
+            list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, (alpha << 24) | 0x00ff9a40u, 4.f);
+          }
+          else {
+            chat_flash_id = 0;
+          }
+        }
       }
       // new messages, or another channel opened: down to the newest
       std::uint64_t revision = ecps_backend.chat_revision.load();
@@ -1348,11 +1688,32 @@
         chat_seen_channel = (std::uint32_t)channel_id.i;
         gui::set_scroll_here_y();
       }
+      // a jump to a message no longer kept here goes nowhere
+      chat_jump_id = 0;
+      chat_hover_id = hovered_now;
       chat_update_mark(messages);
     }
     gui::end_child();
 
     render_chat_pending_files();
+
+    if (replying) {
+      gui::align_text_to_frame_padding();
+      gui::text_disabled("Replying to");
+      gui::same_line(0, 4.f);
+      gui::text(fan::color(0.95f, 0.8f, 0.45f, 1.f), chat_reply_name);
+      gui::same_line(0, 8.f);
+      f32_t room = gui::get_content_region_avail().x - gui::get_frame_height() - 12.f;
+      gui::text_disabled(gui::fit_title(chat_reply_quote, std::max(room, 40.f)));
+      gui::same_line();
+      gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(0.f, gui::get_content_region_avail().x - gui::get_frame_height()));
+      // Escape in the input drops the reply too
+      if (gui::button("x##chat_reply_cancel", fan::vec2(gui::get_frame_height(), 0)) ||
+        (chat_input_active && engine.window.is_key_clicked(fan::key_escape))) {
+        chat_reply_id = 0;
+        replying = false;
+      }
+    }
 
     // ---- the input: attach, text, send
     if (icon_button("##chat_attach", icon_e::send_file, "Send a file to everyone here", 0.f)) {
@@ -1410,7 +1771,16 @@
     bool send = gui::button("Send##chat_send");
     bool has_text = chat_has_text_content(chat_input);
     if ((enter || send) && (has_text || !chat_pending_files.empty())) {
-      chat_send_text(channel_id, chat_input);
+      if (replying && has_text) {
+        // the tag line goes in front, a ] in the name would end the tag early
+        std::string name = chat_reply_name;
+        std::replace(name.begin(), name.end(), ']', ')');
+        chat_send_text(channel_id, "[reply #" + std::to_string(chat_reply_id) + " " + name + "] " + chat_reply_quote + "\n" + chat_input);
+        chat_reply_id = 0;
+      }
+      else {
+        chat_send_text(channel_id, chat_input);
+      }
       chat_input.clear();
       if (!chat_pending_files.empty()) {
         chat_send_files(channel_id, chat_pending_files);

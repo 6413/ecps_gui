@@ -33,13 +33,12 @@ struct ecps_gui_t {
     // dropping files on the window sends them, the next frame asks to whom if it isn't obvious
     file_drop_handle = engine.window.on_drop([this](const fan::window_t::drop_data_t& d) {
       // a font dropped on its row in the settings panel becomes that font, not a chat file
-      if (font_drop_type >= 0 && !d.paths.empty()) {
+      auto* settings = fan_settings_menu();
+      if (settings && settings->font_drop_type >= 0 && !d.paths.empty()) {
         std::string ext = std::filesystem::path(d.paths.front()).extension().string();
         if (ext == ".ttf" || ext == ".otf") {
-          font_paths[font_drop_type] = d.paths.front();
-          gui::set_font_path((gui::font::type_t)font_drop_type, font_paths[font_drop_type]);
-          save_font_settings();
-          font_drop_type = -1;
+          settings->set_font_file(settings->font_drop_type, d.paths.front());
+          settings->font_drop_type = -1;
           return;
         }
       }
@@ -214,7 +213,7 @@ struct ecps_gui_t {
   #include "gui/input.h"
 
   void render() {
-    font_drop_type = -1;
+    update_voice_keys();
     apply_video_choice_once();
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
     voice_chat.update(get_voice_settings());

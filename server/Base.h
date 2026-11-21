@@ -181,6 +181,15 @@ struct Channel_ScreenShare_Data_t{
   /* the chat: the last ChatHistoryMax messages, for those who join later, and the sessions that asked for it
      (Channel_Chat_Probe). Only those get chat, an older client would not know the messages */
   std::deque<Protocol_S2C_t::Channel_Chat_Message_t> ChatHistory;
+  /* pinned messages ("[pin #id] ..." in the chat) with the message that pinned them, kept after they leave the
+     history so a later joiner still sees them. HasOriginal is false when the pinned one was gone already */
+  struct ChatPinned_t{
+    uint32_t Id = 0; /* the pinned message's */
+    bool HasOriginal = false;
+    Protocol_S2C_t::Channel_Chat_Message_t Original;
+    Protocol_S2C_t::Channel_Chat_Message_t Pin;
+  };
+  std::vector<ChatPinned_t> ChatPinned;
   std::vector<uint32_t> ChatAware;
   uint32_t ChatNextId = 1;
   /* the channel's password is not kept, only a keyed hash of it */

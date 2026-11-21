@@ -63,47 +63,9 @@ using namespace fan::graphics;
 #include "midi/midi_worker.h"
 #include "midi/midi_sac_bank.h"
 
-// GUI fonts: the paths apply on the next start, the scale applies right away. Both live in fan_settings.json.
-static fan::config_store_t fan_font_config;
-static f32_t font_scale = 1.f;
-static std::string font_paths[gui::font::count];
-static int font_drop_type = -1;
-static const char* font_type_names[] = {"regular", "bold", "mono"};
-
-static void load_font_settings() {
-  fan_font_config.load("fan_settings.json");
-  fan::json fonts = fan_font_config.contains("fonts") && fan_font_config["fonts"].is_object()
-    ? fan_font_config["fonts"] : fan::json::object();
-  font_scale = fonts.value("scale", 1.f);
-  for (int t = 0; t < gui::font::count; ++t) {
-    font_paths[t] = fonts.value(font_type_names[t], std::string());
-    if (!font_paths[t].empty() && std::filesystem::exists(font_paths[t])) {
-      gui::set_font_path((gui::font::type_t)t, font_paths[t]);
-    }
-    else {
-      font_paths[t].clear();
-    }
-  }
-  gui::set_font_scale(font_scale);
-}
-
-static void save_font_settings() {
-  fan::json fonts = fan::json::object();
-  fonts["scale"] = font_scale;
-  for (int t = 0; t < gui::font::count; ++t) {
-    fonts[font_type_names[t]] = font_paths[t];
-  }
-  fan_font_config.write("fonts", fonts);
-}
-
-static bool pick_font_file(std::string& picked) {
-  nfdchar_t* path = nullptr;
-  if (NFD_OpenDialog("ttf,otf", nullptr, &path) != NFD_OKAY) {
-    return false;
-  }
-  picked = path;
-  std::free(path);
-  return true;
+// the gui fonts and their size are in fan's settings (Graphics), saved in fan_settings.json
+static fan::graphics::gui::settings_menu_t* fan_settings_menu() {
+  return gloco() ? static_cast<fan::graphics::gui::settings_menu_t*>(gloco()->get_settings_menu()) : nullptr;
 }
 
 #if defined(_WIN32)
@@ -1282,6 +1244,16 @@ ecps_backend_t::ecps_backend_t() {
       }
     }
     encoder_force_keyframe();
+    // the keyframe asked for with the join can reach the streamer before the server has us in the channel: once
+    // more now that we are in, so the first picture doesn't wait for the next regular keyframe
+    auto joined = msg->ChannelID;
+    if (auto* channel = backend.find_channel(joined); channel && !channel->is_own) {
+      backend.view_need_keyframe = true;
+      try {
+        co_await backend.send_idr_request(joined);
+      }
+      catch (...) {}
+    }
     co_return;
   };
 
@@ -1831,8 +1803,7 @@ int main() {
   std::promise<void> render_thread_promise;
   std::future<void> render_thread_future = render_thread_promise.get_future();
 
-  // the engine builds its gui fonts on the render thread, so set the saved fonts and emojis before it starts
-  load_font_settings();
+  // the engine builds its gui fonts on the render thread, so load the emojis before it starts
   fan::graphics::gui::load_emojis();
 
   fan::event::thread_create([&render_thread_promise] {

@@ -516,6 +516,58 @@ ScreenShare_FlagIsChanged
 
 /* ---- chat ---- */
 
+/* "[pin #12]..." or "[unpin #12]": the id after the prefix, up to the ] */
+static bool ScreenShare_ChatTag(const Protocol_S2C_t::Channel_Chat_Message_t &Message, const char *Prefix, uint32_t &Id){
+  size_t PrefixLength = strlen(Prefix);
+  if(Message.Length <= PrefixLength || __builtin_memcmp(Message.Text, Prefix, PrefixLength) != 0){
+    return false;
+  }
+  uint64_t Value = 0;
+  size_t At = PrefixLength;
+  size_t Digits = 0;
+  while(At < Message.Length && Message.Text[At] >= '0' && Message.Text[At] <= '9' && Digits < 10){
+    Value = Value * 10 + (uint64_t)(Message.Text[At] - '0');
+    ++At;
+    ++Digits;
+  }
+  if(Digits == 0 || At >= Message.Length || Message.Text[At] != ']'){
+    return false;
+  }
+  Id = (uint32_t)Value;
+  return true;
+}
+
+/* a pin keeps the pinned message, an unpin lets it go */
+static void ScreenShare_ChatTrackPin(Channel_ScreenShare_Data_t *ChannelData, const Protocol_S2C_t::Channel_Chat_Message_t &Message){
+  static constexpr size_t PinnedMax = 25;
+  uint32_t Id;
+  if(ScreenShare_ChatTag(Message, "[pin #", Id)){
+    for(auto &Pinned : ChannelData->ChatPinned){
+      if(Pinned.Id == Id){
+        return;
+      }
+    }
+    Channel_ScreenShare_Data_t::ChatPinned_t Pinned;
+    Pinned.Id = Id;
+    Pinned.Pin = Message;
+    for(const auto &Old : ChannelData->ChatHistory){
+      if(Old.Id == Id){
+        Pinned.Original = Old;
+        Pinned.HasOriginal = true;
+      }
+    }
+    ChannelData->ChatPinned.push_back(Pinned);
+    if(ChannelData->ChatPinned.size() > PinnedMax){
+      ChannelData->ChatPinned.erase(ChannelData->ChatPinned.begin());
+    }
+  }
+  else if(ScreenShare_ChatTag(Message, "[unpin #", Id)){
+    std::erase_if(ChannelData->ChatPinned, [Id](const Channel_ScreenShare_Data_t::ChatPinned_t &Pinned){
+      return Pinned.Id == Id;
+    });
+  }
+}
+
 /* a session asks for the channel's chat: it gets the history and the end marker, and the chat from then on */
 void ScreenShare_ChatProbe(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
   auto Channel = &g_pile->ChannelList[ChannelID];
@@ -526,6 +578,16 @@ void ScreenShare_ChatProbe(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t 
   uint32_t Id = (uint32_t)SessionID.i;
   if(std::find(ChannelData->ChatAware.begin(), ChannelData->ChatAware.end(), Id) == ChannelData->ChatAware.end()){
     ChannelData->ChatAware.push_back(Id);
+  }
+  /* the pinned ones that left the history first, the client puts them in order by id */
+  uint32_t HistoryFirst = ChannelData->ChatHistory.empty() ? ChannelData->ChatNextId : ChannelData->ChatHistory.front().Id;
+  for(const auto &Pinned : ChannelData->ChatPinned){
+    if(Pinned.HasOriginal && Pinned.Original.Id < HistoryFirst){
+      Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_Chat_Message, Pinned.Original);
+    }
+    if(Pinned.Pin.Id < HistoryFirst){
+      Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_Chat_Message, Pinned.Pin);
+    }
   }
   for(const auto &Message : ChannelData->ChatHistory){
     Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_Chat_Message, Message);
@@ -564,6 +626,7 @@ void ScreenShare_ChatSend(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t S
   Message.Length = Length;
   __builtin_memcpy(Message.Text, Text, Length);
 
+  ScreenShare_ChatTrackPin(ChannelData, Message);
   ChannelData->ChatHistory.push_back(Message);
   while(ChannelData->ChatHistory.size() > Protocol::ChatHistoryMax){
     ChannelData->ChatHistory.pop_front();

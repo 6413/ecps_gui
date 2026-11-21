@@ -137,12 +137,12 @@
     }
     if (in_voice) {
       bool muted = voice_chat.muted.load();
-      if (gui::settings_switch("Mute microphone", &muted, "The others stop hearing you")) {
+      if (gui::settings_switch("Mute microphone", &muted, ("The others stop hearing you. Key: " + voice_key_text(action_toggle_mute)).c_str())) {
         voice_chat.muted.store(muted);
         save_server_voice(true);
       }
       bool deafened = voice_chat.deafened.load();
-      if (gui::settings_switch("Mute others", &deafened, "You stop hearing the voice chat")) {
+      if (gui::settings_switch("Mute others", &deafened, ("You stop hearing the voice chat. Key: " + voice_key_text(action_toggle_deafen)).c_str())) {
         voice_chat.deafened.store(deafened);
         save_server_voice(true);
       }
@@ -259,6 +259,81 @@
       .echo_cancel = stream_settings.voice_echo_cancel,
       .noise_suppress = stream_settings.voice_noise_suppress,
     };
+  }
+
+  // ---- mute keys, rebindable in fan's settings under Keybinds ---------------------------------------------
+  static constexpr const char* action_toggle_mute = "Mute microphone";
+  static constexpr const char* action_toggle_deafen = "Mute voice chat";
+  bool voice_keys_added = false;
+
+  void add_voice_keybinds() {
+    auto& actions = engine.get_input_action();
+    // a saved binding, even an emptied one, wins over the default
+    if (!actions.exists(action_toggle_mute)) {
+      actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_m}, action_toggle_mute);
+    }
+    if (!actions.exists(action_toggle_deafen)) {
+      actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_d}, action_toggle_deafen);
+    }
+  }
+  std::string voice_key_text(const char* action) {
+    auto& actions = engine.get_input_action();
+    auto found = actions.input_actions.find(fan::window::input_action_t::action_key_t(action));
+    if (found != actions.input_actions.end()) {
+      for (const auto& chord : found->second.keybinds) {
+        if (!chord.empty() && !chord[0].empty()) {
+          return actions.combo_to_string(chord[0]);
+        }
+      }
+    }
+    return "none, set one in Settings > Keybinds";
+  }
+  void toggle_mic_mute() {
+    voice_chat.muted.store(!voice_chat.muted.load());
+    save_server_voice(voice_chat.is_active());
+  }
+  void toggle_deafen() {
+    voice_chat.deafened.store(!voice_chat.deafened.load());
+    save_server_voice(voice_chat.is_active());
+  }
+  // the keys work anywhere in the program except while typing or picking a new key in the settings
+  void update_voice_keys() {
+    if (!voice_keys_added) {
+      add_voice_keybinds();
+      voice_keys_added = true;
+    }
+    if (gui::get_io().WantTextInput) {
+      return;
+    }
+    if (auto* settings = fan_settings_menu(); settings && settings->keybind_menu.is_capturing()) {
+      return;
+    }
+    if (!voice_chat.is_active()) {
+      return;
+    }
+    if (engine.is_active(action_toggle_mute)) {
+      toggle_mic_mute();
+    }
+    if (engine.is_active(action_toggle_deafen)) {
+      toggle_deafen();
+    }
+  }
+
+  // someone muted just for you with a click on their voice badge, the volume they had comes back on the next click
+  std::map<std::string, f32_t> premute_user_volumes;
+  void toggle_user_mute(std::uint32_t session, const std::string& name) {
+    f32_t now = user_volume(name);
+    f32_t next = 0.f;
+    if (now <= 0.f) {
+      auto it = premute_user_volumes.find(name);
+      next = it != premute_user_volumes.end() && it->second > 0.f ? it->second : 1.f;
+    }
+    else {
+      premute_user_volumes[name] = now;
+    }
+    voice_user_volumes[name] = next;
+    voice_chat.set_user_volume(session, next);
+    save_voice_settings();
   }
 
   // ---- one person's playback volume, opened by right clicking them in the Users list ------------------------
