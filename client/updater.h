@@ -16,6 +16,7 @@
 //    renamed to *.update_old first and deleted on the next start
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -238,8 +239,33 @@ struct updater_t {
 #endif
   }
 
+  // Looks for updates on its own: a few seconds after the start, then every minute. That uses requests GitHub doesn't
+  // count against the 60 an hour its API allows without an account (the API is what check() reads); only when one
+  // of them shows something new does the full check() run. A background look that fails changes nothing on screen
+  void auto_check() {
+    auto now = std::chrono::steady_clock::now();
+    if (auto_check_running.load() || now < next_auto_check) {
+      return;
+    }
+    next_auto_check = now + std::chrono::minutes(1);
+    state_e current = state.load();
+    // an update found, being installed or restarting into: nothing more to look for
+    if (current != state_e::idle && current != state_e::up_to_date && current != state_e::failed) {
+      return;
+    }
+    auto_check_running = true;
+    std::thread([this] {
+      bool changed = probe_for_update();
+      auto_check_running = false;
+      if (changed) {
+        check();
+      }
+    }).detach();
+  }
+
   // GUI thread, every frame: cheap, looks at the two files once a second while a build runs
   void tick() {
+    auto_check();
     if (windows || state.load() != state_e::building) {
       return;
     }
@@ -630,6 +656,86 @@ private:
     return is_commit(body) ? body : std::string();
   }
 
+  // for auto_check: is there something newer than this build, by the requests GitHub doesn't rate limit
+  bool probe_for_update() {
+#if defined(_WIN32)
+    if (windows) {
+      // github.com/<repo>/releases/latest redirects to .../releases/tag/v1.0.4: the headers say the newest version.
+      // curl.exe without a console window (the popen in run_capture would flash one every minute)
+      std::filesystem::path headers = std::filesystem::temp_directory_path() / "ecps_update_probe.txt";
+      std::error_code ec;
+      std::filesystem::remove(headers, ec);
+      if (!run_hidden(system_tool(L"curl.exe"), L"-sI --max-time 10 -o \"" + headers.wstring() +
+        L"\" https://github.com/6413/ecps_gui/releases/latest")) {
+        return false;
+      }
+      std::ifstream in(headers, std::ios::binary);
+      std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      in.close();
+      std::filesystem::remove(headers, ec);
+      std::string tag = tag_from_redirect(text);
+      return !tag.empty() && is_newer(tag, ecps_version);
+    }
+#endif
+    if (!build_info_path().empty()) {
+      // a Nix build: a new commit on ecps_gui's main or fan's master, from git's own ref listing
+      std::string built_ecps = build_info("ecps");
+      std::string built_fan = build_info("fan");
+      if (!is_commit(built_ecps)) {
+        return false;   // check() would offer every look the same "doesn't know its commit" update
+      }
+      std::string ecps = branch_commit("6413/ecps_gui", "main");
+      std::string fan = branch_commit("6413/fan", "master");
+      return (is_commit(ecps) && ecps != built_ecps) || (is_commit(fan) && is_commit(built_fan) && fan != built_fan);
+    }
+    // anything else compares version.h, read from GitHub's file host
+    std::string found = parse_version(run_capture(std::string("curl -fsSL --max-time 10 ") + version_url));
+    return !found.empty() && is_newer(found, ecps_version);
+  }
+
+  // "location: https://github.com/6413/ecps_gui/releases/tag/v1.0.4" -> "1.0.4"
+  static std::string tag_from_redirect(const std::string& headers) {
+    std::string lower = headers;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    std::size_t at = lower.find("\nlocation:");
+    if (at == std::string::npos) {
+      return {};
+    }
+    std::size_t end = headers.find_first_of("\r\n", at + 1);
+    std::string location = headers.substr(at + 10, end == std::string::npos ? std::string::npos : end - at - 10);
+    std::size_t tag = location.rfind("/tag/");
+    if (tag == std::string::npos) {
+      return {};
+    }
+    std::string value = location.substr(tag + 5);
+    while (!value.empty() && (value.back() == ' ' || value.back() == '/')) {
+      value.pop_back();
+    }
+    if (!value.empty() && (value[0] == 'v' || value[0] == 'V')) {
+      value.erase(0, 1);
+    }
+    return value;
+  }
+
+  // the commit a branch is on, from the ref listing git clones read (github.com/<repo>.git/info/refs): not the API,
+  // so not counted against its hourly limit. Each line is "<4 hex length><40 hex commit> refs/heads/<branch>"
+  static std::string branch_commit(const std::string& repo, const std::string& branch) {
+    std::string body = run_capture("curl -fsSL --max-time 10 \"https://github.com/" + repo +
+      ".git/info/refs?service=git-upload-pack\"", 1 << 20);
+    std::string ref = " refs/heads/" + branch;
+    for (std::size_t at = body.find(ref); at != std::string::npos; at = body.find(ref, at + 1)) {
+      std::size_t after = at + ref.size();
+      bool whole = after == body.size() || body[after] == '\n' || body[after] == '\0';
+      if (whole && at >= 40) {
+        std::string commit = body.substr(at - 40, 40);
+        if (is_commit(commit)) {
+          return commit;
+        }
+      }
+    }
+    return {};
+  }
+
   static std::string run_capture(const std::string& command, std::size_t limit = 1 << 16) {
     std::string output;
 #if defined(_WIN32)
@@ -705,6 +811,9 @@ private:
   std::string error_text;
   std::string built_path;
   std::chrono::steady_clock::time_point last_poll;
+  // the first look a few seconds after the start, so it doesn't slow it down
+  std::chrono::steady_clock::time_point next_auto_check = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  std::atomic<bool> auto_check_running{false};
   std::chrono::steady_clock::time_point restart_at;
   bool notice_loaded = false;
   std::string notice_text;
