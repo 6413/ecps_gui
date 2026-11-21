@@ -5,6 +5,8 @@ template <typename Gui>
 struct top_bar_t {
   Gui& gui;
   explicit top_bar_t(Gui& owner) : gui(owner) {}
+  // bottom right corner of the version text in the bar, screen pixels. Negative until the bar is drawn
+  fan::vec2 about_anchor = fan::vec2(-1.f, -1.f);
 
   void render_nav_bar(fan::vec2 area_pos, f32_t width, f32_t bar_height, f32_t y_offset, f32_t fade, bool overlay) {
     using state_e = updater_t::state_e;
@@ -75,6 +77,8 @@ struct top_bar_t {
     right -= 16.f + gui::calc_text_size(version).x;
     gui::set_cursor_pos(fan::vec2(right, text_y));
     gui::text(fan::color(0.45f, 0.45f, 0.5f, 1.f), version);
+    // the About popup drops down from the bar's bottom edge, its right side lined up with the version
+    about_anchor = fan::vec2(gui::get_item_rect_max().x, top.y + bar_height);
     if (gui::is_item_clicked()) {
       gui.about_popup_requested = true;
     }
@@ -203,10 +207,14 @@ struct top_bar_t {
   void render_about_popup() {
     if (gui.about_popup_requested) {
       gui.about_popup_requested = false;
-      gui::set_next_window_pos(fan::vec2(24.f, 70.f));
       gui::open_popup("About ECPS");
     }
-    if (!gui::begin_popup("About ECPS")) {
+    // a dropdown under the version, inside the app window: placed every frame and not movable, so it can't be
+    // dragged out of the window into an OS window of its own that falls behind the app
+    if (about_anchor.y >= 0.f) {
+      gui::set_next_window_pos(about_anchor + fan::vec2(0, 4.f), gui::cond_always, fan::vec2(1.f, 0.f));
+    }
+    if (!gui::begin_popup("About ECPS", gui::window_flags_no_move | gui::window_flags_no_docking | gui::window_flags_no_saved_settings)) {
       return;
     }
     using state_e = updater_t::state_e;
