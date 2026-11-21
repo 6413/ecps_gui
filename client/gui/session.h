@@ -154,8 +154,10 @@
       gui::set_keyboard_focus_here();
     }
     bool enter = gui::input_text("##channel_password_prompt", &password_input,
-      gui::input_text_flags_enter_returns_true | gui::input_text_flags_password);
+      gui::input_text_flags_enter_returns_true | (password_prompt_show ? 0 : gui::input_text_flags_password));
     gui::pop_item_width();
+    // the dots hide a typo, this shows what is being sent
+    gui::checkbox("Show password", &password_prompt_show);
     text_wrapped_disabled("It is remembered on this computer, you are not asked again for this channel.");
     bool can_join = !password_input.empty();
     gui::begin_disabled(!can_join);
@@ -201,8 +203,17 @@
       ? "People need the password to join. They are asked once, then it is remembered"
       : "Anyone can join. Set a password to keep others out");
     gui::push_item_width(-1.f);
-    gui::input_text("##channel_password_set", &channel_password_input, gui::input_text_flags_password);
+    gui::input_text("##channel_password_set", &channel_password_input, channel_password_show ? 0 : gui::input_text_flags_password);
     gui::pop_item_width();
+    gui::checkbox("Show##channel_password_show", &channel_password_show);
+    // what it is now, so the host can tell the others exactly that
+    if (has_password) {
+      std::string current = ecps_backend.saved_password(channel_id);
+      if (!current.empty()) {
+        gui::same_line();
+        text_wrapped_disabled("Current: " + (channel_password_show ? current : std::string(current.size(), '*')));
+      }
+    }
     gui::begin_disabled(channel_password_input.empty());
     if (gui::button(has_password ? "Change password" : "Set password")) {
       backend_queue([channel_id, password = channel_password_input]() -> fan::event::task_t {
@@ -252,6 +263,8 @@
   std::string password_popup_name;
   std::string password_input;
   std::string channel_password_input;
+  bool password_prompt_show = false;
+  bool channel_password_show = false;
   std::atomic<bool> passwords_dirty { false };
 
   // ---- joining channels by themselves --------------------------------------------------------------------------

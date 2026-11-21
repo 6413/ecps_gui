@@ -937,6 +937,7 @@ struct ecps_backend_t {
   // A password given here is tried, otherwise the one saved for this channel. A channel without one is joined as before
   fan::event::task_t channel_join(Protocol_ChannelID_t channel_id, bool is_own_channel = false, std::string password = {}) {
     channel_info_t ci;
+    password = trim_password(password);
     if (password.empty() && !is_own_channel) {
       password = saved_password(channel_id);
     }
@@ -984,6 +985,18 @@ struct ecps_backend_t {
     }
     return {};
   }
+  // spaces and line ends copied along with a password from chat are not part of it, on either side
+  static std::string trim_password(std::string password) {
+    auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\0'; };
+    while (!password.empty() && space(password.back())) {
+      password.pop_back();
+    }
+    std::size_t start = 0;
+    while (start < password.size() && space(password[start])) {
+      ++start;
+    }
+    return password.substr(start);
+  }
   std::string saved_password(Protocol_ChannelID_t channel_id) {
     std::string name = channel_name_of(channel_id);
     if (name.empty()) {
@@ -1029,6 +1042,7 @@ struct ecps_backend_t {
     if (!channel_passwords_supported(channel_id)) {
       co_return;
     }
+    password = trim_password(password);
     Protocol_C2S_t::SetChannelPassword_t rest;
     std::memset(&rest, 0, sizeof(rest));
     rest.ChannelID = channel_id;
