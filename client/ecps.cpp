@@ -77,8 +77,11 @@ static void load_font_settings() {
   font_scale = fonts.value("scale", 1.f);
   for (int t = 0; t < gui::font::count; ++t) {
     font_paths[t] = fonts.value(font_type_names[t], std::string());
-    if (!font_paths[t].empty()) {
+    if (!font_paths[t].empty() && std::filesystem::exists(font_paths[t])) {
       gui::set_font_path((gui::font::type_t)t, font_paths[t]);
+    }
+    else {
+      font_paths[t].clear();
     }
   }
   gui::set_font_scale(font_scale);

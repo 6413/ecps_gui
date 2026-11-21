@@ -1308,24 +1308,29 @@
       }
       std::uint32_t last_from = (std::uint32_t)-1;
       std::int64_t last_time = 0;
+      bool first_group = true;
       for (const auto& message : messages) {
         // a run of messages from the same person within a few minutes shares one name line
         chat_line_message = message.id;
         chat_line_number = 0;
         if (message.from != last_from || message.time - last_time > 300) {
+          // a blank line between messages, so a new message never reads as another line of the last one
+          if (!first_group) {
+            gui::dummy(fan::vec2(0.f, gui::get_text_line_height() * 0.6f));
+          }
+          first_group = false;
           gui::spacing();
           bool mine = message.from == (std::uint32_t)ecps_backend.session_id.i;
           // a short bar marks where a new message begins, so a run of lines from one person reads as one message
           fan::vec2 group_at = gui::get_cursor_screen_pos();
           gui::get_window_draw_list()->AddRectFilled(group_at + fan::vec2(-4.f, 2.f),
             group_at + fan::vec2(-2.f, 2.f + gui::get_font_size()), mine ? 0xffff5919u : 0xffffa070u, 1.f);
-          f32_t row_start = group_at.x;
-          f32_t row_width = gui::get_content_region_avail().x;
           gui::text(mine ? fan::color(0.55f, 0.8f, 1.f, 1.f) : fan::color(0.95f, 0.8f, 0.45f, 1.f), message.name);
           fan::vec2 name_min = gui::get_item_rect_min();
           std::string time = chat_time_label(message.time);
-          // time sits at the right edge, on the same line as the name
-          gui::set_cursor_pos_x(row_start + row_width - gui::calc_text_size(time).x);
+          // time sits at the right edge of the same line as the name
+          gui::same_line(0, 0.f);
+          gui::set_cursor_pos_x(gui::get_cursor_pos_x() + gui::get_content_region_avail().x - gui::calc_text_size(time).x);
           gui::text_disabled(time);
           chat_add_line(message.name + "  " + time, "\n", true, name_min, gui::get_item_rect_max());
         }
