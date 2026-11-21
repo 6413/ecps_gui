@@ -239,7 +239,7 @@ struct updater_t {
 #endif
   }
 
-  // Looks for updates on its own: a few seconds after the start, then every minute. That uses requests GitHub doesn't
+  // Looks for updates on its own: a few seconds after the start, then every 5 seconds. That uses requests GitHub doesn't
   // count against the 60 an hour its API allows without an account (the API is what check() reads); only when one
   // of them shows something new does the full check() run. A background look that fails changes nothing on screen
   void auto_check() {
@@ -247,7 +247,7 @@ struct updater_t {
     if (auto_check_running.load() || now < next_auto_check) {
       return;
     }
-    next_auto_check = now + std::chrono::minutes(1);
+    next_auto_check = now + std::chrono::seconds(5);
     state_e current = state.load();
     // an update found, being installed or restarting into: nothing more to look for
     if (current != state_e::idle && current != state_e::up_to_date && current != state_e::failed) {
@@ -257,11 +257,14 @@ struct updater_t {
     std::thread([this] {
     bool changed = probe_for_update();
     bool probe_failed = last_probe_failed;
-    auto_check_running = false;
-    // if GitHub could not be read at all, still run the full check so the About panel says why
-    if (changed || probe_failed) {
+    // if GitHub could not be read at all, still run the full check so the About panel says why. The full check reads
+    // the API, 60 an hour: at most once a minute, also when the network is down and every look fails
+    auto at = std::chrono::steady_clock::now();
+    if ((changed || probe_failed) && at - last_full_check >= std::chrono::minutes(1)) {
+      last_full_check = at;
       check();
     }
+    auto_check_running = false;
     }).detach();
   }
 
@@ -817,6 +820,8 @@ private:
   std::chrono::steady_clock::time_point last_poll;
   // the first look a few seconds after the start, so it doesn't slow it down
   std::chrono::steady_clock::time_point next_auto_check = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  // the last full check() that a look started: it reads the rate limited API
+  std::chrono::steady_clock::time_point last_full_check{};
   std::atomic<bool> auto_check_running{false};
 bool last_probe_failed = false;
   std::chrono::steady_clock::time_point restart_at;
