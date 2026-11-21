@@ -1020,9 +1020,7 @@ struct render_thread_t {
         engine.window.set_focus_on_show(false);
       }
     }
-    engine.set_target_fps(0, false);
-    engine.set_window_name("ECPS - Every Communication Program Sucks");
-    // image_load is async now, so read the icon pixels synchronously for glfw
+    engine.set_window_name("ECPS - Every Communication Program Sucks");    // image_load is async now, so read the icon pixels synchronously for glfw
     if (auto icon = fan::image::load_owned("icons/ecps_logo.png"); icon.valid() && icon.channels == 4) {
       fan::image::info_t icon_info;
       icon_info.data = icon.data.get();
@@ -1856,12 +1854,19 @@ int main() {
 
       // In the background (another program in front, a game for example) the window draws only as often as the
       // stream needs, with room to spare: every decoded frame still shows, and the rest of the monitor's refresh
-      // rate (165 draws a second on a 165 Hz screen) is GPU time left to the game
+      // rate (165 draws a second on a 165 Hz screen) is GPU time left to the game. The Target Framerate setting caps
+      // it in front too: the engine's own frame timer isn't used, this thread draws the frames
       {
         static auto last_draw = std::chrono::steady_clock::now();
+        f64_t wanted = 0.0;
         if (!render_thread_instance.engine.window.is_focused()) {
           f32_t stream_fps = render_thread_instance.ecps_gui.debug_sample.decoded_fps;
-          f64_t wanted = std::max(30.0, stream_fps * 1.25 + 5.0);
+          wanted = std::max(30.0, stream_fps * 1.25 + 5.0);
+        }
+        if (int target = render_thread_instance.engine.target_fps; target > 0) {
+          wanted = wanted > 0.0 ? std::min(wanted, (f64_t)target) : (f64_t)target;
+        }
+        if (wanted > 0.0) {
           auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<f64_t>(1.0 / wanted));
           auto since = std::chrono::steady_clock::now() - last_draw;
           if (since < interval) {
