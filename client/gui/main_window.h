@@ -427,7 +427,7 @@
               gui::spacing();
 
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
-              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 15.5f : 11.5f) : 0.f;
+              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 21.f : 17.f) : 0.f;
               if (already_in_selected) {
                 This->render_voice_switch(This->selected_channel_id);
               }
@@ -464,6 +464,8 @@
                       }
                     }
 
+                    // in a narrow panel the name and badges stop where the buttons start, they don't run under them
+                    gui::push_clip_rect(row_at, fan::vec2(row_at.x + std::max(hit_width - 4.f, 0.f), row_at.y + row_height), true);
                     gui::set_cursor_screen_pos(row_at + fan::vec2(10.f, (row_height - gui::get_font_size()) * 0.5f));
                     gui::text(fan::color(0.9f, 0.9f, 0.9f, 1.f), session.username);
                     if (is_me) {
@@ -516,6 +518,7 @@
                     }
                     gui::same_line(0, 10.f);
                     gui::text(fan::color(0.3f, 0.3f, 0.34f, 1.f), "#" + std::to_string(session.session_id.i));
+                    gui::pop_clip_rect();
 
                     if (has_buttons) {
                       f32_t x = row_at.x + row_width - 8.f - button_size;
@@ -558,6 +561,7 @@
                 gui::pop_style_var();
               }
               if (host_controls_open) {
+                gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 10.f));
                 if (gui::settings_switch("Preview own stream", &This->show_own_stream, "Shows your own shared screen here")) {
                   if (auto rt = get_render_thread(); rt) {
                     if (This->show_own_stream) {
@@ -572,6 +576,7 @@
                 This->render_channel_password_controls(This->selected_channel_id);
                 gui::dummy(fan::vec2(0, 8.f));
                 This->render_delete_channel_button(This->selected_channel_id);
+                gui::pop_style_var();
               }
               if (is_host_of_selected) {
                 gui::end_child();

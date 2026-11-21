@@ -93,6 +93,8 @@
     std::string voice_output;
     bool voice_echo_cancel = false;
     bool voice_noise_suppress = true;
+    // evens out how loud each of the others is, so a quiet one and a loud one come to about the same level
+    bool voice_normalize = false;
 
     bool share_camera = false;
     std::string camera_device;

@@ -172,6 +172,12 @@
       stream_settings.voice_noise_suppress = noise_suppress;
       save_voice_settings();
     }
+    bool normalize = stream_settings.voice_normalize;
+    if (gui::settings_switch("Voice normalization", &normalize,
+      "Evens out the others' volume: a quiet voice is brought up and a loud one down, so you don't keep adjusting each one. Silence and background noise are left alone")) {
+      stream_settings.voice_normalize = normalize;
+      save_voice_settings();
+    }
     if (voice_chat.capture_failed) {
       gui::text_wrapped_disabled("Could not open the microphone");
     }
@@ -246,6 +252,7 @@
       .output_device = stream_settings.voice_output,
       .echo_cancel = stream_settings.voice_echo_cancel,
       .noise_suppress = stream_settings.voice_noise_suppress,
+      .normalize = stream_settings.voice_normalize,
     };
   }
 
@@ -430,6 +437,7 @@
     voice["notify_volume"] = stream_settings.notify_volume;
     voice["echo_cancel"] = stream_settings.voice_echo_cancel;
     voice["noise_suppress"] = stream_settings.voice_noise_suppress;
+    voice["normalize"] = stream_settings.voice_normalize;
     fan::json users = fan::json::object();
     for (const auto& [name, volume] : voice_user_volumes) {
       users[name] = volume;

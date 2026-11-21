@@ -269,7 +269,9 @@
       }
     }
     gui::begin_disabled(channel_password_input.empty());
-    if (gui::button(has_password ? "Change password" : "Set password")) {
+    // one under the other, each as wide as the panel: side by side they didn't fit a narrow one
+    f32_t button_width = gui::get_content_region_avail().x;
+    if (gui::button(has_password ? "Change password" : "Set password", fan::vec2(button_width, 0))) {
       backend_queue([channel_id, password = channel_password_input]() -> fan::event::task_t {
         try {
           co_await ecps_backend.channel_set_password(channel_id, password);
@@ -282,8 +284,7 @@
     }
     gui::end_disabled();
     if (has_password) {
-      gui::same_line();
-      if (gui::button("Remove password")) {
+      if (gui::button("Remove password", fan::vec2(button_width, 0))) {
         backend_queue([channel_id]() -> fan::event::task_t {
           try {
             co_await ecps_backend.channel_set_password(channel_id, std::string());

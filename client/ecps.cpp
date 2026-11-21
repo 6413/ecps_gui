@@ -548,6 +548,7 @@ struct voice_chat_t {
     std::string output_device;
     bool echo_cancel = false;
     bool noise_suppress = true;
+    bool normalize = false;
   };
   struct speaker_t {
     fan::audio::opus_decoder_t decoder;
@@ -556,6 +557,44 @@ struct voice_chat_t {
     std::int64_t heard_at_ms = 0;
     // the peak of the last decoded packet
     f32_t level = 0.f;
+    // voice normalization: how loud this one speaks (followed slowly, only while they are talking) and the gain
+    // that brings it to a fixed level
+    f32_t norm_level = 0.f;
+    f32_t norm_gain = 1.f;
+
+    // Brings the voice in pcm (samples, interleaved) towards a fixed level and returns the gain it was given.
+    // Quiet below the gate is left alone, so the pauses between words and the noise in them are not boosted. The
+    // gain falls quickly when someone gets loud and rises slowly when they are quiet, so it doesn't pump, and never
+    // takes the sound past full scale
+    f32_t normalize(f32_t* pcm, std::int32_t samples) {
+      constexpr f32_t gate = 0.004f;       // about -48 dB
+      constexpr f32_t target = 0.09f;      // about -21 dB, where speech sits comfortably
+      constexpr f32_t min_gain = 0.35f;
+      constexpr f32_t max_gain = 8.f;      // +18 dB
+      if (samples <= 0) {
+        return norm_gain;
+      }
+      f64_t sum = 0.0;
+      f32_t peak = 0.f;
+      for (std::int32_t i = 0; i < samples; ++i) {
+        sum += (f64_t)pcm[i] * pcm[i];
+        peak = std::max(peak, std::abs(pcm[i]));
+      }
+      f32_t rms = (f32_t)std::sqrt(sum / samples);
+      if (rms > gate) {
+        norm_level = norm_level <= 0.f ? rms : norm_level + (rms - norm_level) * (rms > norm_level ? 0.25f : 0.05f);
+        f32_t wanted = std::clamp(target / norm_level, min_gain, max_gain);
+        norm_gain += (wanted - norm_gain) * (wanted < norm_gain ? 0.2f : 0.03f);
+      }
+      f32_t gain = norm_gain;
+      if (peak * gain > 0.97f) {
+        gain = 0.97f / peak;
+      }
+      for (std::int32_t i = 0; i < samples; ++i) {
+        pcm[i] *= gain;
+      }
+      return gain;
+    }
   };
 
   static std::int64_t now_ms() {
@@ -604,6 +643,7 @@ struct voice_chat_t {
     }
     echo_cancel.store(settings.echo_cancel, std::memory_order_relaxed);
     noise_suppress.store(settings.noise_suppress, std::memory_order_relaxed);
+    normalize.store(settings.normalize, std::memory_order_relaxed);
 
     bool listening = is_active() && !deafened.load();
     if (mixer_opening.valid()) {
@@ -761,8 +801,19 @@ struct voice_chat_t {
       return;
     }
     std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> pcm;
+    bool normalizing = normalize.load(std::memory_order_relaxed);
+    if (!normalizing) {
+      speaker->norm_gain = 1.f;
+      speaker->norm_level = 0.f;
+    }
     for (std::int16_t i = 0; speaker->receiving && i < std::min<std::int16_t>(gap, max_concealed); ++i) {
       if (speaker->decoder.conceal(pcm.data()) > 0) {
+        if (normalizing) {
+          // a gap filled in: the gain the voice has now, without learning from it
+          for (f32_t& sample : pcm) {
+            sample = std::clamp(sample * speaker->norm_gain, -1.f, 1.f);
+          }
+        }
         if (gain != 1.f) {
           for (f32_t& sample : pcm) {
             sample *= gain;
@@ -781,6 +832,10 @@ struct voice_chat_t {
         peak = std::max(peak, std::abs(pcm[i]));
       }
       speaker->level = peak;
+      // the evening out first, then your own volume for this person on top of it
+      if (normalizing) {
+        speaker->normalize(pcm.data(), frames * (std::int32_t)fan::audio::stream_channels);
+      }
       if (gain != 1.f) {
         for (std::int32_t i = 0; i < frames * (std::int32_t)fan::audio::stream_channels; ++i) {
           pcm[i] *= gain;
@@ -850,6 +905,7 @@ struct voice_chat_t {
   std::atomic<bool> echo_cancel = false;
   bool echo_running = false;
   std::atomic<bool> noise_suppress = true;
+  std::atomic<bool> normalize = false;
   bool noise_running = false;
   std::atomic<f32_t> level = 0.f;
   std::mutex outgoing_mutex;

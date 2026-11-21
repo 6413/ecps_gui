@@ -316,41 +316,50 @@
     chat_add_line(line, "\n", true, lo, hi);
   }
 
-  // Reply and Pin at the right of the message under the mouse, drawn before the message so its lines follow as usual
+  // The buttons of the message under the mouse: a small bar with icons at its upper right, over a plate so the words
+  // under it don't show through. Drawn before the message so its lines follow as usual. Reply and pin for all,
+  // edit for your own, delete for your own and, in your channel, anyone's
   void render_chat_message_buttons(ecps_backend_t::Protocol_ChannelID_t channel_id, const ecps_backend_t::chat_message_t& message,
     const chat_tag_t& tag, bool pinned) {
     fan::vec2 back = gui::get_cursor_screen_pos();
-    const char* pin_label = pinned ? "Unpin" : "Pin";
-    // your own message can be edited and deleted, the channel's host can delete any
     bool mine = message.from == (std::uint32_t)ecps_backend.session_id.i;
     bool can_edit = mine && (tag.kind == chat_tag_t::none || tag.kind == chat_tag_t::reply);
     bool can_delete = mine || ecps_backend.is_current_user_host_of_channel(channel_id);
-    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(6.f, 1.f));
-    f32_t pad = 12.f + gui::get_style().ItemSpacing.x;
-    f32_t width = gui::calc_text_size("Reply").x + gui::calc_text_size(pin_label).x + pad * 2.f - gui::get_style().ItemSpacing.x;
-    if (can_edit) {
-      width += gui::calc_text_size("Edit").x + pad;
-    }
-    if (can_delete) {
-      width += gui::calc_text_size("Delete").x + pad;
-    }
+    int count = 2 + (can_edit ? 1 : 0) + (can_delete ? 1 : 0);
+
+    f32_t size = std::round(gui::get_frame_height() * 0.72f);
+    f32_t gap = 3.f;
+    f32_t pad = 3.f;
+    f32_t width = size * count + gap * (count - 1) + pad * 2.f;
     f32_t right = back.x + gui::get_content_region_avail().x;
-    gui::set_cursor_screen_pos(fan::vec2(right - width, back.y - 2.f));
+    // inside the message's own rows, so the mouse stays over the message while it reaches for a button
+    fan::vec2 at(right - width - 2.f, back.y - 1.f);
+    auto* list = gui::get_window_draw_list();
+    list->AddRectFilled(at, at + fan::vec2(width, size + pad * 2.f), 0xf0150d08u, 8.f);
+    list->AddRect(at, at + fan::vec2(width, size + pad * 2.f), 0x40ff9a60u, 8.f);
+
     gui::push_id((int)message.id);
-    if (gui::button("Reply")) {
+    fan::vec2 cursor = at + fan::vec2(pad, pad);
+    auto place = [&] {
+      gui::set_cursor_screen_pos(cursor);
+      cursor.x += size + gap;
+    };
+    place();
+    if (icon_button("##msg_reply", icon_e::reply, "Reply", size)) {
       chat_reply_id = message.id;
       chat_reply_channel = (std::uint32_t)channel_id.i;
       chat_reply_name = message.name;
       chat_reply_quote = chat_snippet(tag.body);
+      chat_edit_id = 0;
       chat_focus_input = true;
     }
-    gui::same_line();
-    if (gui::button(pin_label)) {
+    place();
+    if (icon_button("##msg_pin", icon_e::pin, pinned ? "Unpin" : "Pin", size, pinned ? icon_style_e::accent : icon_style_e::plain)) {
       chat_send_pin(channel_id, message.id, tag.body, !pinned);
     }
     if (can_edit) {
-      gui::same_line();
-      if (gui::button("Edit")) {
+      place();
+      if (icon_button("##msg_edit", icon_e::edit, "Edit", size)) {
         // the reply's quote line stays as it was, the words under it are what changes
         chat_edit_id = message.id;
         chat_edit_channel = (std::uint32_t)channel_id.i;
@@ -362,15 +371,14 @@
       }
     }
     if (can_delete) {
-      gui::same_line();
-      if (gui::button("Delete")) {
+      place();
+      if (icon_button("##msg_delete", icon_e::trash, "Delete", size, icon_style_e::danger)) {
         backend_queue([channel_id, id = message.id]() -> fan::event::task_t {
           return ecps_backend.change_chat(channel_id, id, std::string());
         });
       }
     }
     gui::pop_id();
-    gui::pop_style_var();
     gui::set_cursor_screen_pos(back);
   }
 
@@ -1100,6 +1108,7 @@
   bool side_panel_resizing = false;
   int side_resizing_side = -1;
   f32_t side_drag_raw = 0.f; // the size the mouse asks for while a line is dragged, below the smallest one too
+  f32_t side_size_before_drag = 0.f; // what the side was before the drag, for when the drag hides it
   // a side pushed against its edge: its panels stay open but only a thin grip shows, dragged out (or clicked) it
   // comes back
   bool side_hidden[3] = {false, false, false};
@@ -1304,11 +1313,9 @@
       }
       gui::same_line(0, 4.f);
     }
-    if (gui::button("x##side_panel_close", fan::vec2(close_width, height))) {
+    if (icon_button("##side_panel_close", icon_e::close,
+      std::string("Close ") + side_panel_name(shown) + ". The toolbar under the stream opens it again", close_width)) {
       close_side_panel(shown);
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip(std::string("Close ") + side_panel_name(shown) + ". The toolbar under the stream opens it again");
     }
     gui::spacing();
   }
@@ -1342,6 +1349,10 @@
         render_audio_tab();
         gui::end_tab_item();
       }
+      if (gui::begin_tab_item("Theme", nullptr, 0)) {
+        render_theme_tab();
+        gui::end_tab_item();
+      }
       gui::end_tab_bar();
     }
   }
@@ -1358,14 +1369,15 @@
     }
     f32_t hide_below = side == 1 ? side_hide_below * 0.6f : side_hide_below;
     bool will_hide = false;
+    f32_t& stored = side == 1 ? side_panel_height : side == 0 ? stream_settings.settings_panel_width : side_left_width;
     if (gui::is_item_active()) {
       fan::vec2 delta = gui::get_io().MouseDelta;
       fan::vec2 area = side_view_max - side_view_min;
-      f32_t& stored = side == 1 ? side_panel_height : side == 0 ? stream_settings.settings_panel_width : side_left_width;
       if (!side_panel_resizing) {
         side_panel_resizing = true;
         side_resizing_side = side;
         side_drag_raw = stored;
+        side_size_before_drag = stored;
       }
       side_drag_raw += side == 1 ? -delta.y : side == 0 ? -delta.x : delta.x;
       stored = std::clamp(side_drag_raw, side == 1 ? 150.f : 250.f, (side == 1 ? area.y : area.x) * 0.7f);
@@ -1379,6 +1391,8 @@
       side_resizing_side = -1;
       if (side_drag_raw < hide_below) {
         side_hidden[side] = true;
+        // the drag squeezed the size down to the smallest one: what comes back is the size it had before it
+        stored = std::max(side_size_before_drag, side == 1 ? 150.f : 250.f);
       }
       save_side_panel_layout();
     }
@@ -1858,7 +1872,7 @@
       gui::same_line();
       gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(0.f, gui::get_content_region_avail().x - gui::get_frame_height()));
       // Escape in the input leaves it, the words typed so far go
-      if (gui::button("x##chat_edit_cancel", fan::vec2(gui::get_frame_height(), 0)) ||
+      if (icon_button("##chat_edit_cancel", icon_e::close, "Stop editing (Esc)", gui::get_frame_height()) ||
         (chat_input_active && engine.window.is_key_clicked(fan::key_escape))) {
         chat_edit_id = 0;
         chat_input.clear();
@@ -1876,7 +1890,7 @@
       gui::same_line();
       gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(0.f, gui::get_content_region_avail().x - gui::get_frame_height()));
       // Escape in the input drops the reply too
-      if (gui::button("x##chat_reply_cancel", fan::vec2(gui::get_frame_height(), 0)) ||
+      if (icon_button("##chat_reply_cancel", icon_e::close, "Stop replying (Esc)", gui::get_frame_height()) ||
         (chat_input_active && engine.window.is_key_clicked(fan::key_escape))) {
         chat_reply_id = 0;
         replying = false;

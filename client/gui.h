@@ -74,6 +74,10 @@ struct ecps_gui_t {
       if (config.contains("auto_join") && config["auto_join"].is_string()) {
         auto_join_host = config["auto_join"].get<std::string>();
       }
+      if (config.contains("theme") && config["theme"].is_object()) {
+        load_theme(config["theme"]);
+        apply_theme();
+      }
       if (config.contains("ui") && config["ui"].is_object()) {
         fan::json ui = config["ui"];
         top_bar_compact = ui.value("compact_bar", false);
@@ -113,6 +117,7 @@ struct ecps_gui_t {
       stream_settings.voice_output = voice.value("output", std::string());
       stream_settings.voice_echo_cancel = voice.value("echo_cancel", stream_settings.voice_echo_cancel);
       stream_settings.voice_noise_suppress = voice.value("noise_suppress", stream_settings.voice_noise_suppress);
+      stream_settings.voice_normalize = voice.value("normalize", stream_settings.voice_normalize);
       if (voice.contains("user_volumes") && voice["user_volumes"].is_object()) {
         fan::json users = voice["user_volumes"];
         for (auto it = users.begin(); it != users.end(); ++it) {

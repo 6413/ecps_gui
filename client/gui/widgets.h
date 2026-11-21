@@ -98,7 +98,7 @@
 
   // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
   // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
-  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users };
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users, close, reply, pin, edit, trash };
 
   // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
   static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
@@ -209,6 +209,38 @@
         dot(P(-0.4f, -0.15f), h * 0.1f);
         dot(P(0.f, -0.15f), h * 0.1f);
         dot(P(0.4f, -0.15f), h * 0.1f);
+        break;
+      case icon_e::reply:
+        // an arrow turning back: left along the top, then down and round to the right
+        line(P(-0.62f, -0.2f), P(0.15f, -0.2f));
+        list->AddBezierQuadratic(P(0.15f, -0.2f), P(0.82f, -0.2f), P(0.82f, 0.45f), color, t + grow * 2.f, 12);
+        arrow_head(P(-0.7f, -0.2f), fan::vec2(-1, 0));
+        break;
+      case icon_e::pin:
+        // a push pin: round head, short body, needle
+        dot(P(0.22f, -0.38f), h * 0.36f);
+        line(P(0.05f, -0.1f), P(-0.45f, 0.4f), t * 1.5f);
+        line(P(-0.45f, 0.4f), P(-0.8f, 0.8f), t * 0.7f);
+        break;
+      case icon_e::edit:
+        // a pencil on the diagonal, with its tip at the lower left
+        line(P(-0.3f, 0.3f), P(0.62f, -0.62f), t * 2.2f);
+        list->AddTriangleFilled(P(-0.82f, 0.82f), P(-0.58f, 0.22f), P(-0.22f, 0.58f), color);
+        break;
+      case icon_e::trash:
+        // lid with a handle, and a bin under it
+        line(P(-0.72f, -0.48f), P(0.72f, -0.48f));
+        line(P(-0.24f, -0.48f), P(-0.24f, -0.74f));
+        line(P(-0.24f, -0.74f), P(0.24f, -0.74f));
+        line(P(0.24f, -0.74f), P(0.24f, -0.48f));
+        list->AddRect(P(-0.5f, -0.3f) - fan::vec2(grow, grow), P(0.5f, 0.82f) + fan::vec2(grow, grow), color, h * 0.12f, 0, t);
+        line(P(-0.16f, -0.02f), P(-0.16f, 0.6f));
+        line(P(0.16f, -0.02f), P(0.16f, 0.6f));
+        break;
+      case icon_e::close:
+        // a cross of two lines, centred in its box and drawn as shapes, so it stays sharp at any size
+        line(P(-0.5f, -0.5f), P(0.5f, 0.5f));
+        line(P(0.5f, -0.5f), P(-0.5f, 0.5f));
         break;
       case icon_e::users:
         // a head over rounded shoulders
