@@ -278,7 +278,10 @@
   }
   std::string voice_key_text(const char* action) {
     auto& actions = engine.get_input_action();
-    auto found = actions.input_actions.find(fan::window::input_action_t::action_key_t(action));
+    // the key type through the map, not by its name: clang doesn't see fan::window::input_action_t from here
+    // (import fan doesn't bring in its module), MSVC does
+    using key_t = typename std::remove_cvref_t<decltype(actions.input_actions)>::key_type;
+    auto found = actions.input_actions.find(key_t(action));
     if (found != actions.input_actions.end()) {
       for (const auto& chord : found->second.keybinds) {
         if (!chord.empty() && !chord[0].empty()) {
