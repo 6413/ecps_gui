@@ -9,7 +9,7 @@
 # the newest ecps_gui and fan.
 
 pkgname=ecps-git
-pkgver=0.99
+pkgver=1.0
 pkgrel=1
 pkgdesc="ECPS - Every Communication Program Sucks: screen sharing, voice and remote control"
 arch=('x86_64')
