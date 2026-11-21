@@ -83,7 +83,12 @@
       bool mouse_near = io.MousePos.x >= window_pos.x && io.MousePos.x <= window_pos.x + window_size.x &&
         io.MousePos.y >= window_pos.y + window_size.y - zone && io.MousePos.y <= window_pos.y + window_size.y;
       bool has_picture = rt->network_frame.get_image() != engine.default_texture;
-      if (mouse_near || !has_picture || This->chat_unread()) {
+      // a new unread message shows the bar for a moment, it doesn't keep it up
+      bool unread = This->chat_unread();
+      static bool was_unread = false;
+      bool new_unread = unread && !was_unread;
+      was_unread = unread;
+      if (mouse_near || !has_picture || new_unread) {
         fullscreen_toolbar_visible_until = now + std::chrono::milliseconds(1500);
       }
       f32_t target = now < fullscreen_toolbar_visible_until ? 1.f : 0.f;

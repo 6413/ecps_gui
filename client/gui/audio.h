@@ -136,33 +136,21 @@
       save_server_voice(in_voice);
     }
     if (in_voice) {
-      bool muted = voice_chat.muted.load();
-      if (gui::settings_switch("Mute microphone", &muted, ("The others stop hearing you. Key: " + voice_key_text(action_toggle_mute)).c_str())) {
-        voice_chat.muted.store(muted);
-        save_server_voice(true);
-      }
+      // the microphone is muted by clicking your own voice badge in the list, or with its key
       bool deafened = voice_chat.deafened.load();
       if (gui::settings_switch("Mute others", &deafened, ("You stop hearing the voice chat. Key: " + voice_key_text(action_toggle_deafen)).c_str())) {
         voice_chat.deafened.store(deafened);
         save_server_voice(true);
       }
     }
-    render_voice_panel();
     return in_voice;
   }
 
-  // the microphone, speakers and filters live in the channel panel itself, folded away until asked for
-  void render_voice_panel() {
-    gui::dummy(fan::vec2(0, 2.f));
-    if (gui::button(voice_settings_open ? "Hide voice settings" : "Voice settings")) {
-      voice_settings_open = !voice_settings_open;
-    }
-    if (!voice_settings_open) {
-      return;
-    }
+  // the microphone, speakers and filters: the Audio tab of the settings panel
+  void render_audio_tab() {
     gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
     gui::push_style_var(gui::style_var_frame_rounding, 5.f);
-    gui::settings_section("VOICE SETTINGS");
+    gui::dummy(fan::vec2(0, 2.f));
     render_voice_settings();
     gui::pop_style_var(2);
     gui::dummy(fan::vec2(0, 6.f));
@@ -451,7 +439,6 @@
   }
 
   static constexpr f32_t voice_meter_range = 0.5f;
-  bool voice_settings_open = false;
   // the voice badges in the member list, shown level per session
   std::unordered_map<std::uint32_t, f32_t> voice_meter_levels;
   std::vector<fan::audio::loopback_device_t> voice_inputs;

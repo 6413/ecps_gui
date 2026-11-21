@@ -204,6 +204,21 @@ struct ProtocolUDP {
       Protocol_ChannelSessionID_t ChannelSessionID;
       char Name[32];
     );
+    /* the host deletes its channel. Over udp like the rename, so a server without it ignores it, and sent again
+       until the channel is gone from the list */
+    __dme(Channel_Delete,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+    );
+    /* the author edits a message, or the author or the channel's host deletes one (Length 0 is a delete). The ones
+       that asked for the chat are told. Also over udp, an older server ignores it and the message stays */
+    __dme(Channel_Chat_Change,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+      uint32_t MessageId;
+      uint16_t Length;
+      char Text[Protocol::ChatTextMax];
+    );
   }C2S;
   struct S2C_t : __dme_inherit(S2C_t) {
     __dme(KeepAlive);
@@ -230,6 +245,8 @@ struct Protocol_MessageTraits {
   static constexpr int retries() {
     if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Probe_t>) return 5;
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Rename_t>) return 10;
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Delete_t>) return 10;
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Change_t>) return 10;
     else return 0;
   }
   template <typename Message>
@@ -240,6 +257,8 @@ struct Protocol_MessageTraits {
   static constexpr const char* name() {
     if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Probe_t>) return "Channel_Chat_Probe";
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Rename_t>) return "Channel_Rename";
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Delete_t>) return "Channel_Delete";
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Change_t>) return "Channel_Chat_Change";
     else return "";
   }
 };
@@ -687,6 +706,14 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
   /* after the history: the server has chat */
   __dme(Channel_Chat_History_End,
     Protocol_ChannelID_t ChannelID;
+  );
+  /* who in the voice chat has muted their microphone. Only to sessions that said they know it: bit 4 of Joined in
+     Channel_Voice_Join (bit 1 joined, bit 2 muted). A server without it takes any Joined above 0 as joined, so the
+     older ones keep working */
+  __dme(Channel_Voice_Muted,
+    Protocol_ChannelID_t ChannelID;
+    uint8_t Count;
+    Protocol_SessionID_t Members[16];
   );
 }Protocol_S2C;
 

@@ -178,6 +178,9 @@ struct Channel_ScreenShare_Data_t{
   std::vector<uint32_t> Announced;
   std::vector<uint32_t> Voice;
   std::vector<uint32_t> VoiceAware;
+  /* who in the voice chat muted their microphone, and the sessions that know to be told (Joined bit 4) */
+  std::vector<uint32_t> VoiceMuted;
+  std::vector<uint32_t> VoiceMutedAware;
   /* the chat: the last ChatHistoryMax messages, for those who join later, and the sessions that asked for it
      (Channel_Chat_Probe). Only those get chat, an older client would not know the messages */
   std::deque<Protocol_S2C_t::Channel_Chat_Message_t> ChatHistory;

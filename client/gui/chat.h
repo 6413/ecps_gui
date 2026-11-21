@@ -232,6 +232,10 @@
     return pins;
   }
   // replying: the message answered, shown above the input until sent or dropped
+  // editing one of your own messages: the input holds its words, Send changes the message instead of sending a new one
+  std::uint32_t chat_edit_id = 0;
+  std::uint32_t chat_edit_channel = (std::uint32_t)-1;
+  std::string chat_edit_prefix;
   std::uint32_t chat_reply_id = 0;
   std::uint32_t chat_reply_channel = (std::uint32_t)-1;
   std::string chat_reply_name;
@@ -317,8 +321,19 @@
     const chat_tag_t& tag, bool pinned) {
     fan::vec2 back = gui::get_cursor_screen_pos();
     const char* pin_label = pinned ? "Unpin" : "Pin";
+    // your own message can be edited and deleted, the channel's host can delete any
+    bool mine = message.from == (std::uint32_t)ecps_backend.session_id.i;
+    bool can_edit = mine && (tag.kind == chat_tag_t::none || tag.kind == chat_tag_t::reply);
+    bool can_delete = mine || ecps_backend.is_current_user_host_of_channel(channel_id);
     gui::push_style_var(gui::style_var_frame_padding, fan::vec2(6.f, 1.f));
-    f32_t width = gui::calc_text_size("Reply").x + gui::calc_text_size(pin_label).x + 24.f + gui::get_style().ItemSpacing.x;
+    f32_t pad = 12.f + gui::get_style().ItemSpacing.x;
+    f32_t width = gui::calc_text_size("Reply").x + gui::calc_text_size(pin_label).x + pad * 2.f - gui::get_style().ItemSpacing.x;
+    if (can_edit) {
+      width += gui::calc_text_size("Edit").x + pad;
+    }
+    if (can_delete) {
+      width += gui::calc_text_size("Delete").x + pad;
+    }
     f32_t right = back.x + gui::get_content_region_avail().x;
     gui::set_cursor_screen_pos(fan::vec2(right - width, back.y - 2.f));
     gui::push_id((int)message.id);
@@ -332,6 +347,27 @@
     gui::same_line();
     if (gui::button(pin_label)) {
       chat_send_pin(channel_id, message.id, tag.body, !pinned);
+    }
+    if (can_edit) {
+      gui::same_line();
+      if (gui::button("Edit")) {
+        // the reply's quote line stays as it was, the words under it are what changes
+        chat_edit_id = message.id;
+        chat_edit_channel = (std::uint32_t)channel_id.i;
+        std::size_t line_end = message.text.find('\n');
+        chat_edit_prefix = tag.kind == chat_tag_t::reply && line_end != std::string::npos ? message.text.substr(0, line_end + 1) : std::string();
+        chat_input = message.text.substr(chat_edit_prefix.size());
+        chat_reply_id = 0;
+        chat_focus_input = true;
+      }
+    }
+    if (can_delete) {
+      gui::same_line();
+      if (gui::button("Delete")) {
+        backend_queue([channel_id, id = message.id]() -> fan::event::task_t {
+          return ecps_backend.change_chat(channel_id, id, std::string());
+        });
+      }
     }
     gui::pop_id();
     gui::pop_style_var();
@@ -1297,8 +1333,16 @@
     else if (shown == side_channels) {
       window_handler.render_channels_content();
     }
-    else {
-      window_handler.render_stream_settings_content_compact();
+    else if (gui::begin_tab_bar("SettingsTabs")) {
+      if (gui::begin_tab_item("Stream", nullptr, 0)) {
+        window_handler.render_stream_settings_content_compact();
+        gui::end_tab_item();
+      }
+      if (gui::begin_tab_item("Audio", nullptr, 0)) {
+        render_audio_tab();
+        gui::end_tab_item();
+      }
+      gui::end_tab_bar();
     }
   }
 
@@ -1763,6 +1807,9 @@
           render_chat_reply_quote(tag);
         }
         render_chat_text(tag.body, message.id, message.from);
+        if (message.edited) {
+          gui::text_disabled("(edited)");
+        }
         gui::unindent(chat_text_indent);
         fan::vec2 bottom(row_right, gui::get_cursor_screen_pos().y);
         top.x -= 6.f;
@@ -1804,6 +1851,20 @@
 
     render_chat_pending_files();
 
+    bool editing = chat_edit_id != 0 && chat_edit_channel == (std::uint32_t)channel_id.i;
+    if (editing) {
+      gui::align_text_to_frame_padding();
+      gui::text_disabled("Editing your message");
+      gui::same_line();
+      gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(0.f, gui::get_content_region_avail().x - gui::get_frame_height()));
+      // Escape in the input leaves it, the words typed so far go
+      if (gui::button("x##chat_edit_cancel", fan::vec2(gui::get_frame_height(), 0)) ||
+        (chat_input_active && engine.window.is_key_clicked(fan::key_escape))) {
+        chat_edit_id = 0;
+        chat_input.clear();
+        editing = false;
+      }
+    }
     if (replying) {
       gui::align_text_to_frame_padding();
       gui::text_disabled("Replying to");
@@ -1881,7 +1942,16 @@
     gui::same_line();
     bool send = gui::button("Send##chat_send");
     bool has_text = chat_has_text_content(chat_input);
-    if ((enter || send) && (has_text || !chat_pending_files.empty())) {
+    if (editing && (enter || send) && has_text) {
+      // new words for the message that was picked. Nothing left in it is the Delete button's job
+      backend_queue([channel_id, id = chat_edit_id, text = chat_edit_prefix + chat_input]() -> fan::event::task_t {
+        return ecps_backend.change_chat(channel_id, id, text);
+      });
+      chat_edit_id = 0;
+      chat_input.clear();
+      chat_focus_input = true;
+    }
+    else if ((enter || send) && (has_text || !chat_pending_files.empty())) {
       if (replying && has_text) {
         // the tag line goes in front, a ] in the name would end the tag early
         std::string name = chat_reply_name;

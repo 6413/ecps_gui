@@ -602,6 +602,38 @@ static bool udp_read_one() {
     Channel_BroadcastChannelList();
     break;
   }
+  case ProtocolUDP::C2S_t::Channel_Delete: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_Delete_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    auto Channel = &g_pile->ChannelList[RestPacket->ChannelID];
+    if (Channel->Type != Protocol::ChannelType_ScreenShare_e) {
+      break;
+    }
+    /* only the host deletes it. A second copy of the packet finds the channel gone and is dropped above */
+    if (((Channel_ScreenShare_Data_t*)Channel->Buffer)->HostSessionID != SessionID) {
+      break;
+    }
+    Channel_Delete(RestPacket->ChannelID);
+    break;
+  }
+  case ProtocolUDP::C2S_t::Channel_Chat_Change: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_Chat_Change_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    ScreenShare_ChatChange(RestPacket->ChannelID, SessionID, RestPacket->MessageId, RestPacket->Text, RestPacket->Length);
+    break;
+  }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {
     auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest_t*)&BasePacket[1];
     IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);

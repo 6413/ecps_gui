@@ -603,7 +603,8 @@ case Protocol_C2S_t::Channel_Voice_Join:{
   if(IsAnythingInvalid(SessionID, Request->ChannelID, Request->ChannelSessionID) == true){
     goto StateDone_gt;
   }
-  ScreenShare_SetVoice(Request->ChannelID, SessionID, Request->Joined != 0);
+  /* Joined is a set of bits: in the voice chat, microphone muted, wants to be told who is. An older client sends 1 */
+  ScreenShare_SetVoiceState(Request->ChannelID, SessionID, Request->Joined);
 
   goto StateDone_gt;
 }

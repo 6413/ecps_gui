@@ -177,6 +177,33 @@ Channel_KickSession(
   Channel->SessionList.unlrec(ChannelSessionID);
 }
 
+void Channel_BroadcastChannelList();
+
+/* the host deletes its channel: everyone in it is sent out, told it was closed, and the channel is gone, with its
+   chat and password. Its id can be handed out again, ids held by the clients are rejected as recycled */
+void Channel_Delete(Protocol_ChannelID_t ChannelID){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  auto nr = Channel->SessionList.GetNodeFirst();
+  while(nr != Channel->SessionList.dst){
+    auto n = Channel->SessionList.GetNodeByReference(nr);
+    auto _nr = n->NextNodeReference;
+    auto Session = &g_pile->SessionList[n->data.SessionID];
+    if(Session->Watching && Session->WatchChannel == ChannelID.i){
+      Session->Watching = 0;
+    }
+    Channel_KickSession(ChannelID, nr, Protocol::KickedFromChannel_Reason_t::ChannelIsClosed);
+    nr = _nr;
+  }
+  if(Channel->Type == Protocol::ChannelType_ScreenShare_e){
+    ((Channel_ScreenShare_Data_t *)Channel->Buffer)->~Channel_ScreenShare_Data_t();
+  }
+  A_resize(Channel->Buffer, 0);
+  Channel->Buffer = nullptr;
+  Channel->SessionList.Close();
+  g_pile->ChannelList.unlrec(ChannelID);
+  Channel_BroadcastChannelList();
+}
+
 uint32_t GetChannelUserCount(Protocol_ChannelID_t ChannelID) {
   if (IsChannelInvalid(ChannelID)) return 0;
   

@@ -111,17 +111,6 @@ struct top_bar_t {
       }
     }
 
-    right -= 16.f + gui::calc_text_size("Audio").x;
-    gui::set_cursor_pos(fan::vec2(right, text_y));
-    gui::text(fan::color(0.7f, 0.7f, 0.75f, 1.f), "Audio");
-    if (gui::is_item_clicked()) {
-      gui.window_handler.main_tab = 0; // the channels panel, where the voice settings are
-      gui.voice_settings_open = true;
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip("Voice chat microphone, speakers and filters");
-    }
-
     // something about updates that needs a look, or just happened
     const char* hint = nullptr;
     fan::color hint_color(1.f, 1.f, 1.f, 1.f);
@@ -393,7 +382,8 @@ struct top_bar_t {
       bool hovered = gui::is_item_hovered();
       fan::vec2 c = at + fan::vec2(arrow * 0.5f, gui::get_font_size() * 0.5f);
       f32_t h = arrow * 0.5f;
-      auto col = color.get_gui_color();
+      // the bar fades out: the chips are drawn by hand, so they follow its alpha themselves
+      auto col = gui::with_style_alpha(color.get_gui_color());
       if (up) {
         gui::get_window_draw_list()->AddTriangleFilled(c + fan::vec2(0, -h), c + fan::vec2(h, h * 0.7f), c + fan::vec2(-h, h * 0.7f), col);
       }

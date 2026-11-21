@@ -167,12 +167,60 @@ void ScreenShare_SetVoice(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t S
   ScreenShare_SendVoiceMembers(ChannelID);
 }
 
+/* who has muted their microphone, to one session or to all that know to be told */
+void ScreenShare_SendVoiceMuted(Protocol_ChannelID_t ChannelID, const Protocol_SessionID_t *Only = nullptr){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  Protocol_S2C_t::Channel_Voice_Muted_t Message{};
+  Message.ChannelID = ChannelID;
+  for(uint32_t Member : ChannelData->VoiceMuted){
+    if(Message.Count >= 16){
+      break;
+    }
+    Message.Members[Message.Count++] = Protocol_SessionID_t((Protocol_SessionID_t::Type)Member);
+  }
+  if(Only != nullptr){
+    Session::WriteCommand(*Only, 0, Protocol_S2C_t::Channel_Voice_Muted, Message);
+    return;
+  }
+  for(uint32_t Aware : ChannelData->VoiceMutedAware){
+    Session::WriteCommand(Protocol_SessionID_t((Protocol_SessionID_t::Type)Aware), 0, Protocol_S2C_t::Channel_Voice_Muted, Message);
+  }
+}
+
+/* what Channel_Voice_Join says: bit 1 in the voice chat, bit 2 microphone muted, bit 4 wants to be told who is muted */
+void ScreenShare_SetVoiceState(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, uint8_t Flags){
+  auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
+  uint32_t Id = (uint32_t)SessionID.i;
+  bool Joined = (Flags & 1) != 0;
+  bool Muted = Joined && (Flags & 2) != 0;
+  ScreenShare_SetVoice(ChannelID, SessionID, Joined);
+  if((Flags & 4) != 0 && std::find(ChannelData->VoiceMutedAware.begin(), ChannelData->VoiceMutedAware.end(), Id) == ChannelData->VoiceMutedAware.end()){
+    ChannelData->VoiceMutedAware.push_back(Id);
+    ScreenShare_SendVoiceMuted(ChannelID, &SessionID);
+  }
+  auto It = std::find(ChannelData->VoiceMuted.begin(), ChannelData->VoiceMuted.end(), Id);
+  if(Muted && It == ChannelData->VoiceMuted.end()){
+    ChannelData->VoiceMuted.push_back(Id);
+  }
+  else if(!Muted && It != ChannelData->VoiceMuted.end()){
+    ChannelData->VoiceMuted.erase(It);
+  }
+  else{
+    return;
+  }
+  ScreenShare_SendVoiceMuted(ChannelID);
+}
+
 void ScreenShare_VoiceQuit(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID){
   auto ChannelData = (Channel_ScreenShare_Data_t *)g_pile->ChannelList[ChannelID].Buffer;
   uint32_t Id = (uint32_t)SessionID.i;
   /* leaving the channel ends its chat for this session too */
   std::erase(ChannelData->ChatAware, Id);
   std::erase(ChannelData->VoiceAware, Id);
+  std::erase(ChannelData->VoiceMutedAware, Id);
+  if(std::erase(ChannelData->VoiceMuted, Id) != 0){
+    ScreenShare_SendVoiceMuted(ChannelID);
+  }
   if(std::erase(ChannelData->Voice, Id) != 0){
     ScreenShare_SendVoiceMembers(ChannelID);
   }
@@ -638,5 +686,90 @@ void ScreenShare_ChatSend(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t S
       continue;
     }
     Session::WriteCommand(Target, 0, Protocol_S2C_t::Channel_Chat_Message, Message);
+  }
+}
+
+/* the author edits a message, the author or the channel's host deletes one (Length 0). It is sent on as the same
+   message again: a client that has the id replaces the text or, when empty, drops the message. Older clients
+   simply keep what they have, as they do with any message they already know */
+void ScreenShare_ChatChange(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, uint32_t MessageId, const char *Text, uint16_t Length){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  if(Length > Protocol::ChatTextMax){
+    Length = Protocol::ChatTextMax;
+  }
+  bool IsHost = ChannelData->HostSessionID == SessionID;
+
+  /* the message, from the history or else from what was pinned, and who wrote it */
+  Protocol_S2C_t::Channel_Chat_Message_t Found;
+  bool Have = false;
+  for(const auto &Message : ChannelData->ChatHistory){
+    if(Message.Id == MessageId){
+      Found = Message;
+      Have = true;
+      break;
+    }
+  }
+  for(const auto &Pinned : ChannelData->ChatPinned){
+    if(Have){
+      break;
+    }
+    if(Pinned.HasOriginal && Pinned.Original.Id == MessageId){
+      Found = Pinned.Original;
+      Have = true;
+    }
+    else if(Pinned.Pin.Id == MessageId){
+      Found = Pinned.Pin;
+      Have = true;
+    }
+  }
+  if(!Have){
+    return;
+  }
+  bool IsAuthor = Found.From == SessionID;
+  if(Length == 0 ? !(IsAuthor || IsHost) : !IsAuthor){
+    return;
+  }
+
+  auto Apply = [&](Protocol_S2C_t::Channel_Chat_Message_t &Message){
+    Message.Length = Length;
+    __builtin_memset(Message.Text, 0, sizeof(Message.Text));
+    __builtin_memcpy(Message.Text, Text, Length);
+  };
+  if(Length == 0){
+    std::erase_if(ChannelData->ChatHistory, [&](const auto &Message){ return Message.Id == MessageId; });
+    std::erase_if(ChannelData->ChatPinned, [&](const auto &Pinned){ return Pinned.Pin.Id == MessageId; });
+    for(auto &Pinned : ChannelData->ChatPinned){
+      if(Pinned.HasOriginal && Pinned.Original.Id == MessageId){
+        Pinned.HasOriginal = false;
+      }
+    }
+  }
+  else{
+    for(auto &Message : ChannelData->ChatHistory){
+      if(Message.Id == MessageId){
+        Apply(Message);
+      }
+    }
+    for(auto &Pinned : ChannelData->ChatPinned){
+      if(Pinned.HasOriginal && Pinned.Original.Id == MessageId){
+        Apply(Pinned.Original);
+      }
+      if(Pinned.Pin.Id == MessageId){
+        Apply(Pinned.Pin);
+      }
+    }
+  }
+
+  Apply(Found);
+  for(uint32_t Member : ChannelData->ChatAware){
+    Protocol_SessionID_t Target((Protocol_SessionID_t::Type)Member);
+    if(Session::IsInvalid(Target) || !ScreenShare_IsMember(Target, ChannelID)){
+      continue;
+    }
+    Session::WriteCommand(Target, 0, Protocol_S2C_t::Channel_Chat_Message, Found);
   }
 }

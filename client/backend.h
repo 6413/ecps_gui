@@ -914,6 +914,7 @@ struct ecps_backend_t {
     {
       std::lock_guard<std::mutex> lock(voice_mutex);
       voice_members.erase((std::uint32_t)channel_id.i);
+      voice_muted.erase((std::uint32_t)channel_id.i);
     }
     std::lock_guard<std::mutex> lock(streamers_mutex);
     channel_streamers.erase((std::uint32_t)channel_id.i);
@@ -921,6 +922,13 @@ struct ecps_backend_t {
 
   mutable std::mutex voice_mutex;
   std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> voice_members;
+  // who in the voice chat muted their own microphone, as the server tells it. An older server never does
+  std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> voice_muted;
+  bool voice_muted_by_self(Protocol_ChannelID_t channel_id, std::uint32_t session) const {
+    std::lock_guard<std::mutex> lock(voice_mutex);
+    auto it = voice_muted.find((std::uint32_t)channel_id.i);
+    return it != voice_muted.end() && std::find(it->second.begin(), it->second.end(), session) != it->second.end();
+  }
   std::chrono::steady_clock::time_point voice_probed_at{};
   std::function<void(Protocol_ChannelID_t channel_id, std::uint32_t session, const uint8_t* data, uintptr_t size)> voice_cb;
 
@@ -941,12 +949,14 @@ struct ecps_backend_t {
       co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Voice_Data, rest, data, size);
     }
   }
-  fan::event::task_t send_voice_join(Protocol_ChannelID_t channel_id, bool joined) {
+  // Joined is bits: 1 in the voice chat, 2 microphone muted, 4 tell me who is muted. Leaving is a plain 0, and an
+  // older server takes any other number as joined
+  fan::event::task_t send_voice_join(Protocol_ChannelID_t channel_id, bool joined, bool muted = false) {
     if (auto* channel = find_channel(channel_id)) {
       Protocol_C2S_t::Channel_Voice_Join_t rest;
       rest.ChannelID = channel->channel_id;
       rest.ChannelSessionID = channel->session_id;
-      rest.Joined = joined;
+      rest.Joined = joined ? (std::uint8_t)(1 | 4 | (muted ? 2 : 0)) : (std::uint8_t)0;
       co_await tcp_write(Protocol_C2S_t::Channel_Voice_Join, &rest, sizeof(rest));
     }
   }
@@ -1009,6 +1019,8 @@ struct ecps_backend_t {
     std::string name;
     std::int64_t time = 0;
     std::string text;
+    // changed after it was sent, known only to those who were there when it happened
+    bool edited = false;
   };
   mutable std::mutex chat_mutex;
   std::unordered_map<std::uint32_t, std::vector<chat_message_t>> chat_messages;
@@ -1032,11 +1044,27 @@ struct ecps_backend_t {
       std::lock_guard<std::mutex> lock(chat_mutex);
       chat_channels[(std::uint32_t)channel_id.i] = true;
       auto& list = chat_messages[(std::uint32_t)channel_id.i];
-      // the history after a reconnect repeats what is here already
-      for (const auto& have : list) {
-        if (have.id == message.id) {
+      // a message with an id that is here already is the history repeating after a reconnect, or the server telling
+      // that it was edited (new text) or deleted (no text)
+      for (auto have = list.begin(); have != list.end(); ++have) {
+        if (have->id != message.id) {
+          continue;
+        }
+        if (message.text.empty()) {
+          list.erase(have);
+        }
+        else if (message.text != have->text) {
+          have->text = std::move(message.text);
+          have->edited = true;
+        }
+        else {
           return;
         }
+        chat_revision.fetch_add(1);
+        return;
+      }
+      if (message.text.empty()) {
+        return; // a delete of one this client never had
       }
       if (chat_live.contains((std::uint32_t)channel_id.i) && message.from != (std::uint32_t)session_id.i) {
         notify_sounds.request(notify_sounds_t::message);
@@ -1073,6 +1101,40 @@ struct ecps_backend_t {
     rest.Length = (std::uint16_t)length;
     std::memcpy(rest.Text, text.data(), length);
     co_await tcp_write(Protocol_C2S_t::Channel_Chat_Send, &rest, sizeof(rest));
+  }
+  // edits a message (new text) or deletes it (empty text): the author may do both, the channel's host may delete.
+  // Over udp, so a server without it ignores it, and sent three times in case one is lost: the server does the
+  // same thing for a copy
+  fan::event::task_t change_chat(Protocol_ChannelID_t channel_id, std::uint32_t message_id, std::string text) {
+    auto* channel = find_channel(channel_id);
+    if (!channel || !chat_known(channel_id)) {
+      co_return;
+    }
+    ProtocolUDP::C2S_t::Channel_Chat_Change_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel->channel_id;
+    rest.ChannelSessionID = channel->session_id;
+    rest.MessageId = message_id;
+    std::size_t length = std::min(text.size(), sizeof(rest.Text));
+    rest.Length = (std::uint16_t)length;
+    std::memcpy(rest.Text, text.data(), length);
+    for (int i = 0; i < 3; ++i) {
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Chat_Change, rest, nullptr, 0);
+    }
+  }
+  // the host deletes its own channel. The server sends everyone in it out, this client included
+  fan::event::task_t delete_channel(Protocol_ChannelID_t channel_id) {
+    auto* channel = find_channel(channel_id);
+    if (!channel) {
+      co_return;
+    }
+    ProtocolUDP::C2S_t::Channel_Delete_t rest;
+    rest.ChannelID = channel->channel_id;
+    rest.ChannelSessionID = channel->session_id;
+    for (int i = 0; i < 3; ++i) {
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Delete, rest, nullptr, 0);
+    }
+    co_await request_channel_list();
   }
 
   bool is_channel_id_valid(Protocol_ChannelID_t channel_id) const {

@@ -709,11 +709,18 @@ struct voice_chat_t {
       if (active != -1 && active != wanted) {
         active_channel.store(-1);
         co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)active), false);
+        announced_muted.store(-1);
         active = -1;
       }
       if (wanted != -1 && active == -1 && ecps_backend.voice_known(channel_id_t((uint16_t)wanted))) {
-        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)wanted), true);
+        announced_muted.store((int)muted.load());
+        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)wanted), true, muted.load());
         active_channel.store(active = wanted);
+      }
+      // the others see who muted themselves: tell the server when it changes
+      if (active != -1 && announced_muted.load() != (int)muted.load()) {
+        announced_muted.store((int)muted.load());
+        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)active), true, muted.load());
       }
       co_await ecps_backend.probe_voice();
     }
@@ -855,6 +862,8 @@ struct voice_chat_t {
   std::atomic<int> wanted_channel = -1;
   std::atomic<int> active_channel = -1;
   std::atomic<bool> muted = false;
+  // what the server was last told about the microphone: 0 or 1, -1 when not in the voice chat
+  std::atomic<int> announced_muted{-1};
   std::atomic<bool> deafened = false;
   std::atomic<f32_t> threshold = 0.02f;
   std::atomic<std::int64_t> loud_at_ms = 0;
@@ -1406,6 +1415,20 @@ ecps_backend_t::ecps_backend_t() {
     }
     std::lock_guard<std::mutex> lock(backend.voice_mutex);
     backend.voice_members[(std::uint32_t)msg->ChannelID.i] = std::move(members);
+    co_return;
+  };
+
+  s2c(Channel_Voice_Muted) {
+    s2c_read(Channel_Voice_Muted);
+    if (!backend.is_channel_joined(msg->ChannelID)) {
+      co_return;
+    }
+    std::vector<std::uint32_t> muted;
+    for (std::uint8_t i = 0; i < msg->Count && i < 16; ++i) {
+      muted.push_back((std::uint32_t)msg->Members[i].i);
+    }
+    std::lock_guard<std::mutex> lock(backend.voice_mutex);
+    backend.voice_muted[(std::uint32_t)msg->ChannelID.i] = std::move(muted);
     co_return;
   };
 

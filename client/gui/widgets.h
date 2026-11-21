@@ -98,7 +98,7 @@
 
   // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
   // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
-  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download };
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users };
 
   // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
   static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
@@ -210,6 +210,14 @@
         dot(P(0.f, -0.15f), h * 0.1f);
         dot(P(0.4f, -0.15f), h * 0.1f);
         break;
+      case icon_e::users:
+        // a head over rounded shoulders
+        dot(P(0, -0.42f), h * 0.3f);
+        list->PathLineTo(P(-0.78f, 0.82f));
+        list->PathBezierQuadraticCurveTo(P(-0.78f, 0.1f), P(0, 0.1f));
+        list->PathBezierQuadraticCurveTo(P(0.78f, 0.1f), P(0.78f, 0.82f));
+        list->PathStroke(color, 0, t);
+        break;
       case icon_e::download: {
         // a thick arrow down into an open tray: an update to get
         fan::vec2 g(grow, grow);
@@ -228,7 +236,7 @@
 
   // with a dark edge, for icons over the picture, which can be anything from black to white
   static void draw_icon_outlined(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color) {
-    draw_icon(list, icon, c, size, 0xc8000000u, 1.6f);
+    draw_icon(list, icon, c, size, gui::with_style_alpha(0xc8000000u), 1.6f);
     draw_icon(list, icon, c, size, color);
   }
 

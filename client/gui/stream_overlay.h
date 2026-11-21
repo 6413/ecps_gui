@@ -74,9 +74,16 @@
     auto* rt = get_render_thread();
     bool has_picture = rt && rt->network_frame.get_image() != engine.default_texture;
     auto now = std::chrono::steady_clock::now();
-    // also while the side panel is open (its icons are down there, the bar stays to close it again), and while a
-    // chat message waits unread, so its dot is seen
-    if (mouse_near || !has_picture || stream_settings.show_in_stream_view || chat_unread()) {
+    // opening the side panel or a new unread message shows the bar for a moment, so its icons and the dot are seen,
+    // but doesn't pin it: it goes away again after a while, and comes back when the mouse goes to the bottom
+    bool panel_open = stream_settings.show_in_stream_view;
+    bool unread = chat_unread();
+    static bool was_panel_open = false;
+    static bool was_unread = false;
+    bool just_changed = (panel_open && !was_panel_open) || (unread && !was_unread);
+    was_panel_open = panel_open;
+    was_unread = unread;
+    if (mouse_near || !has_picture || just_changed) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
@@ -88,31 +95,18 @@
 
     gui::push_style_var(gui::style_var_alpha, std::max(toolbar_alpha, 0.02f));
     f32_t y = area_size.y - frame_height - 14.f + gui::get_scroll_y();
+    // the channel list beside the stream at the left, closed and opened again from here
+    gui::set_cursor_pos(fan::vec2(14.f, y));
+    if (icon_button("##btn_channels", icon_e::server, panel_shown(side_channels) ? "Hide the channels" : "Show the channels",
+      frame_height, icon_style_e::overlay)) {
+      toggle_side_panel(side_channels);
+    }
     // as wide as the text needs, a fixed width cut the label off
     f32_t button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
     gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
     gui::same_line();
-    f32_t users_width = gui::calc_text_size("Users").x + gui::get_style().FramePadding.x * 2.f;
-    // the channel list beside the stream, closed and opened again from here
-    f32_t channels_width = gui::calc_text_size("Channels").x + gui::get_style().FramePadding.x * 2.f;
-    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f - users_width - 8.f - channels_width - 8.f);
-    if (gui::button("Channels##btn_channels", fan::vec2(channels_width, frame_height))) {
-      toggle_side_panel(side_channels);
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip(panel_shown(side_channels) ? "Hide the channels" : "Show the channels");
-    }
-    gui::same_line(0, 8.f);
-    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f - users_width - 8.f);
-    if (gui::button("Users##btn_users", fan::vec2(users_width, frame_height))) {
-      show_stream_users = !show_stream_users;
-    }
-    if (gui::is_item_hovered()) {
-      gui::set_tooltip(show_stream_users ? "Hide the users in this channel" : "Show the users in this channel");
-    }
-    gui::same_line(0, 8.f);
     gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f);
     render_side_chat_button("##btn_chat", frame_height);
     gui::same_line(0, 8.f);

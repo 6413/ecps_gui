@@ -234,7 +234,6 @@
   // the host's part, in the channel's controls
   void render_channel_password_controls(ecps_backend_t::Protocol_ChannelID_t channel_id) {
     gui::settings_section("NAME");
-    gui::text_wrapped_disabled("What everyone sees this channel as. Empty uses your name");
     gui::push_item_width(-1.f);
     bool rename_enter = gui::input_text("##channel_rename", &channel_rename_input, gui::input_text_flags_enter_returns_true);
     gui::pop_item_width();
@@ -257,9 +256,6 @@
         has_password = channel.is_password_protected;
       }
     }
-    gui::text_wrapped_disabled(has_password
-      ? "People need the password to join. They are asked once, then it is remembered"
-      : "Anyone can join. Set a password to keep others out");
     gui::push_item_width(-1.f);
     gui::input_text("##channel_password_set", &channel_password_input, channel_password_show ? 0 : gui::input_text_flags_password);
     gui::pop_item_width();
@@ -297,6 +293,37 @@
           }
         });
       }
+    }
+  }
+
+  // the host's last control: deleting the channel, after a question. A server without this ignores the request
+  void render_delete_channel_button(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    gui::push_style_color(gui::col_button, fan::color(0.45f, 0.08f, 0.08f, 1.f));
+    gui::push_style_color(gui::col_button_hovered, fan::color(0.65f, 0.1f, 0.1f, 1.f));
+    bool clicked = gui::button("Delete channel");
+    gui::pop_style_color(2);
+    if (clicked) {
+      gui::open_popup("##delete_channel_confirm");
+    }
+    if (gui::begin_popup("##delete_channel_confirm")) {
+      gui::text("Delete this channel for everyone?");
+      gui::text_wrapped_disabled("Everyone in it is sent out, and its chat is lost.");
+      if (gui::button("Delete##delete_channel_yes")) {
+        backend_queue([channel_id]() -> fan::event::task_t {
+          try {
+            co_await ecps_backend.delete_channel(channel_id);
+          }
+          catch (...) {
+            fan::print("Failed to delete the channel");
+          }
+        });
+        gui::close_current_popup();
+      }
+      gui::same_line();
+      if (gui::button("Cancel##delete_channel_no")) {
+        gui::close_current_popup();
+      }
+      gui::end_popup();
     }
   }
 

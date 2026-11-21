@@ -388,11 +388,17 @@
             gui::same_line(0, 10.f);
             gui::badge("yours", 0x50ff5919u, 0xffffa070u);
           }
-          // refresh the users, at the right of the name
+          // at the right of the name: the users over the stream on or off, and refreshing them
           {
             f32_t button = gui::get_frame_height();
             gui::same_line();
-            gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(gui::get_content_region_avail().x - button - 4.f, 0.f));
+            gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(gui::get_content_region_avail().x - button * 2.f - 8.f, 0.f));
+            if (icon_button("##toggle_stream_users", icon_e::users,
+              This->show_stream_users ? "Hide the users over the stream" : "Show the users over the stream", button,
+              This->show_stream_users ? icon_style_e::accent : icon_style_e::plain)) {
+              This->show_stream_users = !This->show_stream_users;
+            }
+            gui::same_line(0, 4.f);
             if (icon_button("##refresh_users", icon_e::refresh, "Refresh the users", button)) {
               This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
                 try {
@@ -421,7 +427,7 @@
               gui::spacing();
 
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
-              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 17.f : 12.f) : 0.f;
+              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 15.5f : 11.5f) : 0.f;
               if (already_in_selected) {
                 This->render_voice_switch(This->selected_channel_id);
               }
@@ -437,8 +443,8 @@
                     bool has_buttons = already_in_selected && !is_me;
                     gui::push_id((int)session.session_id.i);
 
-                    f32_t button_size = gui::get_frame_height();
-                    f32_t row_height = button_size + 8.f;
+                    f32_t button_size = gui::get_frame_height() * 0.8f;
+                    f32_t row_height = button_size + 6.f;
                     f32_t row_width = gui::get_content_region_avail().x;
                     fan::vec2 row_at = gui::get_cursor_screen_pos();
                     // the voice mixer has one gain per speaker id, keep it in step with the name it is saved under
@@ -481,9 +487,12 @@
                       shown = target > shown ? shown + (target - shown) * std::min(dt * 30.f, 1.f) : std::max(target, shown - dt * 2.5f);
                       gui::same_line(0, 8.f);
                       // a click mutes: yourself for the others, someone else just for you
-                      bool badge_muted = is_me ? voice_chat.muted.load() : This->user_volume(session.username) <= 0.f;
+                      // "mic off": they muted their own microphone, the server says so. "muted": you muted them
+                      bool self_muted = is_me ? voice_chat.muted.load() : ecps_backend.voice_muted_by_self(This->selected_channel_id, speaker);
+                      bool locally_muted = !is_me && This->user_volume(session.username) <= 0.f;
+                      bool badge_muted = self_muted || locally_muted;
                       if (badge_muted) {
-                        gui::badge("muted", 0x600a0affu, 0xff8080ffu);
+                        gui::badge(locally_muted ? "muted" : "mic off", 0x600a0affu, 0xff8080ffu);
                       }
                       else {
                         gui::level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
@@ -491,8 +500,10 @@
                       if (gui::is_item_hovered()) {
                         gui::set_mouse_cursor(gui::mouse_cursor_hand);
                         gui::set_tooltip(is_me
-                          ? (badge_muted ? "Click to unmute your microphone" : "Click to mute your microphone")
-                          : (badge_muted ? "Click to hear " + session.username + " again" : "Click to mute " + session.username + " for you"));
+                          ? (badge_muted ? "Your microphone is muted. Click to unmute it" : "Click to mute your microphone")
+                          : (locally_muted ? "Click to hear " + session.username + " again"
+                            : self_muted ? session.username + " muted their microphone. Click to mute them for you too"
+                            : "Click to mute " + session.username + " for you"));
                       }
                       if (gui::is_item_clicked()) {
                         if (is_me) {
@@ -508,20 +519,21 @@
 
                     if (has_buttons) {
                       f32_t x = row_at.x + row_width - 8.f - button_size;
-                      gui::set_cursor_screen_pos(fan::vec2(x, row_at.y + 4.f));
-                      if (icon_button("##send_file", icon_e::send_file, "Send a file")) {
+                      f32_t button_y = row_at.y + (row_height - button_size) * 0.5f;
+                      gui::set_cursor_screen_pos(fan::vec2(x, button_y));
+                      if (icon_button("##send_file", icon_e::send_file, "Send a file", button_size)) {
                         This->send_file_dialog(This->selected_channel_id, session.session_id);
                       }
                       if (is_sharing) {
-                        gui::set_cursor_screen_pos(fan::vec2(x - button_size - 4.f, row_at.y + 4.f));
-                        if (icon_button("##watch", icon_e::eye, "Watch in Stream View")) {
+                        gui::set_cursor_screen_pos(fan::vec2(x - button_size - 4.f, button_y));
+                        if (icon_button("##watch", icon_e::eye, "Watch in Stream View", button_size)) {
                           This->set_watch(This->selected_channel_id, (std::uint32_t)session.session_id.i);
                           // to the picture, watching from here would otherwise change nothing you can see
                           main_tab = 1;
                         }
                       }
                     }
-                    gui::set_cursor_screen_pos(row_at + fan::vec2(0, row_height + 2.f));
+                    gui::set_cursor_screen_pos(row_at + fan::vec2(0, row_height + 1.f));
                     gui::dummy(fan::vec2(0, 0));
                     gui::pop_id();
                   }
@@ -538,9 +550,14 @@
               gui::end_child();
 
               gui::spacing();
-              if (is_host_of_selected && gui::begin_child("HostControls", fan::vec2(0, 0), 0)) {
-                gui::text(ecps_backend.is_streaming_to_any_channel() ? "You are sharing your screen" : "Your screen is not shared");
-                gui::text_wrapped_disabled("Use \"Share screen\" at the top. Others join this channel to watch you.");
+              bool host_controls_open = false;
+              if (is_host_of_selected) {
+                // the controls sit inside the panel with some air around them, not against its edge
+                gui::push_style_var(gui::style_var_window_padding, fan::vec2(14.f, 10.f));
+                host_controls_open = gui::begin_child("HostControls", fan::vec2(0, 0), gui::child_flags_always_use_window_padding);
+                gui::pop_style_var();
+              }
+              if (host_controls_open) {
                 if (gui::settings_switch("Preview own stream", &This->show_own_stream, "Shows your own shared screen here")) {
                   if (auto rt = get_render_thread(); rt) {
                     if (This->show_own_stream) {
@@ -551,22 +568,15 @@
                     }
                   }
                 }
-                if (!This->show_own_stream && ecps_backend.is_streaming_to_any_channel()) {
-                  // the server doesn't send a share back to its host, without this sharing looks broken
-                  gui::text_wrapped_disabled("Sharing - viewers in the channel see your screen. Tick the preview to see it here.");
-                }
                 This->render_share_audio_checkbox();
                 This->render_channel_password_controls(This->selected_channel_id);
+                gui::dummy(fan::vec2(0, 8.f));
+                This->render_delete_channel_button(This->selected_channel_id);
               }
               if (is_host_of_selected) {
                 gui::end_child();
               }
 
-              gui::end_tab_item();
-            }
-
-            if (gui::begin_tab_item("Files", nullptr, 0)) {
-              This->render_file_transfers();
               gui::end_tab_item();
             }
 
@@ -578,15 +588,6 @@
             if (gui::begin_tab_item("Logs", nullptr, 0)) {
               This->render_logs_tab();
               gui::end_tab_item();
-            }
-
-            if (is_host_of_selected) {
-              if (gui::begin_tab_item("Stream", nullptr, detail_tab == 1 ? gui::tab_item_flags_set_selected : 0)) {
-                if (detail_tab == 1) detail_tab = -1;
-
-                render_stream_settings_content_compact();
-                gui::end_tab_item();
-              }
             }
 
             gui::end_tab_bar();
