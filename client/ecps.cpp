@@ -400,6 +400,7 @@ static void stop_worker_threads() {
 }
 
 #include "frame_assembler.h"
+#include "notify_sounds.h"
 #include "backend.h"
 
 fan::window::input_injector_t host_input;
@@ -1331,6 +1332,29 @@ ecps_backend_t::ecps_backend_t() {
       info.joined_at = session_info->JoinedAt;
       sessions.push_back(info);
     }
+    // someone joined or left a channel we're in: a sound. Only against a list that already had us, so our own joining
+    // (whose first list is everyone already there) is silent
+    if (backend.is_channel_joined(channel_id)) {
+      auto old = backend.channel_sessions.find(channel_id.i);
+      if (old != backend.channel_sessions.end()) {
+        auto has = [](const std::vector<ecps_backend_t::session_info_t>& list, auto id) {
+          return std::any_of(list.begin(), list.end(), [&](const auto& s) { return s.session_id.i == id; });
+        };
+        auto me = backend.session_id.i;
+        if (has(old->second, me)) {
+          for (const auto& s : sessions) {
+            if (s.session_id.i != me && !has(old->second, s.session_id.i)) {
+              notify_sounds.request(notify_sounds_t::join);
+            }
+          }
+          for (const auto& s : old->second) {
+            if (s.session_id.i != me && !has(sessions, s.session_id.i)) {
+              notify_sounds.request(notify_sounds_t::leave);
+            }
+          }
+        }
+      }
+    }
     backend.channel_sessions[channel_id.i] = std::move(sessions);
     for (auto& channel : backend.available_channels) {
       if (channel.channel_id.i == channel_id.i) {
@@ -1833,6 +1857,7 @@ int main() {
       }
 
       render_thread_instance.render([] {});
+      notify_sounds.tick(render_thread_instance.ecps_gui.stream_settings.notify_volume);
       {
         static auto second_start = std::chrono::steady_clock::now();
         static auto last_frame = second_start;

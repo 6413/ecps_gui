@@ -242,6 +242,11 @@
     gui::dummy(fan::vec2(width, 6.f));
 
     gui::saved_slider("Volume", "##voice_volume", &stream_settings.voice_volume, 2.f, [this] { save_voice_settings(); });
+    // message, join and leave sounds. Letting go plays one, to hear the new level
+    gui::saved_slider("Notification sounds", "##notify_volume", &stream_settings.notify_volume, 2.f, [this] {
+      save_voice_settings();
+      notify_sounds.request(notify_sounds_t::message);
+    });
   }
 
   voice_chat_t::settings_t get_voice_settings() {
@@ -277,7 +282,10 @@
       return;
     }
     gui::text("Voice volume for " + volume_user_name);
-    gui::slider("##user_volume_slider", &volume_user_value, 0.f, 2.f, gui::slider_flags_always_clamp);
+    // heard while dragging, saved when let go
+    if (gui::slider("##user_volume_slider", &volume_user_value, 0.f, 2.f, gui::slider_flags_always_clamp)) {
+      voice_chat.set_user_volume(volume_user_session, volume_user_value);
+    }
     if (gui::is_item_deactivated_after_edit()) {
       set_user_volume(volume_user_name, volume_user_value);
     }
@@ -353,6 +361,7 @@
     voice["gain"] = stream_settings.voice_gain;
     voice["threshold"] = stream_settings.voice_threshold;
     voice["volume"] = stream_settings.voice_volume;
+    voice["notify_volume"] = stream_settings.notify_volume;
     voice["echo_cancel"] = stream_settings.voice_echo_cancel;
     voice["noise_suppress"] = stream_settings.voice_noise_suppress;
     fan::json users = fan::json::object();

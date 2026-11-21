@@ -1296,8 +1296,21 @@
     gui::input_text_flags_t input_flags = shift ? 0 :
       (gui::input_text_flags_enter_returns_true | gui::input_text_flags_ctrl_enter_for_new_line);
     // with Shift held the field returns true for any change (Enter-returns-true is off then): only without it is it a send
+    // Ctrl+Alt+Enter sends the text as a code block. Read before the field, which takes Ctrl+Enter as a new line
+    bool alt = engine.window.is_key_down(fan::key_left_alt) || engine.window.is_key_down(fan::key_right_alt);
+    bool send_as_code = chat_input_active && ctrl && alt && !shift && engine.window.is_key_clicked(fan::key_enter);
     bool enter = gui::input_text_multiline("##chat_input", &chat_input, fan::vec2(0, input_box), input_flags) && !shift;
     chat_input_active = gui::is_item_active();
+    if (send_as_code) {
+      chat_input = before;
+      while (!chat_input.empty() && (chat_input.back() == '\n' || chat_input.back() == '\r')) {
+        chat_input.pop_back();
+      }
+      if (!chat_input.empty() && chat_input.find("```") == std::string::npos) {
+        chat_input = "```\n" + chat_input + "\n```";
+      }
+      enter = !chat_input.empty();
+    }
     gui::pop_item_width();
     // pasted files wait above the input, like dropped ones
     if (!pasted_files.empty()) {

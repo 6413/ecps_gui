@@ -340,6 +340,7 @@ struct ecps_backend_t {
       std::lock_guard<std::mutex> lock(chat_mutex);
       chat_messages.clear();
       chat_channels.clear();
+      chat_live.clear();
       chat_revision.fetch_add(1);
     }
     this->ip = ip;
@@ -904,6 +905,7 @@ struct ecps_backend_t {
       std::lock_guard<std::mutex> lock(chat_mutex);
       chat_messages.erase((std::uint32_t)channel_id.i);
       chat_channels.erase((std::uint32_t)channel_id.i);
+      chat_live.erase((std::uint32_t)channel_id.i);
     }
     {
       std::lock_guard<std::mutex> lock(voice_mutex);
@@ -1007,6 +1009,8 @@ struct ecps_backend_t {
   mutable std::mutex chat_mutex;
   std::unordered_map<std::uint32_t, std::vector<chat_message_t>> chat_messages;
   std::unordered_map<std::uint32_t, bool> chat_channels;
+  // channels whose history has arrived: a message in them after that is new, and someone else's makes a sound
+  std::unordered_set<std::uint32_t> chat_live;
   // goes up with every message, the gui scrolls down when it changed
   std::atomic<std::uint64_t> chat_revision{0};
 
@@ -1030,6 +1034,9 @@ struct ecps_backend_t {
           return;
         }
       }
+      if (chat_live.contains((std::uint32_t)channel_id.i) && message.from != (std::uint32_t)session_id.i) {
+        notify_sounds.request(notify_sounds_t::message);
+      }
       list.push_back(std::move(message));
       std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
       if (list.size() > 500) {
@@ -1042,6 +1049,7 @@ struct ecps_backend_t {
     {
       std::lock_guard<std::mutex> lock(chat_mutex);
       chat_channels[(std::uint32_t)channel_id.i] = true;
+      chat_live.insert((std::uint32_t)channel_id.i);
     }
     // the history that came with joining isn't new: it doesn't count as unread
     chat_history_revision.store(chat_revision.load());

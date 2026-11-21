@@ -88,6 +88,8 @@
     f32_t voice_gain = 1.f;
     f32_t voice_threshold = 0.02f;
     f32_t voice_volume = 1.f;
+    // chat message, join and leave sounds, 0 is off
+    f32_t notify_volume = 1.f;
     std::string voice_output;
     bool voice_echo_cancel = false;
     bool voice_noise_suppress = true;

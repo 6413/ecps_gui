@@ -98,6 +98,7 @@ struct ecps_gui_t {
       stream_settings.voice_gain = voice.value("gain", stream_settings.voice_gain);
       stream_settings.voice_threshold = voice.value("threshold", stream_settings.voice_threshold);
       stream_settings.voice_volume = voice.value("volume", stream_settings.voice_volume);
+      stream_settings.notify_volume = voice.value("notify_volume", stream_settings.notify_volume);
       stream_settings.voice_output = voice.value("output", std::string());
       stream_settings.voice_echo_cancel = voice.value("echo_cancel", stream_settings.voice_echo_cancel);
       stream_settings.voice_noise_suppress = voice.value("noise_suppress", stream_settings.voice_noise_suppress);
