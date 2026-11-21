@@ -418,6 +418,9 @@
             }
           }
 
+          if (already_in_selected) {
+            This->render_voice_switch(This->selected_channel_id);
+          }
           gui::spacing();
 
           if (gui::begin_tab_bar("ChannelDetailTabs")) {
@@ -426,12 +429,7 @@
 
               gui::spacing();
 
-              // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
-              f32_t host_controls_height = is_host_of_selected ? gui::get_frame_height() * (This->stream_settings.share_audio ? 21.f : 17.f) : 0.f;
-              if (already_in_selected) {
-                This->render_voice_switch(This->selected_channel_id);
-              }
-              if (gui::begin_child("SessionList", fan::vec2(0, -host_controls_height), true)) {
+              if (gui::begin_child("SessionList", fan::vec2(0, 0), true)) {
                 bool open_user_volume = false;
                 auto it = ecps_backend.channel_sessions.find(This->selected_channel_id.i);
                 if (it != ecps_backend.channel_sessions.end()) {
@@ -552,15 +550,12 @@
               }
               gui::end_child();
 
+              gui::end_tab_item();
+            }
+
+            if (is_host_of_selected && gui::begin_tab_item("Manage", nullptr, 0)) {
               gui::spacing();
-              bool host_controls_open = false;
-              if (is_host_of_selected) {
-                // the controls sit inside the panel with some air around them, not against its edge
-                gui::push_style_var(gui::style_var_window_padding, fan::vec2(14.f, 10.f));
-                host_controls_open = gui::begin_child("HostControls", fan::vec2(0, 0), gui::child_flags_always_use_window_padding);
-                gui::pop_style_var();
-              }
-              if (host_controls_open) {
+              if (gui::begin_child("HostControls", fan::vec2(0, 0), gui::child_flags_always_use_window_padding)) {
                 gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 10.f));
                 if (gui::settings_switch("Preview own stream", &This->show_own_stream, "Shows your own shared screen here")) {
                   if (auto rt = get_render_thread(); rt) {
@@ -578,10 +573,7 @@
                 This->render_delete_channel_button(This->selected_channel_id);
                 gui::pop_style_var();
               }
-              if (is_host_of_selected) {
-                gui::end_child();
-              }
-
+              gui::end_child();
               gui::end_tab_item();
             }
 

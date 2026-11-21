@@ -20,8 +20,10 @@
   // gui's own colour space (what the colour picker shows is what the buttons look like)
   struct theme_t {
     fan::color accent = fan::color(0.1f, 0.35f, 1.f, 1.f);
+    // the backdrop's own colour, picked separately from the accent (gui colour space like the accent). Only its hue
+    // and how colourful it is count, how light the backdrop is comes from the slider below
+    fan::color background = fan::color(0.0245f, 0.2f, 0.7f, 1.f);
     f32_t background_brightness = 0.14f; // how light the backdrop is
-    f32_t background_tint = 0.64f;       // how much of the accent's colour it has, 0 is gray
     f32_t panel_opacity = 0.72f;         // how see-through the panels and fields are
     f32_t glow = 1.f;                    // how strong the soft lights in the backdrop are
   };
@@ -36,13 +38,26 @@
   static const std::vector<theme_preset_t>& theme_presets() {
     // colours as they look on screen, taken into the gui's space
     auto lin = [](f32_t r, f32_t g, f32_t b) { return fan::color(std::pow(r, 2.2f), std::pow(g, 2.2f), std::pow(b, 2.2f), 1.f); };
+    // a preset's backdrop has the accent's hue, as many of the colours did before they were picked separately
+    auto make = [](fan::color accent, f32_t brightness, f32_t tint, f32_t opacity, f32_t glow) {
+      f32_t h, s, v;
+      theme_rgb_to_hsv(std::pow(accent.r, 1.f / 2.2f), std::pow(accent.g, 1.f / 2.2f), std::pow(accent.b, 1.f / 2.2f), h, s, v);
+      fan::color shown = theme_hsv_to_rgb(h, tint, 1.f);
+      theme_t t;
+      t.accent = accent;
+      t.background = fan::color(std::pow(shown.r, 2.2f), std::pow(shown.g, 2.2f), std::pow(shown.b, 2.2f), 1.f);
+      t.background_brightness = brightness;
+      t.panel_opacity = opacity;
+      t.glow = glow;
+      return t;
+    };
     static const std::vector<theme_preset_t> list = {
-      {"Blue", {fan::color(0.1f, 0.35f, 1.f, 1.f), 0.14f, 0.64f, 0.72f, 1.f}},
-      {"Violet", {lin(0.62f, 0.45f, 1.f), 0.15f, 0.60f, 0.72f, 1.f}},
-      {"Emerald", {lin(0.30f, 0.85f, 0.55f), 0.11f, 0.55f, 0.72f, 1.f}},
-      {"Crimson", {lin(1.f, 0.38f, 0.42f), 0.14f, 0.60f, 0.72f, 1.f}},
-      {"Amber", {lin(1.f, 0.72f, 0.28f), 0.13f, 0.55f, 0.72f, 1.f}},
-      {"Graphite", {lin(0.75f, 0.78f, 0.85f), 0.09f, 0.12f, 0.80f, 0.5f}},
+      {"Blue", make(fan::color(0.1f, 0.35f, 1.f, 1.f), 0.14f, 0.64f, 0.72f, 1.f)},
+      {"Violet", make(lin(0.62f, 0.45f, 1.f), 0.15f, 0.60f, 0.72f, 1.f)},
+      {"Emerald", make(lin(0.30f, 0.85f, 0.55f), 0.11f, 0.55f, 0.72f, 1.f)},
+      {"Crimson", make(lin(1.f, 0.38f, 0.42f), 0.14f, 0.60f, 0.72f, 1.f)},
+      {"Amber", make(lin(1.f, 0.72f, 0.28f), 0.13f, 0.55f, 0.72f, 1.f)},
+      {"Graphite", make(lin(0.75f, 0.78f, 0.85f), 0.09f, 0.12f, 0.80f, 0.5f)},
     };
     return list;
   }
@@ -87,21 +102,21 @@
     }
     return fan::color(r + m, g + m, b + m, a);
   }
-  // the accent as it looks on screen, hue and all, for colours that follow it
+  // the backdrop colour as it looks on screen, hue and all, for colours that follow it
   f32_t theme_hue() const {
     f32_t h, s, v;
-    theme_rgb_to_hsv(std::pow(theme.accent.r, 1.f / 2.2f), std::pow(theme.accent.g, 1.f / 2.2f), std::pow(theme.accent.b, 1.f / 2.2f), h, s, v);
+    theme_rgb_to_hsv(std::pow(theme.background.r, 1.f / 2.2f), std::pow(theme.background.g, 1.f / 2.2f), std::pow(theme.background.b, 1.f / 2.2f), h, s, v);
     return h;
   }
-  // how colourful the accent is, 0 for black, white and grays: those have no hue, so nothing may follow it
+  // how colourful the backdrop colour is, 0 for black, white and grays: those have no hue, so nothing may follow it
   f32_t theme_saturation() const {
     f32_t h, s, v;
-    theme_rgb_to_hsv(std::pow(theme.accent.r, 1.f / 2.2f), std::pow(theme.accent.g, 1.f / 2.2f), std::pow(theme.accent.b, 1.f / 2.2f), h, s, v);
+    theme_rgb_to_hsv(std::pow(theme.background.r, 1.f / 2.2f), std::pow(theme.background.g, 1.f / 2.2f), std::pow(theme.background.b, 1.f / 2.2f), h, s, v);
     return s;
   }
   // the backdrop's colour as it looks on screen
   fan::color theme_background_display() const {
-    return theme_hsv_to_rgb(theme_hue(), std::clamp(theme.background_tint, 0.f, 1.f) * theme_saturation(), std::clamp(theme.background_brightness, 0.f, 1.f));
+    return theme_hsv_to_rgb(theme_hue(), theme_saturation(), std::clamp(theme.background_brightness, 0.f, 1.f));
   }
   void apply_backdrop_color() {
     fan::color shown = theme_background_display();
@@ -124,7 +139,11 @@
     accent.push_back((double)theme.accent.b);
     saved["accent"] = accent;
     saved["background_brightness"] = theme.background_brightness;
-    saved["background_tint"] = theme.background_tint;
+    fan::json background = fan::json::array();
+    background.push_back((double)theme.background.r);
+    background.push_back((double)theme.background.g);
+    background.push_back((double)theme.background.b);
+    saved["background"] = background;
     saved["panel_opacity"] = theme.panel_opacity;
     saved["glow"] = theme.glow;
     write_to_config("theme", saved);
@@ -137,8 +156,18 @@
       theme.accent = fan::color(std::clamp((f32_t)saved["accent"][0].get<double>(), 0.f, 1.f),
         std::clamp((f32_t)saved["accent"][1].get<double>(), 0.f, 1.f), std::clamp((f32_t)saved["accent"][2].get<double>(), 0.f, 1.f), 1.f);
     }
+    if (saved.contains("background") && saved["background"].is_array() && saved["background"].size() == 3) {
+      theme.background = fan::color(std::clamp((f32_t)saved["background"][0].get<double>(), 0.f, 1.f),
+        std::clamp((f32_t)saved["background"][1].get<double>(), 0.f, 1.f), std::clamp((f32_t)saved["background"][2].get<double>(), 0.f, 1.f), 1.f);
+    }
+    else {
+      // a theme saved before the backdrop had a colour of its own: the accent's hue, as it was
+      f32_t h, s, v;
+      theme_rgb_to_hsv(std::pow(theme.accent.r, 1.f / 2.2f), std::pow(theme.accent.g, 1.f / 2.2f), std::pow(theme.accent.b, 1.f / 2.2f), h, s, v);
+      fan::color shown = theme_hsv_to_rgb(h, std::clamp((f32_t)saved.value("background_tint", 0.64) * s, 0.f, 1.f), 1.f);
+      theme.background = fan::color(std::pow(shown.r, 2.2f), std::pow(shown.g, 2.2f), std::pow(shown.b, 2.2f), 1.f);
+    }
     theme.background_brightness = std::clamp((f32_t)saved.value("background_brightness", (double)theme.background_brightness), 0.02f, 0.4f);
-    theme.background_tint = std::clamp((f32_t)saved.value("background_tint", (double)theme.background_tint), 0.f, 1.f);
     theme.panel_opacity = std::clamp((f32_t)saved.value("panel_opacity", (double)theme.panel_opacity), 0.3f, 1.f);
     theme.glow = std::clamp((f32_t)saved.value("glow", (double)theme.glow), 0.f, 1.5f);
   }
@@ -191,11 +220,11 @@
     gui::settings_row("Accent", [&] {
       changed |= gui::color_edit3("##theme_accent", &theme.accent);
     });
-    gui::settings_row("Backdrop", [&] {
-      changed |= gui::slider("##theme_backdrop", &theme.background_brightness, 0.02f, 0.4f, gui::slider_flags_always_clamp);
+    gui::settings_row("Background", [&] {
+      changed |= gui::color_edit3("##theme_background", &theme.background);
     });
-    gui::settings_row("Tint", [&] {
-      changed |= gui::slider("##theme_tint", &theme.background_tint, 0.f, 1.f, gui::slider_flags_always_clamp);
+    gui::settings_row("Lightness", [&] {
+      changed |= gui::slider("##theme_backdrop", &theme.background_brightness, 0.02f, 0.4f, gui::slider_flags_always_clamp);
     });
     gui::settings_row("Panels", [&] {
       changed |= gui::slider("##theme_panels", &theme.panel_opacity, 0.3f, 1.f, gui::slider_flags_always_clamp);
@@ -387,6 +416,9 @@
     color(gui::col_scrollbar_grab, fan::color(blue_dim.r * 0.9f, blue_dim.g * 0.9f, blue_dim.b * 0.9f, 0.8f));
     color(gui::col_scrollbar_grab_hovered, blue_dim);
     color(gui::col_scrollbar_grab_active, blue);
+    color(gui::col_menu_bar_bg, fan::color(bg.r * 1.6f, bg.g * 1.6f, bg.b * 1.6f, 1.f));
+    color(gui::col_title_bg, fan::color(bg.r * 1.6f, bg.g * 1.6f, bg.b * 1.6f, 1.f));
+    color(gui::col_title_bg_active, fan::color(bg.r * 2.2f, bg.g * 2.2f, bg.b * 2.2f, 1.f));
     color(gui::col_text_selected_bg, fan::color(A.r, A.g, A.b, 0.35f));
     color(gui::col_resize_grip, fan::color(0.f, 0.f, 0.f, 0.f));
 
