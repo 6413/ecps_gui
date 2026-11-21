@@ -561,6 +561,47 @@ static bool udp_read_one() {
     ScreenShare_ChatProbe(RestPacket->ChannelID, SessionID);
     break;
   }
+  case ProtocolUDP::C2S_t::Channel_Rename: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_Rename_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    auto Channel = &g_pile->ChannelList[RestPacket->ChannelID];
+    if (Channel->Type != Protocol::ChannelType_ScreenShare_e) {
+      break;
+    }
+    auto ChannelData = (Channel_ScreenShare_Data_t*)Channel->Buffer;
+    /* only the host names it */
+    if (ChannelData->HostSessionID != SessionID) {
+      break;
+    }
+    /* up to the first control character, no leading or trailing spaces */
+    char Title[sizeof(ChannelData->Title)] = {};
+    size_t Length = 0;
+    for (size_t i = 0; i < sizeof(RestPacket->Name) && Length < sizeof(Title) - 1; i++) {
+      unsigned char c = (unsigned char)RestPacket->Name[i];
+      if (c < 0x20 || c == 0x7f) {
+        break;
+      }
+      if (c == ' ' && Length == 0) {
+        continue;
+      }
+      Title[Length++] = (char)c;
+    }
+    while (Length && Title[Length - 1] == ' ') {
+      Title[--Length] = 0;
+    }
+    if (std::strcmp(Title, ChannelData->Title) == 0) {
+      break;
+    }
+    std::memcpy(ChannelData->Title, Title, sizeof(Title));
+    Channel_BroadcastChannelList();
+    break;
+  }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {
     auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest_t*)&BasePacket[1];
     IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);

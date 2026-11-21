@@ -121,6 +121,9 @@ const char* Channel_ShownName(Protocol_ChannelID_t ChannelID){
     return "";
   }
   auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  if(ChannelData->Title[0]){
+    return ChannelData->Title;
+  }
   const char *HostName = GetSessionUsername(ChannelData->HostSessionID);
   if(HostName[0]){
     snprintf(ChannelData->OwnerName, sizeof(ChannelData->OwnerName), "%s", HostName);

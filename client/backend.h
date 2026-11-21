@@ -909,6 +909,9 @@ struct ecps_backend_t {
       std::memcpy(password_rest.Password, password.data(), std::min(password.size(), sizeof(password_rest.Password) - 1));
       co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &password_rest, sizeof(password_rest));
     }
+    if (!own_channel_title.empty()) {
+      pending_renames[(std::uint32_t)channel_id.i] = {own_channel_title, 0};
+    }
     co_return channel_id;
   }
   // the password saved for our own channel, which is named after us
@@ -969,6 +972,19 @@ struct ecps_backend_t {
     Protocol_ChannelID_t channel_id = 0;
     std::string name;
   };
+  // the name we give our channel, empty keeps our username. Given again to a channel we make after a reconnect
+  std::string own_channel_title;
+  // channel -> (name, tries), sent by probe_voice
+  std::unordered_map<std::uint32_t, std::pair<std::string, int>> pending_renames;
+  void channel_rename(Protocol_ChannelID_t channel_id, std::string name) {
+    name = trim_password(name);
+    if (name.size() > 31) {
+      name.resize(31);
+    }
+    own_channel_title = name;
+    pending_renames[(std::uint32_t)channel_id.i] = {name, 0};
+    voice_probed_at = {};
+  }
   std::mutex password_mutex;
   std::unordered_map<std::string, std::string> channel_passwords;
   password_prompt_t password_prompt;
@@ -1049,10 +1065,8 @@ struct ecps_backend_t {
     std::memcpy(rest.Password, password.data(), std::min(password.size(), sizeof(rest.Password) - 1));
     co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &rest, sizeof(rest));
     // kept like a channel joined with it: coming back to our own channel, or making it again, needs it
-    std::string name = channel_name_of(channel_id);
-    if (name.empty()) {
-      name = get_current_username();
-    }
+    // only the host sets it, so it is always our own channel: kept under our name, which a rename doesn't change
+    std::string name = get_current_username();
     if (password.empty()) {
       forget_password(name);
     }
@@ -1129,6 +1143,36 @@ struct ecps_backend_t {
       co_return;
     }
     voice_probed_at = now;
+    // names given to our channels, sent again every 2 s until the channel list shows them (udp can get lost)
+    std::vector<ProtocolUDP::C2S_t::Channel_Rename_t> renames;
+    for (auto it = pending_renames.begin(); it != pending_renames.end();) {
+      auto& [id, wanted] = *it;
+      channel_info_t* channel = nullptr;
+      for (auto& entry : channel_info) {
+        if (entry.channel_id.i == id && entry.join_confirmed) {
+          channel = &entry;
+        }
+      }
+      std::string listed = channel_name_of(Protocol_ChannelID_t(id));
+      std::string expected = wanted.first.empty() ? get_current_username() : wanted.first;
+      if ((channel && !listed.empty() && listed == expected) || wanted.second >= 10) {
+        it = pending_renames.erase(it);
+        continue;
+      }
+      if (channel) {
+        ++wanted.second;
+        ProtocolUDP::C2S_t::Channel_Rename_t rest;
+        std::memset(&rest, 0, sizeof(rest));
+        rest.ChannelID = channel->channel_id;
+        rest.ChannelSessionID = channel->session_id;
+        std::memcpy(rest.Name, wanted.first.data(), std::min(wanted.first.size(), sizeof(rest.Name) - 1));
+        renames.push_back(rest);
+      }
+      ++it;
+    }
+    for (auto& rest : renames) {
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Rename, rest, nullptr, 0);
+    }
     std::vector<Protocol_ChannelID_t> unanswered;
     for (auto& channel : channel_info) {
       if (channel.join_confirmed && channel.voice_probes < 5 && !voice_known(channel.channel_id)) {

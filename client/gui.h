@@ -58,6 +58,10 @@ struct ecps_gui_t {
           }
         }
       }
+      if (config.contains("channel_title") && config["channel_title"].is_string()) {
+        channel_rename_input = config["channel_title"].get<std::string>();
+        ecps_backend.own_channel_title = channel_rename_input;
+      }
       if (config.contains("auto_join") && config["auto_join"].is_string()) {
         auto_join_host = config["auto_join"].get<std::string>();
       }

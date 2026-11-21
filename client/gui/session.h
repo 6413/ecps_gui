@@ -118,7 +118,52 @@
 
   // The password prompt: shown when the server asks for a password the saved ones don't answer. What is typed is
   // remembered once the server lets us in, see ecps_backend_t::remember_password
+  // the + button: the new channel's name first
+  void render_new_channel_popup() {
+    if (new_channel_popup_requested) {
+      new_channel_popup_requested = false;
+      new_channel_popup_focus = true;
+      gui::open_popup("New channel");
+    }
+    if (!gui::begin_popup_modal("New channel", gui::window_flags_always_auto_resize | gui::window_flags_no_saved_settings)) {
+      return;
+    }
+    gui::text("Channel name");
+    gui::push_item_width(320);
+    if (new_channel_popup_focus) {
+      new_channel_popup_focus = false;
+      gui::set_keyboard_focus_here();
+    }
+    bool enter = gui::input_text("##new_channel_name", &channel_rename_input, gui::input_text_flags_enter_returns_true);
+    gui::pop_item_width();
+    text_wrapped_disabled("Empty uses your name. You can rename it later in the channel's settings");
+    if (gui::button("Create") || enter) {
+      std::string name = channel_rename_input;
+      write_to_config("channel_title", name);
+      backend_queue([this, name]() -> fan::event::task_t {
+        try {
+          ecps_backend.own_channel_title = ecps_backend_t::trim_password(name).substr(0, 31);
+          auto channel_id = co_await ecps_backend.channel_create();
+          co_await ecps_backend.channel_join(channel_id, true);
+          co_await ecps_backend.request_channel_list();
+          co_await ecps_backend.request_channel_session_list(channel_id);
+          selected_channel_id = channel_id;
+        }
+        catch (...) {
+          fan::print("Failed to create channel");
+        }
+      });
+      gui::close_current_popup();
+    }
+    gui::same_line();
+    if (gui::button("Cancel")) {
+      gui::close_current_popup();
+    }
+    gui::end_popup();
+  }
+
   void render_password_popup() {
+    render_new_channel_popup();
     save_passwords_if_changed();
     bool open_now = false;
     if (!password_popup_open) {
@@ -188,6 +233,19 @@
 
   // the host's part, in the channel's controls
   void render_channel_password_controls(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    settings_section("NAME");
+    text_wrapped_disabled("What everyone sees this channel as. Empty uses your name");
+    gui::push_item_width(-1.f);
+    bool rename_enter = gui::input_text("##channel_rename", &channel_rename_input, gui::input_text_flags_enter_returns_true);
+    gui::pop_item_width();
+    if (gui::button("Rename") || rename_enter) {
+      std::string name = channel_rename_input;
+      write_to_config("channel_title", name);
+      backend_queue([channel_id, name]() -> fan::event::task_t {
+        ecps_backend.channel_rename(channel_id, name);
+        co_return;
+      });
+    }
     settings_section("PASSWORD");
     if (!ecps_backend.channel_passwords_supported(channel_id)) {
       text_wrapped_disabled("This server is too old for channel passwords, update it first");
@@ -208,7 +266,7 @@
     gui::checkbox("Show##channel_password_show", &channel_password_show);
     // what it is now, so the host can tell the others exactly that
     if (has_password) {
-      std::string current = ecps_backend.saved_password(channel_id);
+      std::string current = ecps_backend.own_saved_password();
       if (!current.empty()) {
         gui::same_line();
         text_wrapped_disabled("Current: " + (channel_password_show ? current : std::string(current.size(), '*')));
@@ -263,6 +321,9 @@
   std::string password_popup_name;
   std::string password_input;
   std::string channel_password_input;
+  std::string channel_rename_input;
+  bool new_channel_popup_requested = false;
+  bool new_channel_popup_focus = false;
   bool password_prompt_show = false;
   bool channel_password_show = false;
   std::atomic<bool> passwords_dirty { false };

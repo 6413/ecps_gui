@@ -189,6 +189,8 @@ struct Channel_ScreenShare_Data_t{
   /* who made it, by name. The channel stays when its host leaves: it is shown under this name, and the one with
      this name becomes its host again on joining */
   char OwnerName[32] = {};
+  /* the name the host gave it (Channel_Rename), shown instead of OwnerName. OwnerName still decides who the host is */
+  char Title[32] = {};
 };
 
 struct pile_t{

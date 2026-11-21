@@ -298,18 +298,7 @@
         }
 
         if (icon_button("##add_channel", icon_e::plus, "New channel", gui::get_frame_height() * 1.15f)) {
-          This->backend_queue([this]() -> fan::event::task_t {
-            try {
-              auto channel_id = co_await ecps_backend.channel_create();
-              co_await ecps_backend.channel_join(channel_id, true);
-              co_await ecps_backend.request_channel_list();
-              co_await ecps_backend.request_channel_session_list(channel_id);
-              This->selected_channel_id = channel_id;
-            }
-            catch (...) {
-              fan::print("Failed to create channel");
-            }
-            });
+          This->new_channel_popup_requested = true;
         }
         gui::same_line();
         

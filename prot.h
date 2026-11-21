@@ -197,6 +197,13 @@ struct ProtocolUDP {
       Protocol_ChannelID_t ChannelID;
       Protocol_ChannelSessionID_t ChannelSessionID;
     );
+    /* the host names its channel, an empty name gives back the host's own. The new channel list shows it. A server
+       without names ignores it, so it goes over udp and is sent again until the list has the name */
+    __dme(Channel_Rename,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+      char Name[32];
+    );
   }C2S;
   struct S2C_t : __dme_inherit(S2C_t) {
     __dme(KeepAlive);
