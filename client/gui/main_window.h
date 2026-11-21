@@ -110,6 +110,10 @@
       gui::pop_id();
       if (clicked) {
         This->selected_channel_id = channel.channel_id;
+        // a joined channel opens its own view, the users in it
+        if (joined) {
+          channels_browsing = false;
+        }
         This->backend_queue([channel_id = channel.channel_id]() -> fan::event::task_t {
           try {
             co_await ecps_backend.request_channel_session_list(channel_id);
@@ -166,14 +170,86 @@
       list->AddText(fan::vec2(at.x + width - right_width - 10.f, text_y), 0xff909090u, right.c_str());
     }
 
+    // the server's channels (true) or the joined channel's own view (false). Joining a channel shows its view, the
+    // back button in it the channels again
+    bool channels_browsing = false;
+    std::size_t joined_seen = 0;
+
+    // "< Channels": back to the server's channels from a joined channel's view
+    bool render_back_button(f32_t height) {
+      const char* text = "Channels";
+      f32_t chevron = height * 0.22f;
+      fan::vec2 size(gui::calc_text_size(text).x + chevron * 2.f + 26.f, height);
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      bool clicked = gui::invisible_button("##channels_back", size);
+      bool hovered = gui::is_item_hovered();
+      if (hovered) {
+        gui::set_tooltip("Back to all the channels of the server");
+      }
+      auto* list = gui::get_window_draw_list();
+      list->AddRectFilled(at, at + size, hovered ? 0xff2a1a12u : 0xff1c0f09u, height * 0.3f);
+      std::uint32_t ink = hovered ? 0xffffffffu : 0xffc8c8c8u;
+      fan::vec2 c = at + fan::vec2(10.f + chevron * 0.5f, height * 0.5f);
+      list->AddLine(c + fan::vec2(chevron * 0.5f, -chevron), c + fan::vec2(-chevron * 0.5f, 0), ink, 2.f);
+      list->AddLine(c + fan::vec2(-chevron * 0.5f, 0), c + fan::vec2(chevron * 0.5f, chevron), ink, 2.f);
+      list->AddText(at + fan::vec2(chevron * 2.f + 16.f, (height - gui::get_font_size()) * 0.5f), ink, text);
+      return clicked;
+    }
+
+    void leave_channel(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+      // a channel joined by itself would be joined again at once, leaving it stops that
+      for (const auto& channel : ecps_backend.available_channels) {
+        if (channel.channel_id.i == channel_id.i && This->auto_join_host == channel.name) {
+          This->set_auto_join(std::string());
+        }
+      }
+      This->backend_queue([channel_id]() -> fan::event::task_t {
+        try {
+          co_await ecps_backend.channel_quit(channel_id);
+          co_await ecps_backend.request_channel_list();
+        }
+        catch (...) {
+          fan::print("Failed to leave channel");
+        }
+      });
+    }
+
+    // a joined channel: the way back to the channels, leaving, and the channel's users and tabs over all the panel
+    void render_joined_channel_view() {
+      f32_t button = gui::get_frame_height();
+      if (render_back_button(button)) {
+        channels_browsing = true;
+      }
+      if (!ecps_backend.is_current_user_host_of_channel(This->selected_channel_id)) {
+        gui::same_line();
+        gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(gui::get_content_region_avail().x - button, 0.f));
+        if (icon_button("##leave_joined_channel", icon_e::leave, "Leave this channel", button, icon_style_e::danger)) {
+          leave_channel(This->selected_channel_id);
+          channels_browsing = true;
+        }
+      }
+      gui::spacing();
+      render_channel_details(gui::get_content_region_avail());
+    }
+
     void render_channels_content() {
       fan::vec2 avail_size = gui::get_content_region_avail();
       if (avail_size.x <= 0 || avail_size.y <= 0) {
         return;
       }
+      // a channel joined since the last frame (here, by itself or from elsewhere): its view
+      if (ecps_backend.channel_info.size() > joined_seen) {
+        This->selected_channel_id = ecps_backend.channel_info.back().channel_id;
+        channels_browsing = false;
+      }
+      joined_seen = ecps_backend.channel_info.size();
       bool has_selection = This->selected_channel_id.i != (uint16_t)-1;
       bool already_in_selected = has_selection && ecps_backend.is_channel_joined(This->selected_channel_id);
       bool is_host_of_selected = already_in_selected && ecps_backend.is_current_user_host_of_channel(This->selected_channel_id);
+      if (already_in_selected && !channels_browsing) {
+        render_joined_channel_view();
+        return;
+      }
 
       // ---- the top row: the search over the width, the buttons at its right
       f32_t button = gui::get_frame_height();
@@ -191,21 +267,7 @@
         gui::same_line();
         if (already_in_selected) {
           if (icon_button("##leave_channel", icon_e::leave, "Leave the selected channel", button, icon_style_e::danger)) {
-            // a channel joined by itself would be joined again at once, leaving it stops that
-            for (const auto& channel : ecps_backend.available_channels) {
-              if (channel.channel_id.i == This->selected_channel_id.i && This->auto_join_host == channel.name) {
-                This->set_auto_join(std::string());
-              }
-            }
-            This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
-              try {
-                co_await ecps_backend.channel_quit(channel_id);
-                co_await ecps_backend.request_channel_list();
-              }
-              catch (...) {
-                fan::print("Failed to leave channel");
-              }
-            });
+            leave_channel(This->selected_channel_id);
           }
         }
         else if (icon_button("##join_channel", icon_e::join, "Join the selected channel", button, icon_style_e::accent)) {
@@ -296,7 +358,15 @@
         gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), hot ? 0xffff7a33u : 0x30ffffffu, 3.f);
       }
 
-      gui::begin_child("##channel_details_panel", fan::vec2(avail_size.x, std::max(gui::get_content_region_avail().y, 60.f)), true);
+      render_channel_details(fan::vec2(avail_size.x, std::max(gui::get_content_region_avail().y, 60.f)));
+    }
+
+    // the selected channel: its name, the users in it and its tabs
+    void render_channel_details(fan::vec2 size) {
+      bool has_selection = This->selected_channel_id.i != (uint16_t)-1;
+      bool already_in_selected = has_selection && ecps_backend.is_channel_joined(This->selected_channel_id);
+      bool is_host_of_selected = already_in_selected && ecps_backend.is_current_user_host_of_channel(This->selected_channel_id);
+      gui::begin_child("##channel_details_panel", size, true);
 
       gui::dummy(fan::vec2(6, 0));
       gui::same_line(0, 0);
@@ -318,41 +388,36 @@
             gui::same_line(0, 10.f);
             gui::badge("yours", 0x50ff5919u, 0xffffa070u);
           }
-          if (!ecps_backend.is_hosting_channel(This->selected_channel_id) && !channel_name.empty()) {
-            bool auto_join_on = This->auto_join_host == channel_name;
-            if (gui::checkbox("Join automatically", &auto_join_on)) {
-              This->set_auto_join(auto_join_on ? channel_name : std::string());
-            }
-            if (gui::is_item_hovered()) {
-              gui::set_tooltip("Joins this channel by itself whenever its host is online, also after a restart");
+          // refresh the users, at the right of the name
+          {
+            f32_t button = gui::get_frame_height();
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(gui::get_content_region_avail().x - button - 4.f, 0.f));
+            if (icon_button("##refresh_users", icon_e::refresh, "Refresh the users", button)) {
+              This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
+                try {
+                  co_await ecps_backend.request_channel_session_list(channel_id);
+                }
+                catch (...) {
+                  fan::print("Failed to refresh session list");
+                }
+              });
             }
           }
-
-          gui::separator();
+          if (!ecps_backend.is_hosting_channel(This->selected_channel_id) && !channel_name.empty()) {
+            bool auto_join_on = This->auto_join_host == channel_name;
+            if (gui::settings_switch("Join automatically", &auto_join_on,
+              "Joins this channel by itself whenever its host is online, also after a restart")) {
+              This->set_auto_join(auto_join_on ? channel_name : std::string());
+            }
+          }
 
           gui::spacing();
 
           if (gui::begin_tab_bar("ChannelDetailTabs")) {
-            gui::spacing();
-            gui::spacing();
             if (gui::begin_tab_item("Users", nullptr, detail_tab == 0 ? gui::tab_item_flags_set_selected : 0)) {
               if (detail_tab == 0) detail_tab = -1;
 
-              gui::spacing();
-              gui::spacing();
-              if (icon_button("##refresh_users", icon_e::refresh, "Refresh")) {
-                This->backend_queue([channel_id = This->selected_channel_id]() -> fan::event::task_t {
-                  try {
-                    co_await ecps_backend.request_channel_session_list(channel_id);
-                  }
-                  catch (...) {
-                    fan::print("Failed to refresh session list");
-                  }
-                  });
-              }
-
-              gui::spacing();
-              gui::spacing();
               gui::spacing();
 
               // the host's buttons live in their own scrolling child below the list, so they can't run off the panel
@@ -476,7 +541,7 @@
               if (is_host_of_selected && gui::begin_child("HostControls", fan::vec2(0, 0), 0)) {
                 gui::text(ecps_backend.is_streaming_to_any_channel() ? "You are sharing your screen" : "Your screen is not shared");
                 gui::text_wrapped_disabled("Use \"Share screen\" at the top. Others join this channel to watch you.");
-                if (gui::checkbox("Preview own stream", &This->show_own_stream)) {
+                if (gui::settings_switch("Preview own stream", &This->show_own_stream, "Shows your own shared screen here")) {
                   if (auto rt = get_render_thread(); rt) {
                     if (This->show_own_stream) {
                       rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
@@ -500,11 +565,6 @@
               gui::end_tab_item();
             }
 
-            if (gui::begin_tab_item("Chat", nullptr, 0)) {
-              This->render_chat_tab(This->selected_channel_id);
-              gui::end_tab_item();
-            }
-
             if (gui::begin_tab_item("Files", nullptr, 0)) {
               This->render_file_transfers();
               gui::end_tab_item();
@@ -521,7 +581,7 @@
             }
 
             if (is_host_of_selected) {
-              if (gui::begin_tab_item("Stream Settings", nullptr, detail_tab == 1 ? gui::tab_item_flags_set_selected : 0)) {
+              if (gui::begin_tab_item("Stream", nullptr, detail_tab == 1 ? gui::tab_item_flags_set_selected : 0)) {
                 if (detail_tab == 1) detail_tab = -1;
 
                 render_stream_settings_content_compact();
@@ -833,8 +893,13 @@
       bool right = !This->panels_on(0).empty();
       bool bottom = !This->panels_on(1).empty();
       bool left = !This->panels_on(2).empty();
+      // a side pushed against its edge: a grip there brings it back
+      f32_t grip = This->side_grip_size;
+      bool right_grip = This->side_hidden[0] && !This->panels_docked(0).empty();
+      bool bottom_grip = This->side_hidden[1] && !This->panels_docked(1).empty();
+      bool left_grip = This->side_hidden[2] && !This->panels_docked(2).empty();
       f32_t height = bottom ? std::clamp(This->side_panel_height, 150.f, area.y * 0.7f) : 0.f;
-      f32_t top_height = area.y - (bottom ? height + handle : 0.f);
+      f32_t top_height = area.y - (bottom ? height + handle : bottom_grip ? grip : 0.f);
       // the left one starts wide, the channels in it want room
       if (This->side_left_width <= 0.f) {
         This->side_left_width = std::max(area.x * 0.42f, 420.f);
@@ -855,7 +920,12 @@
         This->render_side_panel_handle(fan::vec2(handle, top_height), 2);
         x += left_width + handle;
       }
-      f32_t stream_width = area.x - (left ? left_width + handle : 0.f) - (right ? right_width + handle : 0.f);
+      else if (left_grip) {
+        gui::set_cursor_screen_pos(origin);
+        This->render_side_grip(fan::vec2(grip, top_height), 2);
+        x += grip;
+      }
+      f32_t stream_width = area.x - (x - origin.x) - (right ? right_width + handle : right_grip ? grip : 0.f);
       gui::set_cursor_screen_pos(fan::vec2(x, origin.y));
       render_stream_area("##stream_display_split", fan::vec2(stream_width, top_height));
       if (right) {
@@ -863,10 +933,18 @@
         This->render_side_panel_handle(fan::vec2(handle, top_height), 0);
         panel(0, fan::vec2(x + stream_width + handle, origin.y), fan::vec2(right_width, top_height));
       }
+      else if (right_grip) {
+        gui::set_cursor_screen_pos(fan::vec2(x + stream_width, origin.y));
+        This->render_side_grip(fan::vec2(grip, top_height), 0);
+      }
       if (bottom) {
         gui::set_cursor_screen_pos(fan::vec2(origin.x, origin.y + top_height));
         This->render_side_panel_handle(fan::vec2(area.x, handle), 1);
         panel(1, fan::vec2(origin.x, origin.y + top_height + handle), fan::vec2(area.x, height));
+      }
+      else if (bottom_grip) {
+        gui::set_cursor_screen_pos(fan::vec2(origin.x, origin.y + top_height));
+        This->render_side_grip(fan::vec2(area.x, grip), 1);
       }
       This->render_side_panel_drop();
     }

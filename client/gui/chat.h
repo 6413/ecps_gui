@@ -1062,12 +1062,33 @@
   int side_panel_moving = -1; // the panel whose tab is being dragged
   int side_panel_drop = -1;
   bool side_panel_resizing = false;
+  int side_resizing_side = -1;
+  f32_t side_drag_raw = 0.f; // the size the mouse asks for while a line is dragged, below the smallest one too
+  // a side pushed against its edge: its panels stay open but only a thin grip shows, dragged out (or clicked) it
+  // comes back
+  bool side_hidden[3] = {false, false, false};
+  int side_grip_dragging = -1;
+  static constexpr f32_t side_hide_below = 140.f; // dragged smaller than this, the side hides on release
+  static constexpr f32_t side_grip_size = 10.f;
 
   static const char* side_panel_name(int panel) {
     return panel == side_chat ? "Chat" : panel == side_channels ? "Channels" : "Settings";
   }
-  // the panels on a side, -1 for full screen: there only Settings and Chat, the stream keeps the rest
+  // the panels open on a side, hidden or not
+  std::vector<int> panels_docked(int side) {
+    std::vector<int> out;
+    for (int panel = 0; panel < side_panel_count; ++panel) {
+      if (side_open[panel] && side_of[panel] == side) {
+        out.push_back(panel);
+      }
+    }
+    return out;
+  }
+  // the panels shown on a side, -1 for full screen: there only Settings and Chat, the stream keeps the rest
   std::vector<int> panels_on(int side) {
+    if (side >= 0 && side_hidden[side]) {
+      return {};
+    }
     std::vector<int> out;
     for (int panel = 0; panel < side_panel_count; ++panel) {
       if (side_open[panel] && (side < 0 ? panel != side_channels : side_of[panel] == side)) {
@@ -1117,6 +1138,11 @@
           side_open[panel] = layout["open"][panel].is_boolean() && layout["open"][panel].get<bool>();
         }
       }
+      if (layout.contains("hidden") && layout["hidden"].is_array() && layout["hidden"].size() == 3) {
+        for (int side = 0; side < 3; ++side) {
+          side_hidden[side] = layout["hidden"][side].is_boolean() && layout["hidden"][side].get<bool>();
+        }
+      }
     }
     sync_panels_shown();
   }
@@ -1135,6 +1161,11 @@
       open.push_back(side_open[panel]);
     }
     layout["open"] = open;
+    fan::json hidden = fan::json::array();
+    for (int side = 0; side < 3; ++side) {
+      hidden.push_back(side_hidden[side]);
+    }
+    layout["hidden"] = hidden;
     write_to_config("side_panel", layout);
   }
 
@@ -1148,6 +1179,7 @@
   void open_side_panel(int panel) {
     load_side_panel_layout();
     side_open[panel] = true;
+    side_hidden[side_of[panel]] = false;
     side_front[side_of[panel]] = panel;
     if (panel != side_channels) {
       side_front[3] = panel;
@@ -1280,31 +1312,105 @@
     if (hot) {
       gui::set_mouse_cursor(side == 1 ? gui::mouse_cursor_resize_ns : gui::mouse_cursor_resize_ew);
     }
+    f32_t hide_below = side == 1 ? side_hide_below * 0.6f : side_hide_below;
+    bool will_hide = false;
     if (gui::is_item_active()) {
       fan::vec2 delta = gui::get_io().MouseDelta;
       fan::vec2 area = side_view_max - side_view_min;
-      if (side == 1) {
-        side_panel_height = std::clamp(side_panel_height - delta.y, 150.f, area.y * 0.7f);
+      f32_t& stored = side == 1 ? side_panel_height : side == 0 ? stream_settings.settings_panel_width : side_left_width;
+      if (!side_panel_resizing) {
+        side_panel_resizing = true;
+        side_resizing_side = side;
+        side_drag_raw = stored;
       }
-      else if (side == 0) {
-        stream_settings.settings_panel_width = std::clamp(stream_settings.settings_panel_width - delta.x, 250.f, area.x * 0.7f);
+      side_drag_raw += side == 1 ? -delta.y : side == 0 ? -delta.x : delta.x;
+      stored = std::clamp(side_drag_raw, side == 1 ? 150.f : 250.f, (side == 1 ? area.y : area.x) * 0.7f);
+      will_hide = side_drag_raw < hide_below;
+      if (will_hide) {
+        gui::set_tooltip("Let go to push it against the edge. Drag it out from there to bring it back");
       }
-      else {
-        side_left_width = std::clamp(side_left_width + delta.x, 250.f, area.x * 0.7f);
-      }
-      side_panel_resizing = true;
     }
-    else if (side_panel_resizing && !fan::window::is_mouse_down(0)) {
+    else if (side_panel_resizing && side_resizing_side == side && !fan::window::is_mouse_down(0)) {
       side_panel_resizing = false;
+      side_resizing_side = -1;
+      if (side_drag_raw < hide_below) {
+        side_hidden[side] = true;
+      }
       save_side_panel_layout();
     }
-    std::uint32_t color = hot ? 0xffff7a33u : 0x30ffffffu;
+    std::uint32_t color = will_hide ? 0xff4040ffu : hot ? 0xffff7a33u : 0x30ffffffu;
     fan::vec2 c = at + size * 0.5f;
     if (side == 1) {
       gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), color, 3.f);
     }
     else {
       gui::get_window_draw_list()->AddLine(fan::vec2(c.x, c.y - 24.f), fan::vec2(c.x, c.y + 24.f), color, 3.f);
+    }
+  }
+
+  // the thin strip left at an edge by a hidden side. Dragged out it shows the side again as wide as dragged, a click
+  // shows it as it was
+  void render_side_grip(fan::vec2 size, int side) {
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    gui::push_id(side);
+    bool clicked = gui::invisible_button("##side_grip", size);
+    gui::pop_id();
+    bool active = gui::is_item_active();
+    bool hot = gui::is_item_hovered() || active;
+    fan::vec2 m = gui::get_io().MousePos;
+    fan::vec2 area = side_view_max - side_view_min;
+    f32_t distance = side == 2 ? m.x - side_view_min.x : side == 0 ? side_view_max.x - m.x : side_view_max.y - m.y;
+    f32_t smallest = side == 1 ? 150.f : 250.f;
+    f32_t largest = (side == 1 ? area.y : area.x) * 0.7f;
+    std::string names;
+    for (int panel : panels_docked(side)) {
+      names += std::string(names.empty() ? "" : " and ") + side_panel_name(panel);
+    }
+    if (hot) {
+      gui::set_mouse_cursor(side == 1 ? gui::mouse_cursor_resize_ns : gui::mouse_cursor_resize_ew);
+      if (!active) {
+        gui::set_tooltip("Drag out or click to show " + names);
+      }
+    }
+    if (active && gui::is_mouse_dragging(0, 4.f)) {
+      side_grip_dragging = side;
+      // where it will come to
+      f32_t shown = std::clamp(distance, smallest, largest);
+      fan::vec2 a, b;
+      switch (side) {
+        case 0: a = fan::vec2(side_view_max.x - shown, side_view_min.y); b = side_view_max; break;
+        case 1: a = fan::vec2(side_view_min.x, side_view_max.y - shown); b = side_view_max; break;
+        default: a = side_view_min; b = fan::vec2(side_view_min.x + shown, side_view_max.y); break;
+      }
+      auto* list = gui::get_foreground_draw_list();
+      list->AddRectFilled(a, b, 0x40ff7a33u, 8.f);
+      list->AddRect(a, b, 0xffff7a33u, 8.f, 0, 2.f);
+      fan::vec2 text_size = gui::calc_text_size(names);
+      list->AddText((a + b) * 0.5f - text_size * 0.5f, 0xffffffffu, names.c_str());
+    }
+    else if (side_grip_dragging == side && !active) {
+      // let go after a drag: as wide as it was dragged
+      side_grip_dragging = -1;
+      if (distance > size.x + size.y) {
+        (side == 1 ? side_panel_height : side == 0 ? stream_settings.settings_panel_width : side_left_width) =
+          std::clamp(distance, smallest, largest);
+      }
+      side_hidden[side] = false;
+      save_side_panel_layout();
+    }
+    else if (clicked) {
+      side_hidden[side] = false;
+      save_side_panel_layout();
+    }
+    // a rounded bar along the edge
+    auto* list = gui::get_window_draw_list();
+    std::uint32_t color = hot ? 0xffff7a33u : 0x50ffffffu;
+    fan::vec2 c = at + size * 0.5f;
+    if (side == 1) {
+      list->AddRectFilled(fan::vec2(c.x - 40.f, c.y - 2.f), fan::vec2(c.x + 40.f, c.y + 2.f), color, 2.f);
+    }
+    else {
+      list->AddRectFilled(fan::vec2(c.x - 2.f, c.y - 40.f), fan::vec2(c.x + 2.f, c.y + 40.f), color, 2.f);
     }
   }
 
@@ -1317,6 +1423,7 @@
     if (!fan::window::is_mouse_down(0)) {
       if (side_panel_drop >= 0 && side_panel_drop != side_of[moving]) {
         side_of[moving] = side_panel_drop;
+        side_hidden[side_panel_drop] = false;
         side_front[side_panel_drop] = moving;
         save_side_panel_layout();
       }

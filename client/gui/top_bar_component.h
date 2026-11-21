@@ -244,7 +244,9 @@ struct top_bar_t {
     if (about_anchor.y >= 0.f) {
       gui::set_next_window_pos(about_anchor + fan::vec2(0, 4.f), gui::cond_always, fan::vec2(1.f, 0.f));
     }
-    if (!gui::begin_popup("About ECPS", gui::window_flags_no_move | gui::window_flags_no_docking | gui::window_flags_no_saved_settings)) {
+    // nearly solid: the theme's see-through popups let the stream behind show through the text
+    gui::set_next_window_bg_alpha(0.97f);
+    if (!gui::begin_popup("About ECPS",gui::window_flags_no_move | gui::window_flags_no_docking | gui::window_flags_no_saved_settings)) {
       return;
     }
     using state_e = updater_t::state_e;
@@ -322,11 +324,11 @@ struct top_bar_t {
     }
     if (updater_t::self_updates()) {
       gui::separator();
-      if (gui::checkbox("Update automatically", &gui.auto_update)) {
+      // a switch at least as wide as its text, the popup sizes itself to what is in it
+      gui::dummy(fan::vec2(gui::calc_text_size("Update automatically").x + gui::get_frame_height() * 2.f + 24.f, 0));
+      if (gui::settings_switch("Update automatically", &gui.auto_update,
+        "Installs a new version as soon as it is found and restarts into it, also while you share your screen")) {
         gui.save_ui_config();
-      }
-      if (gui::is_item_hovered()) {
-        gui::set_tooltip("Installs a new version as soon as it is found and restarts into it. While you share your screen it waits until you stop");
       }
     }
     gui::end_popup();

@@ -17,14 +17,11 @@
     write_to_config("ui", ui);
   }
 
-  // on: a new version found is installed by itself and the program restarts into it. Not while you share your
-  // screen, the restart would stop the stream: then it waits until the sharing ends
+  // on: a new version found is installed by itself and the program restarts into it, also while you share your
+  // screen (the restart stops the stream)
   bool auto_update = false;
   void update_automatically() {
     if (!auto_update || !updater_t::self_updates() || updater.state.load() != updater_t::state_e::available) {
-      return;
-    }
-    if (ecps_backend.is_streaming_to_any_channel()) {
       return;
     }
     updater.start_update();
