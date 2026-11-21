@@ -1620,6 +1620,15 @@ void ecps_backend_t::view_t::WriteFramePacket() {
 
   ecps_backend.view_frames_assembled.fetch_add(1, std::memory_order_relaxed);
 
+  // a whole frame before this one was lost: decoding this one would show blocks until intra refresh swept over them.
+  // A keyframe needs nothing before it (the sharer also skips a number when it drops its queue for a keyframe)
+  if (m_SequenceGap) {
+    m_SequenceGap = false;
+    if (!m_KeyFrame) {
+      RequestKeyframe();
+    }
+  }
+
   // after a start or a loss only a keyframe can be decoded cleanly; the frames before it are held back (the last
   // picture stays) instead of decoding into blocks. A sharer that never marks keyframes isn't waited on forever
   if (ecps_backend.view_need_keyframe.load(std::memory_order_relaxed)) {

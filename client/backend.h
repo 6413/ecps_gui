@@ -131,6 +131,9 @@ struct ecps_backend_t {
     uint16_t m_ModuloSize;
     // the frame being received is a keyframe (the sharer marks it in the first packet)
     bool m_KeyFrame = false;
+    // a frame before this one never arrived whole (all of it lost, or its first packet): this one refers to what is
+    // missing, so unless it is a keyframe it is held back like after any other loss
+    bool m_SequenceGap = false;
     // when the decoder has no picture to build on (watching started, a frame was lost), frames are held back until a
     // keyframe: a frame decoded without what it refers to comes out as blocks and smears. Since when it waits, 0 = not
     uint64_t m_KeyFrameWaitSince = 0;
@@ -271,6 +274,16 @@ struct ecps_backend_t {
         recovery_callback(std::move(request_data));
       }
 
+    }
+
+    // a frame was skipped without being counted: counted as dropped, the next written frame checks m_SequenceGap
+    void MarkSequenceGap(bool lost_whole) {
+      if (!lost_whole) {
+        return;
+      }
+      m_stats.Frame_Total++;
+      m_stats.Frame_Drop++;
+      m_SequenceGap = true;
     }
 
     void SetNewSequence(uint16_t sequence) {
@@ -572,10 +585,12 @@ struct ecps_backend_t {
             #if ecps_debug_prints >= 1
               printf("UDP: large sequence jump detected %u->%u, accepting\n", view.m_Sequence, sequence);
             #endif
-              if (view.m_Possible != (uint16_t)-1) {
+              bool lost_whole = view.m_Possible == (uint16_t)-1;
+              if (!lost_whole) {
                 view.FixFrameOnComplete();
               }
               view.SetNewSequence(sequence);
+              view.MarkSequenceGap(lost_whole);
             }
             else {
               const int16_t sequence_window = 0x1000;
@@ -588,10 +603,14 @@ struct ecps_backend_t {
                 co_return;
               }
 
-              if (view.m_Possible != (uint16_t)-1) {
+              // m_Sequence is the frame expected next: without its first packet it can't be finished or dropped
+              // the usual way, it just vanished (a small frame is one or two packets, all of it can be lost)
+              bool lost_whole = view.m_Possible == (uint16_t)-1;
+              if (!lost_whole) {
                 view.FixFrameOnComplete();
               }
               view.SetNewSequence(sequence);
+              view.MarkSequenceGap(lost_whole);
             }
           }
 
