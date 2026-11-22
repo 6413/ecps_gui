@@ -6,6 +6,14 @@
       });
   }
 
+  // Full screen: the panel at the right pushed against the edge hides, like the sides of the normal view. A tab at
+  // the edge (shown with the mouse near) brings it back, clicked or dragged out
+  bool fullscreen_panel_hidden = false;
+  bool fullscreen_edge_was_active = false;
+  bool fullscreen_grip_was_active = false;
+  f32_t fullscreen_drag_width = 0.f;
+  f32_t fullscreen_grip_alpha = 0.f;
+
   void render_fullscreen_stream() {
     auto* viewport = gui::get_main_viewport();
     fan::vec2 window_pos = fan::vec2(viewport->WorkPos.x, viewport->WorkPos.y);
@@ -36,7 +44,9 @@
       gui::set_viewport(engine.orthographic_render_view);
 
       fan::vec2 stream_area = window_content_size;
-      if (This->stream_settings.show_in_stream_view) {
+      bool panel_open = This->stream_settings.show_in_stream_view;
+      bool panel_shown = panel_open && !fullscreen_panel_hidden;
+      if (panel_shown) {
         stream_area.x -= This->stream_settings.settings_panel_width;
       }
 
@@ -53,17 +63,35 @@
 
       gui::pop_style_var(5);
 
-      if (This->stream_settings.show_in_stream_view) {
-        // the left edge of the panel can be dragged to make it wider or narrower
+      if (panel_shown) {
+        // the left edge of the panel can be dragged to make it wider or narrower, and to the screen's edge to hide it
         gui::set_cursor_pos(fan::vec2(stream_area.x - 3.f, 0));
         gui::invisible_button("##fullscreen_panel_edge", fan::vec2(6.f, window_content_size.y));
-        if (gui::is_item_hovered() || gui::is_item_active()) {
+        bool edge_active = gui::is_item_active();
+        if (gui::is_item_hovered() || edge_active) {
           gui::set_mouse_cursor(gui::mouse_cursor_resize_ew);
         }
-        if (gui::is_item_active()) {
-          This->stream_settings.settings_panel_width = std::clamp(This->stream_settings.settings_panel_width - gui::get_io().MouseDelta.x,
-            250.f, window_content_size.x * 0.6f);
+        if (edge_active && !fullscreen_edge_was_active) {
+          fullscreen_drag_width = This->stream_settings.settings_panel_width;
         }
+        if (edge_active) {
+          fullscreen_drag_width -= gui::get_io().MouseDelta.x;
+          This->stream_settings.settings_panel_width = std::clamp(fullscreen_drag_width, 250.f, window_content_size.x * 0.6f);
+          if (fullscreen_drag_width < side_hide_below) {
+            // let go here and it hides
+            fan::vec2 a = gui::get_window_pos() + fan::vec2(stream_area.x, 0.f);
+            fan::vec2 b = a + fan::vec2(This->stream_settings.settings_panel_width, window_content_size.y);
+            auto* front = gui::get_foreground_draw_list();
+            front->AddRectFilled(a, b, 0x90000000u);
+            const char* note = "Release to hide";
+            fan::vec2 size = gui::calc_text_size(note);
+            front->AddText((a + b) * 0.5f - size * 0.5f, 0xffffffffu, note);
+          }
+        }
+        else if (fullscreen_edge_was_active && fullscreen_drag_width < side_hide_below) {
+          fullscreen_panel_hidden = true;
+        }
+        fullscreen_edge_was_active = edge_active;
         gui::set_cursor_pos(fan::vec2(stream_area.x, 0));
         gui::push_style_var(gui::style_var_window_padding, fan::vec2(10.f, 10.f));
         gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 4.f));
@@ -74,6 +102,13 @@
         This->render_side_panel_content();
         gui::end_child();
         gui::pop_style_var(3);
+      }
+
+      if (panel_open && fullscreen_panel_hidden) {
+        render_fullscreen_grip(window_content_size);
+      }
+      if (!panel_open) {
+        fullscreen_panel_hidden = false;
       }
 
       auto& io = gui::get_io();
@@ -132,6 +167,63 @@
     }
 
     gui::end();
+  }
+
+  // the hidden panel's tab on the right edge: seen with the mouse near it, a click shows the panel, dragging it out
+  // shows it as wide as it was dragged
+  void render_fullscreen_grip(fan::vec2 area) {
+    f32_t width = side_grip_size;
+    fan::vec2 origin = gui::get_window_pos();
+    gui::set_cursor_pos(fan::vec2(area.x - width, 0.f));
+    bool clicked = gui::invisible_button("##fullscreen_panel_grip", fan::vec2(width, area.y));
+    bool active = gui::is_item_active();
+    bool hot = gui::is_item_hovered() || active;
+    fan::vec2 mouse = gui::get_io().MousePos;
+    f32_t dragged = origin.x + area.x - mouse.x;
+    if (hot) {
+      gui::set_mouse_cursor(gui::mouse_cursor_resize_ew);
+      if (!active) {
+        gui::set_tooltip("Show the panel (click, or drag out to size it)");
+      }
+    }
+    if (active && gui::is_mouse_dragging(0, 4.f)) {
+      f32_t shown = std::clamp(dragged, 250.f, area.x * 0.6f);
+      fan::vec2 a = origin + fan::vec2(area.x - shown, 0.f);
+      fan::vec2 b = origin + area;
+      auto* front = gui::get_foreground_draw_list();
+      front->AddRectFilled(a, b, accent_alpha(accent_hover_u32, 0x40), 8.f);
+      front->AddRect(a, b, accent_hover_u32, 8.f, 0, 2.f);
+    }
+    else if (fullscreen_grip_was_active && !active) {
+      if (dragged > width * 2.f) {
+        This->stream_settings.settings_panel_width = std::clamp(dragged, 250.f, area.x * 0.6f);
+      }
+      fullscreen_panel_hidden = false;
+    }
+    else if (clicked) {
+      fullscreen_panel_hidden = false;
+    }
+    fullscreen_grip_was_active = active;
+
+    // the tab: faded in with the mouse near the edge
+    bool mouse_close = hot || (mouse.x > origin.x + area.x - 80.f && mouse.y >= origin.y && mouse.y <= origin.y + area.y);
+    fullscreen_grip_alpha += ((mouse_close ? 1.f : 0.f) - fullscreen_grip_alpha) * std::min(1.f, gui::get_io().DeltaTime * 12.f);
+    if (fullscreen_grip_alpha < 0.01f) {
+      return;
+    }
+    auto faded = [&](std::uint32_t color) {
+      return (color & 0x00ffffffu) | ((std::uint32_t)((color >> 24) * fullscreen_grip_alpha) << 24);
+    };
+    auto* list = gui::get_window_draw_list();
+    fan::vec2 c = origin + fan::vec2(area.x - width * 0.5f, area.y * 0.5f);
+    f32_t half_short = width * 0.5f - 1.f;
+    list->AddRectFilled(c - fan::vec2(half_short, 36.f), c + fan::vec2(half_short, 36.f),
+      faded(hot ? accent_alpha(accent_u32, 0x90) : 0x28ffffffu), half_short);
+    f32_t arm = std::min(half_short * 0.75f, 4.f);
+    fan::vec2 tip = c + fan::vec2(-arm * 0.5f, 0.f);
+    std::uint32_t ink = faded(hot ? 0xffffffffu : 0xb0ffffffu);
+    list->AddLine(tip, tip + fan::vec2(arm, -arm), ink, 1.8f);
+    list->AddLine(tip, tip + fan::vec2(arm, arm), ink, 1.8f);
   }
 
   void render_fps_counter(f32_t stream_width, f32_t font_size = 15.f) {
