@@ -313,6 +313,10 @@
     f32_t zoom = 1.f;
     fan::vec2 offset = 0;
 
+    // the picture's center (in the stream area) and half size as last placed
+    fan::vec2 shown_position = 0;
+    fan::vec2 shown_half = 0;
+
     void setup_network_frame(fan::vec2 available_area) {
       auto rt = get_render_thread();
       if (!rt) return;
@@ -348,7 +352,22 @@
       fan::vec2 limit(std::max(0.f, half.x - available_area.x * 0.5f), std::max(0.f, half.y - available_area.y * 0.5f));
       offset = fan::vec2(std::clamp(offset.x, -limit.x, limit.x), std::clamp(offset.y, -limit.y, limit.y));
 
-      rt->network_frame.set_position(center + offset);
+      // Close to its own size (an area up to 12% bigger than the stream): pixel for pixel instead,
+      // on whole pixels. Stretched a few percent, or on half a pixel, every letter of a text on it went soft
+      fan::vec2 position = center + offset;
+      fan::vec2 native = fan::vec2(rt->screen_decoder.decoded_size) * 0.5f;
+      if (zoom <= 1.f && native.x > 0.f && native.y > 0.f) {
+        f32_t scale = half.x / native.x;
+        if (scale >= 0.93f && scale <= 1.12f && native.x * 2.f <= available_area.x + 1.f && native.y * 2.f <= available_area.y + 1.f) {
+          half = native;
+        }
+      }
+      fan::vec2 corner = position - half;
+      position = fan::vec2(std::round(corner.x), std::round(corner.y)) + half;
+      rt->network_frame.set_position(position);
+      // where the picture is, for the pointer over it and remote control (render_stream_area)
+      shown_position = position;
+      shown_half = half;
       if (rt->network_frame.get_image() != engine.default_texture) {
         rt->network_frame.set_size(half);
       }

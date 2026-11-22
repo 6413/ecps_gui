@@ -1073,9 +1073,9 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
           gui_ptr->render_stream_empty_hint(stream_area);
         }
         else {
-          fan::vec2 half = gui::fit_size(stream_area, rt->screen_decoder.decoded_size) *
-            gui_ptr->network_frame_helper.zoom;
-          fan::vec2 center = gui::get_window_pos() + stream_area * 0.5f + gui_ptr->network_frame_helper.offset;
+          // the place setup_network_frame gave it (pixel for pixel near its own size, on whole pixels)
+          fan::vec2 half = gui_ptr->network_frame_helper.shown_half;
+          fan::vec2 center = gui::get_window_pos() + gui_ptr->network_frame_helper.shown_position;
           gui_ptr->picture_min = center - half;
           gui_ptr->picture_max = center + half;
           gui_ptr->picture_shown = true;
