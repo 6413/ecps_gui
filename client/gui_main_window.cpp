@@ -253,7 +253,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_menu(con
       gui_ptr->selected_channel_id = channel.channel_id;
       channels_browsing = false;
     }
-    if (!mine && gui::menu_item("Leave")) {
+    if (gui::menu_item("Leave")) {
       leave_channel(channel.channel_id);
     }
   }
@@ -277,10 +277,13 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_joined_channel_v
       if (render_back_button(button)) {
         channels_browsing = true;
       }
-      if (!ecps_backend.is_current_user_host_of_channel(gui_ptr->selected_channel_id)) {
+      // your own channel too: the server keeps it for the others, and you are its host again when you come back
+      {
+        bool own = ecps_backend.is_current_user_host_of_channel(gui_ptr->selected_channel_id);
         gui::same_line();
         gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(gui::get_content_region_avail().x - button, 0.f));
-        if (icon_button("##leave_joined_channel", icon_e::leave, "Leave this channel", button, icon_style_e::danger)) {
+        if (icon_button("##leave_joined_channel", icon_e::leave,
+          own ? "Leave your channel. It stays for the others, join it again to host" : "Leave this channel", button, icon_style_e::danger)) {
           leave_channel(gui_ptr->selected_channel_id);
           channels_browsing = true;
         }
@@ -306,7 +309,6 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
       joined_seen = ecps_backend.channel_info.size();
       bool has_selection = gui_ptr->selected_channel_id.i != (uint16_t)-1;
       bool already_in_selected = has_selection && ecps_backend.is_channel_joined(gui_ptr->selected_channel_id);
-      bool is_host_of_selected = already_in_selected && ecps_backend.is_current_user_host_of_channel(gui_ptr->selected_channel_id);
       if (already_in_selected && !channels_browsing) {
         render_joined_channel_view();
         return;
@@ -314,7 +316,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
 
       // ---- the top row: the search over the width, the buttons at its right
       f32_t button = gui::get_frame_height();
-      int buttons = 2 + (has_selection && !is_host_of_selected ? 1 : 0);
+      int buttons = 2 + (has_selection ? 1 : 0);
       f32_t buttons_width = buttons * (button + gui::get_style().ItemSpacing.x);
       fan::vec2 search_at = gui::get_cursor_screen_pos();
       gui::push_item_width(std::max(avail_size.x - buttons_width, 80.f));
@@ -324,7 +326,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
       if (search_filter.empty() && !search_active) {
         gui::get_window_draw_list()->AddText(search_at + fan::vec2(gui::get_style().FramePadding.x, gui::get_style().FramePadding.y), 0xff808080u, "Search channels");
       }
-      if (has_selection && !is_host_of_selected) {
+      if (has_selection) {
         gui::same_line();
         if (already_in_selected) {
           if (icon_button("##leave_channel", icon_e::leave, "Leave the selected channel", button, icon_style_e::danger)) {

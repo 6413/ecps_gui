@@ -1,8 +1,22 @@
 #include "gui_std.h" // precompiled, first
+#if defined(_WIN32)
+#include <stdlib.h>
+#endif
 #include "app_state.h"
 #include "ecps_threads.h"
 
 int main() {
+#if defined(_WIN32)
+  // config.json, the settings, known_hosts, fonts and chats are found next to the exe. Started from the Start menu
+  // search or a shortcut, Windows can give another working folder and the app would read and write somewhere else
+  {
+    wchar_t* exe = nullptr;
+    if (_get_wpgmptr(&exe) == 0 && exe) {
+      std::error_code ec;
+      std::filesystem::current_path(std::filesystem::path(exe).parent_path(), ec);
+    }
+  }
+#endif
   // from here on everything printed can be read by another client that is allowed to
   log_capture().start();
   fan::print(std::string("ecps client v") + ecps_version);
