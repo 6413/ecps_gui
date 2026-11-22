@@ -151,6 +151,8 @@ ecps_backend_t::ecps_backend_t() {
     if (auto* channel = answered ? answered : backend.find_channel(msg->ChannelID)) {
       channel->session_id = msg->ChannelSessionID;
       channel->join_confirmed = true;
+      // you got in: the same sound the others hear for you
+      notify_sounds.request(notify_sounds_t::join);
       // the password worked, it is not asked for again
       if (!channel->password.empty()) {
         backend.remember_password(backend.channel_name_of(channel->channel_id), channel->password);

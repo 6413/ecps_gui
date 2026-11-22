@@ -612,7 +612,7 @@ private:
   static constexpr const char* releases_url = "https://api.github.com/repos/6413/ecps_gui/releases?per_page=5";
   // files the user changes, never overwritten by an update (copied only when missing)
   static bool is_user_file(const std::filesystem::path& rel) {
-    static const char* names[] = {"config.json", "known_hosts", "fan_settings.json", "imgui.ini", "fan_log.txt"};
+    static const char* names[] = {"config.json", "known_hosts", "fan_settings.json", "imgui.ini", "fan_log.txt", "ecps_log.txt", "ecps_log.prev.txt"};
     for (const char* n : names) {
       if (rel == n) {
         return true;

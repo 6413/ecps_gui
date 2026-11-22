@@ -4,7 +4,7 @@
 // Both streams are redirected into pipes at the file descriptor level (fan::print, printf, std::cout and
 // std::cerr all end up there) and each reader thread writes the bytes back to where they were going, so a
 // terminal still shows everything. A windowed Windows build has no console, then there is nowhere to
-// write back to and the pipe is the only copy.
+// write back to: then everything also goes to ecps_log.txt next to the exe (the run before is ecps_log.prev.txt).
 
 #include <algorithm>
 #include <cstdint>
@@ -45,6 +45,15 @@ struct log_capture_t {
       return;
     }
     started = true;
+#if defined(_WIN32)
+    // a windowed build (releases): no console, so what is printed goes to a file. The working folder is the exe's
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out == nullptr || out == INVALID_HANDLE_VALUE) {
+      std::remove(log_prev_path);
+      std::rename(log_path, log_prev_path);
+      file = std::fopen(log_path, "wb");
+    }
+#endif
     hook(1);
     hook(2);
   }
@@ -109,6 +118,10 @@ private:
   void push(std::uint8_t stream, const char* data, std::size_t size) {
     std::lock_guard<std::mutex> lock(mutex);
     chunks.push_back({++counter, stream, std::string(data, size)});
+    if (file) {
+      std::fwrite(data, 1, size, file);
+      std::fflush(file);
+    }
     stored += size;
     while (stored > max_bytes && chunks.size() > 1) {
       stored -= chunks.front().data.size();
@@ -172,6 +185,9 @@ private:
     }).detach();
   }
 
+  static constexpr const char* log_path = "ecps_log.txt";
+  static constexpr const char* log_prev_path = "ecps_log.prev.txt";
+  std::FILE* file = nullptr;
   std::mutex mutex;
   std::deque<chunk_t> chunks;
   int originals[2] = {-1, -1};
