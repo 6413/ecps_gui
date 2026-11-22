@@ -99,6 +99,7 @@ struct ecps_gui_t {
         preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
         encode_on_gpu = ui.value("encode_on_gpu", true);
         video_codec = std::clamp(ui.value("video_codec", 0), 0, 2);
+        sharp_text = ui.value("sharp_text", false);
         decode_on_gpu = ui.value("decode_on_gpu", true);
       }
       if (config.contains("stream") && config["stream"].is_object()) {

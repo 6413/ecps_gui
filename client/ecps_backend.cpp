@@ -63,13 +63,32 @@ static bool is_displayable(const fan::graphics::screen_decode_t::decode_data_t& 
 }
 
 void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
+  // frames in a row that gave no picture. A decoder fed frames whose reference is missing can keep going without
+  // an error and without a picture: after a few, a keyframe is asked for, the picture comes back from it
+  static int without_picture = 0;
   try {
     auto frame = rt->screen_decoder.decode(frame_data.data(), frame_data.size(), rt->network_frame);
+    // the stream changed codec: only the new codec's keyframe can start it
+    if (std::exchange(rt->screen_decoder.decoder_.codec_switched_, false)) {
+      fan::print("video: asking for a keyframe in the new codec");
+      ecps_backend.view.RequestKeyframe();
+    }
     if (frame.type == 1 && is_displayable(frame)) {
+      without_picture = 0;
       rt->latest_frame.publish(frame);
       rt->screen_decoder.recycle(frame);
       ecps_backend.view_frames_decoded.fetch_add(1, std::memory_order_relaxed);
       return;
+    }
+    if (++without_picture >= 5) {
+      without_picture = 0;
+      // said once every 5 s at most, a stream that stays broken would fill the log
+      static auto told_at = std::chrono::steady_clock::time_point {};
+      if (std::chrono::steady_clock::now() - told_at > std::chrono::seconds(5)) {
+        told_at = std::chrono::steady_clock::now();
+        fan::print("video: 5 frames gave no picture, asking for a keyframe");
+      }
+      ecps_backend.view.RequestKeyframe();
     }
   }
   catch (const std::exception& e) {

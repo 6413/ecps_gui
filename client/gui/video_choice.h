@@ -10,10 +10,13 @@
   // the codec shared with: 0 H.264, 1 HEVC, 2 AV1 (codec_config_t's order). A card that can't encode it falls back to
   // H.264 by itself. Viewers find out from the stream which one it is
   int video_codec = 0;
+  // colour at full resolution (4:4:4): sharp coloured text, for code and documents. H.264 and HEVC on an NVIDIA card
+  bool sharp_text = false;
 
   void apply_codec_choice() {
     if (auto* rt = get_render_thread()) {
       rt->screen_encoder.config_.codec = (codec_config_t::codec_type_e)std::clamp(video_codec, 0, 2);
+      rt->screen_encoder.config_.chroma_444 = sharp_text;
       {
         std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
         rt->screen_encoder.update_flags |= codec_update_e::codec;
@@ -64,6 +67,7 @@
     if (auto* rt = get_render_thread()) {
       rt->screen_encoder.config_.software_only = !encode_on_gpu;
       rt->screen_encoder.config_.codec = (codec_config_t::codec_type_e)std::clamp(video_codec, 0, 2);
+      rt->screen_encoder.config_.chroma_444 = sharp_text;
       rt->screen_decoder.decoder_.allow_hardware_ = decode_on_gpu;
       video_choice_applied = true;
     }
@@ -161,6 +165,16 @@
         }
       }
     });
+    if (video_codec == 2) {
+      gui::text_wrapped_disabled("Sharp text: not with AV1, no AV1 encoder or decoder has full-resolution colour. Pick HEVC for it");
+    }
+    else if (gui::settings_switch("Sharp text", &sharp_text,
+      "Colour at full resolution (4:4:4): coloured text and thin lines stay sharp, for code and documents. Needs "
+      "about a quarter more bitrate for the same look. Your card: NVIDIA. Viewers: a card that decodes 4:4:4 "
+      "(NVIDIA RTX 20 or newer with HEVC)")) {
+      apply_codec_choice();
+      save_ui_config();
+    }
     if (ecps_backend.is_streaming_to_any_channel()) {
       gui::text_wrapped_disabled("In use: " + rt->screen_encoder.encoder_.get_codec_name());
     }
