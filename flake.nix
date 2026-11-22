@@ -9,7 +9,7 @@
 
     # fan engine and the header-only repos its install.sh would clone
     fan = { url = "github:6413/fan/0478603e64ad13d723cacae35c59054f421b068c"; flake = false; };
-    WITCH = { url = "github:7244/WITCH/16b359dd76f25081642893f1bc2cac0c7948865a"; flake = false; };
+    WITCH = { url = "github:7244/WITCH/8a4c33804257cdb7a8fc43a0774d9180aaf386f6"; flake = false; };
     BCOL = { url = "github:7244/BCOL/48de3320c1de4e34f908b5546330e73e33953fbf"; flake = false; };
     BLL = { url = "github:7244/BLL/06ae42a7d8ec242a0fe5dd28d07bde3c4e52dd3a"; flake = false; };
     BVEC = { url = "github:7244/BVEC/79138022d089d7fb7ea16d9fb510c3b057a68f99"; flake = false; };

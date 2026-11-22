@@ -34,7 +34,7 @@
   #include <unistd.h>
 #endif
 
-#include "version.h"
+#include "version_decl.h"
 #include "log_capture.h"
 
 struct updater_t {

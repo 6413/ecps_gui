@@ -59,6 +59,6 @@ xmake f -y -c -m release --compiler="$compiler" --toolchain="$compiler" \
   --FAN_NETWORK=y --FAN_VIDEO=y --FAN_FMT=y --FAN_SHADERC=y \
   --FAN_3D=n --FAN_AUDIO=n --FAN_AUDIO_STREAM=y --FAN_WAYLAND_SCREEN=$wayland_screen --FAN_REFLECTION=n \
   --main="$ecps_src/client/ecps.cpp" \
-  --extra_main="$ecps_src/client/ecps_core.ixx,$ecps_src/client/ecps_app.ixx,$ecps_src/client/ecps_s2c.cpp,$ecps_src/client/ecps_backend.cpp,$ecps_src/client/ecps_encode.cpp,$ecps_src/client/ecps_threads.cpp,$ecps_src/client/app_state.cpp,$ecps_src/client/audio_share.cpp,$ecps_src/client/clipboard.cpp,$ecps_src/client/gui_audio.cpp,$ecps_src/client/gui_chat.cpp,$ecps_src/client/gui_main_window.cpp,$ecps_src/client/gui_session.cpp,$ecps_src/client/gui_stream_overlay.cpp,$ecps_src/client/gui_theme.cpp,$ecps_src/client/voice_chat.cpp" \
+  --extra_main="$ecps_src/client/ecps_version.cpp,$ecps_src/client/ecps_core.ixx,$ecps_src/client/ecps_app.ixx,$ecps_src/client/ecps_s2c.cpp,$ecps_src/client/ecps_backend.cpp,$ecps_src/client/ecps_encode.cpp,$ecps_src/client/ecps_threads.cpp,$ecps_src/client/app_state.cpp,$ecps_src/client/audio_share.cpp,$ecps_src/client/clipboard.cpp,$ecps_src/client/gui_audio.cpp,$ecps_src/client/gui_chat.cpp,$ecps_src/client/gui_main_window.cpp,$ecps_src/client/gui_session.cpp,$ecps_src/client/gui_stream_overlay.cpp,$ecps_src/client/gui_theme.cpp,$ecps_src/client/voice_chat.cpp" \
   --cxflags="$cflags" --ldflags="$ldflags"
 xmake -y -j"$jobs" a.exe
