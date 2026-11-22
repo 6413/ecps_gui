@@ -237,6 +237,8 @@
   std::uint32_t chat_edit_channel = (std::uint32_t)-1;
   std::string chat_edit_prefix;
   std::uint32_t chat_reply_id = 0;
+  // Reply picked in a picture's right-click menu: started by the message loop, which has the message
+  std::uint32_t chat_reply_request = 0;
   std::uint32_t chat_reply_channel = (std::uint32_t)-1;
   std::string chat_reply_name;
   std::string chat_reply_quote;
@@ -605,6 +607,8 @@
   int side_grip_dragging = -1;
   static constexpr f32_t side_hide_below = 140.f; // dragged smaller than this, the side hides on release
   static constexpr f32_t side_grip_size = 14.f;
+  // the tab of a hidden side shows only with the mouse near it, fading in and out
+  f32_t side_grip_alpha[3] = {};
 
   static const char* side_panel_name(int panel) {
     return panel == side_chat ? "Chat" : panel == side_channels ? "Channels" : "Settings";

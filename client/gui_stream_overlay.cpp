@@ -121,7 +121,7 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
 void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     std::string title;
     std::string detail;
-    // the next step as a button under the text: 1 share, 2 show the channels, 3 connect
+    // the next step as a button under the text: 2 show the channels, 3 connect
     int action = 0;
     bool others_sharing = false;
     for (const auto& channel : ecps_backend.channel_info) {
@@ -139,8 +139,8 @@ void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     }
     else if (!ecps_backend.channel_info.empty()) {
       title = "Nobody is sharing yet";
-      detail = "Share your screen, or wait for someone else";
-      action = 1;
+      // the toolbar under it has the Share button, shown while there is no picture
+      detail = "Press Share below, or wait for someone else";
     }
     else if (!ecps_backend.connected) {
       title = "Not connected";
@@ -162,12 +162,6 @@ void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
       return;
     }
     gui::dummy(fan::vec2(0, 6.f));
-    if (action == 1) {
-      f32_t width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
-      gui::set_cursor_pos_x((area.x - width) / 2);
-      stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(width, 0));
-      return;
-    }
     const char* label = action == 2 ? "Show the channels" : "Connect to a server";
     f32_t width = gui::calc_text_size(label).x + gui::get_style().FramePadding.x * 2.f;
     gui::set_cursor_pos_x((area.x - width) / 2);

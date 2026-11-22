@@ -105,6 +105,15 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
           render_chat_reply_quote(tag);
         }
         render_chat_text(tag.body, message.id, message.from);
+        if (chat_reply_request == message.id) {
+          chat_reply_request = 0;
+          chat_reply_id = message.id;
+          chat_reply_channel = (std::uint32_t)channel_id.i;
+          chat_reply_name = message.name;
+          chat_reply_quote = chat_snippet(tag.body);
+          chat_edit_id = 0;
+          chat_focus_input = true;
+        }
         if (message.edited) {
           gui::text_disabled("(edited)");
         }
@@ -119,7 +128,10 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
         fan::vec2 hover_bottom(bottom.x, std::max(bottom.y, top.y + gui::get_frame_height()));
         if (log_hovered && gui::is_mouse_hovering_rect(top - fan::vec2(0, 2.f), hover_bottom)) {
           hovered_now = message.id;
-          list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, 0x05ffffffu, 4.f);
+          // only a thin line at the left, a filled background over the whole message was too loud
+          if (!pinned) {
+            list->AddRectFilled(fan::vec2(top.x, top.y), fan::vec2(top.x + 2.f, bottom.y - 3.f), 0x30ffffffu, 1.f);
+          }
         }
         if (pinned) {
           list->AddRectFilled(fan::vec2(top.x, top.y), fan::vec2(top.x + 2.f, bottom.y - 3.f), 0xff40b0ffu, 1.f);
@@ -798,19 +810,46 @@ bool render_thread_t::ecps_gui_t::render_chat_picture(const std::string& text, s
     gui::image(picture.image, size);
     chat_add_line(text, "\n", true, gui::get_item_rect_min(), gui::get_item_rect_max());
     gui::set_cursor_screen_pos(at);
-    if (gui::invisible_button("##chat_picture" + id, size)) {
+    // a download button in the top right corner while the mouse is over the picture, and a right-click menu
+    f32_t icon_box = std::min(gui::get_frame_height(), std::min(size.x, size.y) * 0.5f);
+    fan::vec2 icon_min(at.x + size.x - icon_box - 6.f, at.y + 6.f);
+    fan::vec2 icon_max = icon_min + fan::vec2(icon_box, icon_box);
+    bool on_icon = gui::is_mouse_hovering_rect(icon_min, icon_max);
+    auto view = [&] {
       chat_viewer_path = path;
       chat_viewer_zoom = 1.f;
       chat_viewer_offset = 0;
+    };
+    if (gui::invisible_button("##chat_picture" + id, size)) {
+      if (on_icon) {
+        chat_save_copy(path);
+      }
+      else {
+        view();
+      }
+    }
+    if (gui::is_item_clicked(1)) {
+      gui::open_popup("##chat_picture_menu" + id);
     }
     if (gui::is_item_hovered()) {
-      gui::set_tooltip("Click to view " + name);
-      gui::get_window_draw_list()->AddRect(at, at + size, 0x80ffffffu, 4.f);
+      gui::set_tooltip(on_icon ? "Save a copy of " + name : "Click to view " + name + ", right-click for more");
+      auto* list = gui::get_window_draw_list();
+      list->AddRect(at, at + size, 0x80ffffffu, 4.f);
+      list->AddRectFilled(icon_min, icon_max, on_icon ? 0xe0302018u : 0xb0000000u, 6.f);
+      draw_icon(list, icon_e::download, (icon_min + icon_max) * 0.5f, icon_box * 0.6f, on_icon ? 0xffffffffu : 0xffd0d0d0u);
     }
-    if (gui::button("Save##chat_picture_save" + id)) {
-      chat_save_copy(path);
+    if (gui::begin_popup("##chat_picture_menu" + id)) {
+      if (gui::menu_item("Reply")) {
+        chat_reply_request = message_id;
+      }
+      if (gui::menu_item("View")) {
+        view();
+      }
+      if (gui::menu_item("Save a copy")) {
+        chat_save_copy(path);
+      }
+      gui::end_popup();
     }
-    gui::same_line();
     gui::text_wrapped_disabled(name + "  " + text.substr(paren + 2, text.size() - paren - 3));
     return true;
   }
@@ -1088,9 +1127,20 @@ void render_thread_t::ecps_gui_t::render_side_grip(fan::vec2 size, int side) {
       save_side_panel_layout();
     }
     // a tab on the edge with an arrow pointing in, so a hidden side is seen and it's clear it opens
+    // seen only with the mouse within reach of it (or while it is used), out of the way of the stream otherwise
+    f32_t reach = 80.f;
+    bool mouse_close = hot || (m.x > at.x - reach && m.x < at.x + size.x + reach && m.y > at.y - reach && m.y < at.y + size.y + reach);
+    f32_t& shown_alpha = side_grip_alpha[side];
+    shown_alpha += ((mouse_close ? 1.f : 0.f) - shown_alpha) * std::min(1.f, gui::get_io().DeltaTime * 12.f);
+    if (shown_alpha < 0.01f) {
+      return;
+    }
+    auto faded = [&](std::uint32_t color) {
+      return (color & 0x00ffffffu) | ((std::uint32_t)((color >> 24) * shown_alpha) << 24);
+    };
     auto* list = gui::get_window_draw_list();
-    std::uint32_t ink = hot ? 0xffffffffu : 0xb0ffffffu;
-    std::uint32_t fill = hot ? accent_alpha(accent_u32, 0x90) : 0x28ffffffu;
+    std::uint32_t ink = faded(hot ? 0xffffffffu : 0xb0ffffffu);
+    std::uint32_t fill = faded(hot ? accent_alpha(accent_u32, 0x90) : 0x28ffffffu);
     fan::vec2 c = at + size * 0.5f;
     f32_t half_short = std::max((side == 1 ? size.y : size.x) * 0.5f - 1.f, 4.f);
     fan::vec2 half = side == 1 ? fan::vec2(36.f, half_short) : fan::vec2(half_short, 36.f);
