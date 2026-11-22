@@ -120,7 +120,8 @@ int main() {
   worker_threads_active.fetch_add(1);
   fan::event::thread_create([] { run_decode_thread(); });
 
-  fan::event::task_idle([]() -> fan::event::task_t { return idle_task(); });
+  // runs until the program stops, sleeping when there is nothing queued (not an idle handle, see idle_task)
+  auto queue_task = idle_task();
 
   auto network_task = fan::event::every(1, []() -> fan::event::runv_t<bool> { return network_tick(); });
   fan::event::loop();

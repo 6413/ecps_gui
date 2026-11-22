@@ -171,13 +171,9 @@ void run_decode_thread() {
   }
 }
 
-fan::event::task_t idle_task() {
+// one pass over the gui's backend_queue() work, run on the network thread: a few tasks, or a 1 ms sleep when none
+static fan::event::task_t queue_pass(render_thread_t* rt) {
   try {
-    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
-    if (!rt || rt->should_stop.load()) {
-      co_return;
-    }
-
     constexpr size_t MAX_BATCH_SIZE = 4;
     std::vector<std::function<fan::event::task_t()>> local_tasks;
 
@@ -202,6 +198,24 @@ fan::event::task_t idle_task() {
   }
   catch (...) {
     fan::print("error");
+  }
+}
+
+// The queue's task for the whole run. It was an idle handle, run on every pass of the event loop, which kept the
+// loop from ever waiting: a whole CPU core busy all the time, taken from the game being shared. Now it sleeps 1 ms
+// when there is nothing to do, queued work still starts within a millisecond
+fan::event::task_t idle_task() {
+  while (true) {
+    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+    if (rt && rt->should_stop.load()) {
+      co_return;
+    }
+    if (!rt) {
+      co_await fan::co_sleep(1);
+    }
+    else {
+      co_await queue_pass(rt);
+    }
   }
 }
 
