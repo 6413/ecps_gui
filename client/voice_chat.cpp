@@ -1,4 +1,6 @@
 // Voice chat implementation, out of line.
+#include "gui_std.h" // precompiled, first
+#define ECPS_CORE_ONLY
 #include "app_state.h"
 
 void voice_chat_t::join(channel_id_t channel_id) {

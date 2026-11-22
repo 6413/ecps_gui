@@ -1,4 +1,6 @@
 // Audio share implementation, out of line.
+#include "gui_std.h" // precompiled, first
+#define ECPS_CORE_ONLY
 #include "app_state.h"
 
 void audio_share_t::update(bool share, bool play, f32_t volume, const capture_options_t& options) {

@@ -1,10 +1,5 @@
-// The shared client code (gui_state.h: the backend, the gui struct, audio, voice, the updater...) as one module,
-// compiled once. The sources import it (ecps_app.h) instead of parsing all those headers each, which made every
-// edit to a gui_*.cpp slow.
-//
-// What it declares stays attached to the global module (extern "C++"), the same entities a plain #include would
-// give. The system headers come first, in the global module fragment, so the client headers that include them
-// again find them done and nothing of them lands inside the module
+// The render thread and the gui (gui_state.h) as the module ecps.app, on top of ecps.core. A gui edit rebuilds this
+// and what imports it; ecps.core and the sources that import only that stay as they are
 module;
 
 #include "gui_std.h"
@@ -30,14 +25,14 @@ module;
 
 export module ecps.app;
 
-export import fan;
-export import fan.fmt;
-export import fan.graphics.video.screen;
-export import fan.graphics.stb;
+export import ecps.core;
 
 using namespace fan::graphics;
 
-// gui_state.h leaves out its imports, a module has them above
+// macros don't come through an import
+#include "ecps_macros.h"
+
+// gui_state.h leaves out core_state.h, the import above has it
 #define ECPS_APP_MODULE 1
 
 export extern "C++" {

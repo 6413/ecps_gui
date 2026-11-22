@@ -1,4 +1,6 @@
 // Shared application state implementation.
+#include "gui_std.h" // precompiled, first
+#define ECPS_CORE_ONLY
 #include "app_state.h"
 
 

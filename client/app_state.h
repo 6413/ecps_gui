@@ -1,6 +1,11 @@
 #pragma once
 
+// a source that doesn't use the gui defines ECPS_CORE_ONLY first and imports only ecps.core
+#ifdef ECPS_CORE_ONLY
+#include "ecps_core.h"
+#else
 #include "ecps_app.h"
+#endif
 
 #include <WITCH/WITCH.h>
 

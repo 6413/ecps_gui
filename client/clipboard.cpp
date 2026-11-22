@@ -1,4 +1,6 @@
 // Clipboard helpers for the chat.
+#include "gui_std.h" // precompiled, first
+#define ECPS_CORE_ONLY
 #include "app_state.h"
 
 
