@@ -11,6 +11,7 @@
     ui["hdr_brightness"] = hdr_exposure;
     ui["preview_fps"] = preview_fps;
     ui["encode_on_gpu"] = encode_on_gpu;
+    ui["video_codec"] = video_codec;
     ui["decode_on_gpu"] = decode_on_gpu;
     ui["stats_mode"] = top_bar_stats_mode;
     ui["auto_update"] = auto_update;

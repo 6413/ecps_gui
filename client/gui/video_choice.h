@@ -7,6 +7,20 @@
 
   bool encode_on_gpu = true;
   bool decode_on_gpu = true;
+  // the codec shared with: 0 H.264, 1 HEVC, 2 AV1 (codec_config_t's order). A card that can't encode it falls back to
+  // H.264 by itself. Viewers find out from the stream which one it is
+  int video_codec = 0;
+
+  void apply_codec_choice() {
+    if (auto* rt = get_render_thread()) {
+      rt->screen_encoder.config_.codec = (codec_config_t::codec_type_e)std::clamp(video_codec, 0, 2);
+      {
+        std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+        rt->screen_encoder.update_flags |= codec_update_e::codec;
+      }
+      rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
+    }
+  }
   bool video_choice_applied = false;
   std::vector<std::string> gpu_encoder_list;
   bool gpu_encoders_found = false;
@@ -49,6 +63,7 @@
     }
     if (auto* rt = get_render_thread()) {
       rt->screen_encoder.config_.software_only = !encode_on_gpu;
+      rt->screen_encoder.config_.codec = (codec_config_t::codec_type_e)std::clamp(video_codec, 0, 2);
       rt->screen_decoder.decoder_.allow_hardware_ = decode_on_gpu;
       video_choice_applied = true;
     }
@@ -110,6 +125,40 @@
       if (choice_pair("##encode_on", &encode_on_gpu, "GPU", "CPU", true, "")) {
         apply_encode_choice();
         save_ui_config();
+      }
+    });
+    // H.264 plays everywhere. HEVC and AV1 look better for the same bitrate, the viewers' cards have to decode them
+    gui::settings_row("Codec", [&] {
+      static const char* names[] = {"H.264", "HEVC", "AV1"};
+      static const char* tips[] = {
+        "Plays on every computer",
+        "Sharper than H.264 at the same bitrate. Viewers need a GPU from the last several years",
+        "The sharpest for its bitrate. Viewers need an AV1 decoder: RTX 30 or newer, RX 6000 or newer, Intel Arc. "
+        "Your card needs an AV1 encoder (RTX 40 or newer, RX 7000 or newer), else H.264 is sent",
+      };
+      f32_t width = (gui::get_content_region_avail().x - 8.f) / 3.f;
+      for (int i = 0; i < 3; ++i) {
+        if (i > 0) {
+          gui::same_line(0, 4.f);
+        }
+        bool selected = video_codec == i;
+        if (selected) {
+          gui::push_style_color(gui::col_button, gui::palette_color(gui::widget_palette.accent_surface_hover));
+          gui::push_style_color(gui::col_button_hovered, gui::palette_color(gui::widget_palette.surface_held));
+        }
+        gui::push_id(i);
+        if (gui::button(names[i], fan::vec2(width, 0)) && !selected) {
+          video_codec = i;
+          apply_codec_choice();
+          save_ui_config();
+        }
+        gui::pop_id();
+        if (gui::is_item_hovered()) {
+          gui::set_tooltip(tips[i]);
+        }
+        if (selected) {
+          gui::pop_style_color(2);
+        }
       }
     });
     if (ecps_backend.is_streaming_to_any_channel()) {
