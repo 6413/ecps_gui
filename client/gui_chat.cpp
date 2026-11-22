@@ -1054,7 +1054,7 @@ void render_thread_t::ecps_gui_t::render_side_grip(fan::vec2 size, int side) {
     if (hot) {
       gui::set_mouse_cursor(side == 1 ? gui::mouse_cursor_resize_ns : gui::mouse_cursor_resize_ew);
       if (!active) {
-        gui::set_tooltip("Drag out or click to show " + names);
+        gui::set_tooltip("Show " + names + " (click, or drag out to size it)");
       }
     }
     if (active && gui::is_mouse_dragging(0, 4.f)) {
@@ -1087,16 +1087,20 @@ void render_thread_t::ecps_gui_t::render_side_grip(fan::vec2 size, int side) {
       side_hidden[side] = false;
       save_side_panel_layout();
     }
-    // a rounded bar along the edge
+    // a tab on the edge with an arrow pointing in, so a hidden side is seen and it's clear it opens
     auto* list = gui::get_window_draw_list();
-    std::uint32_t color = hot ? accent_hover_u32 : 0x50ffffffu;
+    std::uint32_t ink = hot ? 0xffffffffu : 0xb0ffffffu;
+    std::uint32_t fill = hot ? accent_alpha(accent_u32, 0x90) : 0x28ffffffu;
     fan::vec2 c = at + size * 0.5f;
-    if (side == 1) {
-      list->AddRectFilled(fan::vec2(c.x - 40.f, c.y - 2.f), fan::vec2(c.x + 40.f, c.y + 2.f), color, 2.f);
-    }
-    else {
-      list->AddRectFilled(fan::vec2(c.x - 2.f, c.y - 40.f), fan::vec2(c.x + 2.f, c.y + 40.f), color, 2.f);
-    }
+    f32_t half_short = std::max((side == 1 ? size.y : size.x) * 0.5f - 1.f, 4.f);
+    fan::vec2 half = side == 1 ? fan::vec2(36.f, half_short) : fan::vec2(half_short, 36.f);
+    list->AddRectFilled(c - half, c + half, fill, half_short);
+    fan::vec2 dir = side == 0 ? fan::vec2(-1.f, 0.f) : side == 1 ? fan::vec2(0.f, -1.f) : fan::vec2(1.f, 0.f);
+    fan::vec2 across(-dir.y, dir.x);
+    f32_t arm = std::min(half_short * 0.75f, 4.f);
+    fan::vec2 tip = c + dir * (arm * 0.5f);
+    list->AddLine(tip, tip - dir * arm + across * arm, ink, 1.8f);
+    list->AddLine(tip, tip - dir * arm - across * arm, ink, 1.8f);
   }
 
 void render_thread_t::ecps_gui_t::render_side_panel_drop() {

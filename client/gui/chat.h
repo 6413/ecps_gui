@@ -604,7 +604,7 @@
   bool side_hidden[3] = {false, false, false};
   int side_grip_dragging = -1;
   static constexpr f32_t side_hide_below = 140.f; // dragged smaller than this, the side hides on release
-  static constexpr f32_t side_grip_size = 10.f;
+  static constexpr f32_t side_grip_size = 14.f;
 
   static const char* side_panel_name(int panel) {
     return panel == side_chat ? "Chat" : panel == side_channels ? "Channels" : "Settings";

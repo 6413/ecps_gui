@@ -121,6 +121,8 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
 void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     std::string title;
     std::string detail;
+    // the next step as a button under the text: 1 share, 2 show the channels, 3 connect
+    int action = 0;
     bool others_sharing = false;
     for (const auto& channel : ecps_backend.channel_info) {
       for (std::uint32_t session : ecps_backend.streamers_of(channel.channel_id)) {
@@ -137,11 +139,18 @@ void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     }
     else if (!ecps_backend.channel_info.empty()) {
       title = "Nobody is sharing yet";
-      detail = "Press Share to share your screen, or wait for someone else";
+      detail = "Share your screen, or wait for someone else";
+      action = 1;
+    }
+    else if (!ecps_backend.connected) {
+      title = "Not connected";
+      detail = "Connect to a server to see its channels";
+      action = 3;
     }
     else {
       title = "Not in a channel";
-      detail = "Pick or create one in the Channels tab";
+      detail = "Join or create one in the channels panel";
+      action = panel_shown(side_channels) ? 0 : 2;
     }
     fan::vec2 title_size = gui::calc_text_size(title);
     fan::vec2 detail_size = gui::calc_text_size(detail);
@@ -149,6 +158,27 @@ void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     gui::text(title);
     gui::set_cursor_pos_x((area.x - detail_size.x) / 2);
     gui::text_disabled(detail);
+    if (action == 0) {
+      return;
+    }
+    gui::dummy(fan::vec2(0, 6.f));
+    if (action == 1) {
+      f32_t width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
+      gui::set_cursor_pos_x((area.x - width) / 2);
+      stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(width, 0));
+      return;
+    }
+    const char* label = action == 2 ? "Show the channels" : "Connect to a server";
+    f32_t width = gui::calc_text_size(label).x + gui::get_style().FramePadding.x * 2.f;
+    gui::set_cursor_pos_x((area.x - width) / 2);
+    if (gui::button(label)) {
+      if (action == 2) {
+        open_side_panel(side_channels);
+      }
+      else {
+        drop_down_server.toggle_render_server_connect = true;
+      }
+    }
   }
 
 void render_thread_t::ecps_gui_t::update_debug_sample() {

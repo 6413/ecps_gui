@@ -103,6 +103,17 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
       gui::push_id((int)channel.channel_id.i);
       bool clicked = gui::invisible_button("##channel_row", fan::vec2(width, row_height));
       bool hovered = gui::is_item_hovered();
+      bool right_clicked = gui::is_item_clicked(1);
+      if (hovered && gui::is_mouse_double_clicked(0) && !joined) {
+        join_channel(channel.channel_id);
+      }
+      if (hovered && !gui::is_popup_open("##channel_menu")) {
+        gui::set_tooltip(joined ? "Click to open, right-click for more" : "Double click to join, right-click for more");
+      }
+      if (right_clicked) {
+        gui::open_popup("##channel_menu");
+      }
+      render_channel_menu(channel);
       gui::pop_id();
       if (clicked) {
         gui_ptr->selected_channel_id = channel.channel_id;
@@ -213,6 +224,51 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::leave_channel(ecps_back
     
 }
 
+void render_thread_t::ecps_gui_t::channel_list_window_t::join_channel(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+  auto* gui_ptr = &*OFFSETLESS(this, ecps_gui_t, window_handler);
+  gui_ptr->selected_channel_id = channel_id;
+  gui_ptr->backend_queue([channel_id]() -> fan::event::task_t {
+    try {
+      co_await ecps_backend.channel_join(channel_id);
+      co_await ecps_backend.request_channel_list();
+      co_await ecps_backend.request_channel_session_list(channel_id);
+    }
+    catch (...) {
+      fan::print("Failed to join channel");
+    }
+  });
+}
+
+void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_menu(const ecps_backend_t::channel_list_info_t& channel) {
+  auto* gui_ptr = &*OFFSETLESS(this, ecps_gui_t, window_handler);
+  if (!gui::begin_popup("##channel_menu")) {
+    return;
+  }
+  bool joined = ecps_backend.is_channel_joined(channel.channel_id);
+  bool mine = ecps_backend.is_current_user_host_of_channel(channel.channel_id);
+  gui::text_disabled(channel.name);
+  gui::separator();
+  if (joined) {
+    if (gui::menu_item("Open")) {
+      gui_ptr->selected_channel_id = channel.channel_id;
+      channels_browsing = false;
+    }
+    if (!mine && gui::menu_item("Leave")) {
+      leave_channel(channel.channel_id);
+    }
+  }
+  else if (gui::menu_item("Join")) {
+    join_channel(channel.channel_id);
+  }
+  if (!mine) {
+    bool auto_join_on = gui_ptr->auto_join_host == channel.name;
+    if (gui::menu_item("Join automatically", {}, auto_join_on)) {
+      gui_ptr->set_auto_join(auto_join_on ? std::string() : channel.name);
+    }
+  }
+  gui::end_popup();
+}
+
 void render_thread_t::ecps_gui_t::channel_list_window_t::render_joined_channel_view() {
   auto* gui_ptr = &*OFFSETLESS(this, ecps_gui_t, window_handler);
   auto& engine = gui_ptr->owner->engine;
@@ -276,16 +332,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
           }
         }
         else if (icon_button("##join_channel", icon_e::join, "Join the selected channel", button, icon_style_e::accent)) {
-          gui_ptr->backend_queue([channel_id = gui_ptr->selected_channel_id]() -> fan::event::task_t {
-            try {
-              co_await ecps_backend.channel_join(channel_id);
-              co_await ecps_backend.request_channel_list();
-              co_await ecps_backend.request_channel_session_list(channel_id);
-            }
-            catch (...) {
-              fan::print("Failed to join channel");
-            }
-          });
+          join_channel(gui_ptr->selected_channel_id);
         }
       }
       gui::same_line();
@@ -327,9 +374,21 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
           render_channel_row(*channel, width);
         }
         if (ecps_backend.available_channels.empty()) {
-          gui::text_wrapped_disabled(ecps_backend.channel_list_received
-            ? "No channels yet. Make one with +"
-            : "Loading the channels...");
+          if (!ecps_backend.connected) {
+            gui::text_wrapped_disabled("Not connected to a server");
+            if (gui::button("Connect to a server")) {
+              gui_ptr->drop_down_server.toggle_render_server_connect = true;
+            }
+          }
+          else if (ecps_backend.channel_list_received) {
+            gui::text_wrapped_disabled("No channels yet");
+            if (gui::button("Create a channel")) {
+              gui_ptr->new_channel_popup_requested = true;
+            }
+          }
+          else {
+            gui::text_wrapped_disabled("Loading the channels...");
+          }
         }
         else if (shown.empty()) {
           gui::text_disabled("No channel matches the search");
@@ -461,6 +520,9 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                     fan::vec2 hit_end = row_at + fan::vec2(std::max(hit_width, 0.f), row_height);
                     if (gui::is_mouse_hovering_rect(row_at, hit_end)) {
                       gui::get_window_draw_list()->AddRectFilled(row_at, hit_end, 0xff0b0706u, 6.f);
+                      if (!is_me && !gui::is_any_item_hovered() && gui::is_window_hovered()) {
+                        gui::set_tooltip("Right-click for volume, mute, watch and send a file");
+                      }
                       if (!is_me && fan::window::is_mouse_clicked(1)) {
                         gui_ptr->volume_user_session = (std::uint32_t)session.session_id.i;
                         gui_ptr->volume_user_name = session.username;
@@ -548,8 +610,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                   }
                 }
                 else {
-                  gui::text("No user data loaded.");
-                  gui::text("Select a channel to view users.");
+                  gui::text_disabled("Loading the users...");
                 }
                 if (open_user_volume) {
                   gui::open_popup("##user_volume");
@@ -600,7 +661,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
         }
         else {
           gui::spacing();
-          gui::text("Select a channel.");
+          gui::text_wrapped_disabled("Pick a channel above to see who is in it. Double click one to join it.");
         }
 
       gui::end_group();

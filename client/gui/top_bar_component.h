@@ -74,6 +74,35 @@ struct top_bar_t {
       gui::set_tooltip("Click to change your name");
     }
 
+    // the connection, before the name: a green dot when connected, amber with "Reconnecting..." when it was lost,
+    // grey with "Offline" when there is no server. Not connected, a click opens the server dialog
+    {
+      bool online = ecps_backend.connected && ecps_backend.session_id.i != 0;
+      bool has_server = !ecps_backend.ip.empty();
+      std::string label = online ? std::string() : has_server ? "Reconnecting..." : "Offline";
+      std::uint32_t color = online ? 0xff60d060u : has_server ? 0xff30b0ffu : 0xff909090u;
+      f32_t dot = 4.f;
+      f32_t font = gui::get_font_size();
+      f32_t box_width = dot * 2.f + (label.empty() ? 0.f : 6.f + gui::calc_text_size(label).x);
+      right -= 12.f + box_width;
+      gui::set_cursor_pos(fan::vec2(right, text_y));
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      bool clicked = gui::invisible_button("##connection_status", fan::vec2(box_width, font));
+      if (gui::is_item_hovered()) {
+        std::string where = ecps_backend.ip + ":" + std::to_string(ecps_backend.port);
+        gui::set_tooltip(online ? "Connected to " + where
+          : has_server ? "Lost the connection to " + where + ", trying again. Click to pick a server"
+          : "Not connected. Click to connect to a server");
+      }
+      if (clicked && !online) {
+        gui.drop_down_server.toggle_render_server_connect = true;
+      }
+      list->AddCircleFilled(at + fan::vec2(dot, font * 0.5f), dot, faded(color), 12);
+      if (!label.empty()) {
+        list->AddText(at + fan::vec2(dot * 2.f + 6.f, 0.f), faded(color), label.c_str());
+      }
+    }
+
     std::string version = std::string("v") + ecps_version;
     right -= 16.f + gui::calc_text_size(version).x;
     gui::set_cursor_pos(fan::vec2(right, text_y));

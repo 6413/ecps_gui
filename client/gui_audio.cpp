@@ -313,9 +313,23 @@ void render_thread_t::ecps_gui_t::render_user_volume_popup() {
       volume_user_value = 1.f;
       set_user_volume(volume_user_name, 1.f);
     }
-    gui::same_line(0, 8.f);
-    if (gui::button("Close")) {
-      gui::close_current_popup();
+    // what the row's buttons do, here too
+    if (ecps_backend.is_channel_joined(selected_channel_id)) {
+      gui::separator();
+      auto sharing = ecps_backend.streamers_of(selected_channel_id);
+      if (std::find(sharing.begin(), sharing.end(), volume_user_session) != sharing.end() && gui::menu_item("Watch")) {
+        set_watch(selected_channel_id, volume_user_session);
+        window_handler.main_tab = 1;
+      }
+      if (gui::menu_item("Send a file")) {
+        ecps_backend_t::Protocol_SessionID_t peer{};
+        peer.i = (decltype(peer.i))volume_user_session;
+        send_file_dialog(selected_channel_id, peer);
+      }
+      if (gui::menu_item(user_volume(volume_user_name) <= 0.f ? "Unmute" : "Mute")) {
+        toggle_user_mute(volume_user_session, volume_user_name);
+        volume_user_value = user_volume(volume_user_name);
+      }
     }
     gui::end_popup();
   }

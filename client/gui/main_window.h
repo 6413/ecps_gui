@@ -31,6 +31,11 @@
 
     void leave_channel(ecps_backend_t::Protocol_ChannelID_t channel_id);
 
+    void join_channel(ecps_backend_t::Protocol_ChannelID_t channel_id);
+
+    // a channel row's right-click menu: open, join or leave, join automatically
+    void render_channel_menu(const ecps_backend_t::channel_list_info_t& channel);
+
 
     // a joined channel: the way back to the channels, leaving, and the channel's users and tabs over all the panel
     void render_joined_channel_view();
