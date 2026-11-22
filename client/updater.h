@@ -268,6 +268,32 @@ struct updater_t {
     std::thread([this] {
     bool changed = probe_for_update();
     bool probe_failed = last_probe_failed;
+    // A Nix build: the probe read the new commits already (git's ref listing, not rate limited), so the update is
+    // offered from them. Going through check() asked GitHub's API, 60 requests an hour for everyone behind the same
+    // address: once over, the check failed, nothing was offered and "Update automatically" never started a build
+    if (changed && !windows && !build_info_path().empty()) {
+      std::string ecps = probe_ecps_commit;
+      std::string fan = probe_fan_commit;
+      std::string built_fan = build_info("fan");
+      std::string found;
+      if (is_commit(ecps) && ecps != build_info("ecps")) {
+        found += "ecps " + ecps.substr(0, 7);
+      }
+      if (is_commit(fan) && is_commit(built_fan) && fan != built_fan) {
+        found += std::string(found.empty() ? "" : ", ") + "fan " + fan.substr(0, 7);
+      }
+      std::lock_guard<std::mutex> lock(mutex);
+      state_e now_state = state.load();
+      // the commits whose build just failed are not offered again (that rebuilt them every 5 seconds), a newer push is
+      bool failed_same = now_state == state_e::build_failed && found == latest_version;
+      if (!found.empty() && !failed_same && (now_state == state_e::idle || now_state == state_e::up_to_date ||
+        now_state == state_e::failed || now_state == state_e::build_failed)) {
+        latest_version = found;
+        state = state_e::available;
+      }
+      auto_check_running = false;
+      return;
+    }
     // if GitHub could not be read at all, still run the full check so the About panel says why. The full check reads
     // the API, 60 an hour: at most once a minute, also when the network is down and every look fails
     auto at = std::chrono::steady_clock::now();
@@ -883,6 +909,8 @@ private:
       }
     std::string ecps = branch_commit("6413/ecps_gui", "main");
     std::string fan = branch_commit("6413/fan", "master");
+    probe_ecps_commit = ecps;
+    probe_fan_commit = fan;
     last_probe_failed = ecps.empty() && fan.empty();
     return (is_commit(ecps) && ecps != built_ecps) || (is_commit(fan) && is_commit(built_fan) && fan != built_fan);
     }
@@ -1014,6 +1042,9 @@ private:
   // the last full check() that a look started: it reads the rate limited API
   std::chrono::steady_clock::time_point last_full_check{};
   std::atomic<bool> auto_check_running{false};
+  // what the last probe found (auto_check's thread only)
+  std::string probe_ecps_commit;
+  std::string probe_fan_commit;
 bool last_probe_failed = false;
   std::chrono::steady_clock::time_point restart_at;
   bool notice_loaded = false;
