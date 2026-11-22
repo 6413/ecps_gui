@@ -390,6 +390,38 @@ static std::string clipboard_image_file() {
 }
 #endif
 
+#if !defined(_WIN32)
+// an image on the clipboard on Linux: Wayland's wl-paste, or xclip on X11. The window library only gives text, so
+// the programs are asked for a PNG. Empty if there is none, or neither program is installed
+static std::string clipboard_image_file() {
+  std::error_code ec;
+  auto folder = std::filesystem::temp_directory_path(ec) / "ecps";
+  std::filesystem::create_directories(folder, ec);
+  auto path = folder / ("image-" + std::to_string((long long)std::time(nullptr)) + ".png");
+  const std::string out = "\"" + path.string() + "\"";
+  const char* commands[] = {
+    "wl-paste --no-newline --type image/png",
+    "xclip -selection clipboard -t image/png -o",
+  };
+  for (const char* command : commands) {
+    // only when the clipboard really has an image: the programs say a wrong type with a failure and no output
+    std::string full = std::string(command) + " > " + out + " 2>/dev/null";
+    if (std::system(full.c_str()) != 0) {
+      continue;
+    }
+    std::ifstream in(path, std::ios::binary);
+    std::uint8_t head[8] = {};
+    in.read((char*)head, 8);
+    static const std::uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    if (in.gcount() == 8 && std::memcmp(head, signature, 8) == 0) {
+      return path.string();
+    }
+  }
+  std::filesystem::remove(path, ec);
+  return {};
+}
+#endif
+
 static void close_capture(auto& encoder) {
   if constexpr (requires { encoder.close_screen(); }) {
     encoder.close_screen();
