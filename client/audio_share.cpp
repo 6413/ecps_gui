@@ -5,7 +5,8 @@
 
 void audio_share_t::update(bool share, bool play, f32_t volume, const capture_options_t& options) {
     bool want_capture = share && ecps_backend.is_streaming_to_any_channel();
-    bool source_changed = options.device_id != capture_options.device_id || options.exclude_discord != capture_options.exclude_discord;
+    bool source_changed = options.device_id != capture_options.device_id || options.exclude_discord != capture_options.exclude_discord ||
+      options.only_pid != capture_options.only_pid;
     if (capture.is_running() && (source_changed || discord_changed(options))) {
       capture.stop();
       capture_failed = false;

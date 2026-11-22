@@ -45,12 +45,24 @@ void render_thread_t::ecps_gui_t::render_share_audio_checkbox() {
 
     auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
     bool can_exclude = fan::audio::loopback_capture_t::can_exclude_processes();
+    bool one_window = can_exclude && shared_window_pid() != 0;
+    bool default_device = stream_settings.audio_device.empty();
     bool exclude = can_exclude && settings.exclude_discord;
-    if (can_exclude && gui::settings_switch("Leave out Discord", &exclude,
+    if (one_window) {
+      gui::text_wrapped_disabled(audio_share.capture.is_running() && !audio_share.capture.get_included_pid()
+        ? "Could not record only the shared window's app, recording the device"
+        : "Only the shared window's app is heard");
+    }
+    else if (!default_device) {
+      gui::text_wrapped_disabled("Records only what plays on this device");
+    }
+    else if (can_exclude && gui::settings_switch("Leave out Discord", &exclude,
       "Every app except Discord, so calls stay private")) {
       settings.exclude_discord = exclude;
       save_audio_settings();
     }
+    // the notes below are about leaving out Discord, which only the default output does
+    exclude = exclude && default_device && !one_window;
     if (exclude && !find_sonar_gaming().empty()) {
       gui::text_wrapped_disabled("Sonar: recording Sonar - Gaming (Discord and mic stay on Chat/Mic)");
     }

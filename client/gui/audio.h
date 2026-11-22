@@ -18,10 +18,29 @@
   std::string find_sonar_gaming();
 
 
+  // the process of the window being shared, 0 for the whole screen (or on Linux, where the portal picks)
+  std::uint32_t shared_window_pid() {
+#if defined(_WIN32)
+    auto* rt = get_render_thread();
+    std::uintptr_t handle = rt ? rt->screen_encoder.mdscr.target_window.load() : 0;
+    DWORD pid = 0;
+    if (handle) {
+      GetWindowThreadProcessId((HWND)handle, &pid);
+    }
+    return pid;
+#else
+    return 0;
+#endif
+  }
+
+  // Sharing one window: only that app's sound. Else a device picked in the list is recorded as it is, and only the
+  // default output can leave out Discord (that records the apps of every device, so a picked device would not count)
   fan::audio::loopback_capture_t::options_t get_capture_options() {
     auto& settings = stream_settings.audio_devices[stream_settings.audio_device];
-    bool exclude = settings.exclude_discord && fan::audio::loopback_capture_t::can_exclude_processes();
+    bool can_process = fan::audio::loopback_capture_t::can_exclude_processes();
     std::string device_id = stream_settings.audio_device;
+    std::uint32_t only_pid = can_process ? shared_window_pid() : 0;
+    bool exclude = settings.exclude_discord && can_process && device_id.empty() && !only_pid;
     if (exclude && stream_settings.share_audio) {
       if (std::string sonar = find_sonar_gaming(); !sonar.empty()) {
         device_id = std::move(sonar);
@@ -31,6 +50,7 @@
     return {
       .device_id = device_id,
       .exclude_discord = exclude,
+      .only_pid = only_pid,
       .gain = settings.gain,
     };
   }
