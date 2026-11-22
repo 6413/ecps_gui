@@ -139,7 +139,12 @@
     fan::color shown_bg = theme_background_display();
     fan::color bg(std::pow(shown_bg.r, 2.2f), std::pow(shown_bg.g, 2.2f), std::pow(shown_bg.b, 2.2f), 1.f);
     auto set = [](gui::col_t index, fan::color c) {
-      gui::get_style().Colors[index] = ImVec4(c.r, c.g, c.b, c.a);
+      // the members one by one: the type's name isn't visible to the Linux build
+      auto& target = gui::get_style().Colors[index];
+      target.x = c.r;
+      target.y = c.g;
+      target.z = c.b;
+      target.w = c.a;
     };
     fan::color blue_dim(A.r * 0.45f, A.g * 0.23f, A.b * 0.2f, 1.f);
     fan::color blue(A.r * 0.45f, A.g * 0.38f, A.b * 0.38f, 1.f);
