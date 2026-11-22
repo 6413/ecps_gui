@@ -357,7 +357,15 @@ void render_thread_t::ecps_gui_t::push_theme() {
     color(gui::col_tab_dimmed, field_dim);
     color(gui::col_tab_dimmed_selected, blue_dim);
     color(gui::col_border, toward_white(0.28f, 0.22f + 0.78f * k));
-    color(gui::col_child_bg, toward_white(0.45f, 0.045f));
+    // the panels: a faint light veil over the backdrop while they are see-through, turning into the background's own
+    // colour (a little lighter) as Panels goes to 1. Made from the accent alone it showed grey over a black theme
+    {
+      f32_t solid = std::clamp((opacity - 0.72f) / 0.28f, 0.f, 1.f);
+      fan::color veil = toward_white(0.45f, 1.f);
+      fan::color own(std::min(bg.r * 2.5f + A.r * 0.015f, 1.f), std::min(bg.g * 2.5f + A.g * 0.015f, 1.f), std::min(bg.b * 2.5f + A.b * 0.015f, 1.f), 1.f);
+      color(gui::col_child_bg, fan::color(veil.r + (own.r - veil.r) * solid, veil.g + (own.g - veil.g) * solid,
+        veil.b + (own.b - veil.b) * solid, 0.045f + 0.955f * solid));
+    }
     color(gui::col_separator, line);
     color(gui::col_separator_hovered, blue);
     color(gui::col_separator_active, blue_bright);
