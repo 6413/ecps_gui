@@ -1,5 +1,6 @@
 // Audio implementation, out of line.
-#include "app_state.h"
+#include "gui_std.h" // precompiled, first
+#include "ecps_app.h"
 
 void render_thread_t::ecps_gui_t::render_share_audio_checkbox() {
     if (!fan::audio::loopback_capture_t::is_supported()) {

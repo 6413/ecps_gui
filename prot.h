@@ -100,15 +100,18 @@ struct ProtocolChannel {
   struct ScreenShare {
     struct ChannelFlag {
       using _t = uint8_t;
-      inline static constexpr _t InputControl = 0x01;
-      inline static constexpr _t ResetIDR = 0x01 << 1;
-      // the host lets viewers play MIDI on its machine. Own flag, so it works without a stream and without
-      // letting the viewer drive the mouse and keyboard
-      inline static constexpr _t MidiControl = 0x01 << 2;
+      // an enum, not static constexpr members: MSVC crashed (C1001) reading those back from the client module
+      enum : _t {
+        InputControl = 0x01,
+        ResetIDR = 0x01 << 1,
+        // the host lets viewers play MIDI on its machine. Own flag, so it works without a stream and without
+        // letting the viewer drive the mouse and keyboard
+        MidiControl = 0x01 << 2,
+      };
     };
     struct StreamHeadFlag {
       using _t = uint8_t;
-      inline static _t KeyFrame = 0x01;
+      enum : _t { KeyFrame = 0x01 };
     };
   };
 };
@@ -473,7 +476,7 @@ struct Protocol_C2S_t : __dme_inherit(Protocol_C2S_t){
     uint16_t Length;
     char Text[Protocol::ChatTextMax];
   );
-}Protocol_C2S;
+};
 
 #ifndef __ecps_client
   struct ecps_backend_t;
@@ -715,7 +718,7 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     uint8_t Count;
     Protocol_SessionID_t Members[16];
   );
-}Protocol_S2C;
+};
 
 #pragma pack(push, 1)
 
@@ -773,3 +776,8 @@ struct ScreenShare_StreamHeader_Head_t{
 
 #pragma pack(pop)
 #pragma pack(pop)
+
+// declared after the packing ends: in the client this file is inside struct ecps_backend_t, and members of it
+// declared while the packing is 1 make the class change its packing half way, which a module (ecps_app.ixx) rejects
+Protocol_C2S_t Protocol_C2S;
+Protocol_S2C_t Protocol_S2C;
