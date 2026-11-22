@@ -218,6 +218,9 @@ struct voice_chat_t {
     // takes the sound past full scale
     f32_t normalize(f32_t* pcm, std::int32_t samples) {
       constexpr f32_t gate = 0.004f;       // about -48 dB
+      // Only speech teaches the level: breathing, keys and room noise above the gate taught it "a very quiet
+      // speaker", the gain climbed towards its top while nobody talked, and the first words came out far too loud
+      constexpr f32_t speech = 0.016f;     // about -36 dB
       constexpr f32_t target = 0.09f;      // about -21 dB, where speech sits comfortably
       constexpr f32_t min_gain = 0.35f;
       constexpr f32_t max_gain = 8.f;      // +18 dB
@@ -231,12 +234,17 @@ struct voice_chat_t {
         peak = std::max(peak, std::abs(pcm[i]));
       }
       f32_t rms = (f32_t)std::sqrt(sum / samples);
-      if (rms > gate) {
+      if (rms > speech) {
         norm_level = norm_level <= 0.f ? rms : norm_level + (rms - norm_level) * (rms > norm_level ? 0.25f : 0.05f);
         f32_t wanted = std::clamp(target / norm_level, min_gain, max_gain);
         norm_gain += (wanted - norm_gain) * (wanted < norm_gain ? 0.2f : 0.03f);
       }
       f32_t gain = norm_gain;
+      // and no packet comes out louder than twice the target, whatever the gain has grown to: the first word after a
+      // silence can't blast before the gain has come down
+      if (rms > gate) {
+        gain = std::min(gain, target * 2.f / rms);
+      }
       if (peak * gain > 0.97f) {
         gain = 0.97f / peak;
       }
