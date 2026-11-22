@@ -5,6 +5,10 @@
 
 #include "gui_std.h"
 
+#if defined(__clang__)
+#include "ecps_system.h"
+#endif
+
 import ecps.app;
 using namespace fan::graphics;
 
