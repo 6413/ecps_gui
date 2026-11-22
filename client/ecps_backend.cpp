@@ -147,7 +147,8 @@ uint64_t dynamic_config_t::get_adaptive_bitrate() {
     return rt->ecps_gui.stream_settings.bitrate_mbps * 1000000;
   }
 
-  uint64_t bitrate = pick_by_fps(25000000, 20000000, 15000000, 12000000, 8000000);
+  // 1080p at 60 fps had 12 Mbit/s: games with foliage and shade turned into squares. A little more at each rate
+  uint64_t bitrate = pick_by_fps(30000000, 25000000, 20000000, 18000000, 12000000);
   // the table is for 1080p. More pixels need more bits, but less than in proportion: 1440p gets 1.33x, 4k 2x
   if (rt) {
     f64_t pixels = (f64_t)rt->screen_encoder.config_.width * rt->screen_encoder.config_.height;

@@ -695,6 +695,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
             rt->screen_encoder.config_.frame_rate = gui_ptr->stream_settings.framerate;
             std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
             rt->screen_encoder.update_flags |= codec_update_e::frame_rate;
+            // Automatic: the bitrate follows the framerate too, not only the resolution
+            if (gui_ptr->stream_settings.bitrate_mode == 0) {
+              rt->screen_encoder.config_.bitrate = dynamic_config_t::get_adaptive_bitrate();
+              rt->screen_encoder.update_flags |= codec_update_e::rate_control;
+            }
           }
         });
 
