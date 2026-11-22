@@ -1,4 +1,4 @@
-struct ecps_backend_t {
+inline struct ecps_backend_t {
 
 #define __ecps_client
 #include "../prot.h"

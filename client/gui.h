@@ -1,9 +1,15 @@
+#pragma once
 
 inline static fan::vec2 popup_size{ 300, 100 };
 
 struct ecps_gui_t {
 
 #define This this
+// the gui owns no engine of its own: it reaches the render thread's one through owner
+#define engine (This->owner->engine)
+
+  render_thread_t* owner;
+
 
   std::vector<std::function<fan::event::task_t()>> task_queue;
 
@@ -18,7 +24,7 @@ struct ecps_gui_t {
 
   top_bar_t<ecps_gui_t> top_bar;
 
-  ecps_gui_t() : top_bar(*this) {
+  ecps_gui_t(render_thread_t& thread) : owner(&thread), top_bar(*this) {
 
     setup_backdrop();
     // lines are smoothed by their own geometry: the textured way needs the font atlas sampled with filtering,
@@ -77,6 +83,9 @@ struct ecps_gui_t {
       if (config.contains("theme") && config["theme"].is_object()) {
         load_theme(config["theme"]);
         apply_theme();
+      }
+      if (config.contains("saved_themes")) {
+        load_saved_themes(config["saved_themes"]);
       }
       if (config.contains("ui") && config["ui"].is_object()) {
         fan::json ui = config["ui"];
