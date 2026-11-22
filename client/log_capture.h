@@ -119,7 +119,33 @@ private:
     std::lock_guard<std::mutex> lock(mutex);
     chunks.push_back({++counter, stream, std::string(data, size)});
     if (file) {
-      std::fwrite(data, 1, size, file);
+      // each line in the file starts with the time it was written ([18:46:57.123]): how long a step took (an update
+      // restart, a reconnect) can be read from it. The copy kept for other clients stays as it was printed
+      std::size_t start = 0;
+      for (std::size_t i = 0; i <= size; ++i) {
+        if (i == size || data[i] == '\n') {
+          std::size_t end = i < size ? i + 1 : i;
+          if (end > start) {
+            if (file_at_line_start) {
+              char stamp[24];
+              auto now = std::chrono::system_clock::now();
+              std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+              int ms = (int)(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
+              std::tm local {};
+#if defined(_WIN32)
+              localtime_s(&local, &seconds);
+#else
+              localtime_r(&seconds, &local);
+#endif
+              std::snprintf(stamp, sizeof(stamp), "[%02d:%02d:%02d.%03d] ", local.tm_hour, local.tm_min, local.tm_sec, ms);
+              std::fwrite(stamp, 1, std::strlen(stamp), file);
+            }
+            std::fwrite(data + start, 1, end - start, file);
+            file_at_line_start = data[end - 1] == '\n';
+          }
+          start = end;
+        }
+      }
       std::fflush(file);
     }
     stored += size;
@@ -199,6 +225,7 @@ private:
   static constexpr const char* log_path = "ecps_log.txt";
   static constexpr const char* log_prev_path = "ecps_log.prev.txt";
   std::FILE* file = nullptr;
+  bool file_at_line_start = true;
   std::mutex mutex;
   std::deque<chunk_t> chunks;
   int originals[2] = {-1, -1};

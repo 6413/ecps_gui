@@ -493,6 +493,7 @@ inline struct ecps_backend_t {
     );
 
     connected = true;
+    fan::print("connected to the server");
     last_rx = fan::event::now();
     task_tcp_read = tcp_read();
     try {

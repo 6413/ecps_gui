@@ -424,6 +424,7 @@ struct updater_t {
         out << state;
       }
     }
+    fan::print("update: starting the new version, this one closes");
     std::wstring command = L"\"" + exe.wstring() + L"\"";
     std::wstring dir = exe.parent_path().wstring();
     STARTUPINFOW si{};
@@ -754,6 +755,8 @@ private:
   void install_windows() {
     namespace fs = std::filesystem;
     std::error_code ec;
+    // each step in the log, with the time the log file puts before every line: where an update's time goes
+    fan::print("update: downloading " + latest() + " " + download_size());
     fs::path exe = exe_path();
     fs::path dir = exe.parent_path();
     fs::path work = dir / "ecps_update";
@@ -772,6 +775,7 @@ private:
       fail_install("downloading the update failed");
       return;
     }
+    fan::print("update: downloaded, unpacking");
     phase = 2;
     if (!run_hidden(system_tool(L"tar.exe"), L"-xf \"" + archive.wstring() + L"\" -C \"" + (work / "unpacked").wstring() + L"\"")) {
       fail_install("unpacking the update failed");
@@ -826,6 +830,7 @@ private:
       }
     }
     fs::remove_all(work, ec);
+    fan::print("update: installed, restarting in 1.5 s");
     std::lock_guard<std::mutex> lock(mutex);
     phase = 0;
     restart_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);

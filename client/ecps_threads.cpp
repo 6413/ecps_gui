@@ -70,6 +70,12 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
     }
 
     render_thread_instance.render([] {});
+    // the first frame drawn: from the log's times, how long the start took until the window showed
+    static bool first_drawn = false;
+    if (!first_drawn) {
+      first_drawn = true;
+      fan::print("window shown");
+    }
     notify_sounds.tick(render_thread_instance.ecps_gui.stream_settings.notify_volume);
     {
       static auto second_start = std::chrono::steady_clock::now();
