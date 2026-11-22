@@ -74,9 +74,11 @@
         std::uint32_t b = row_a[xa] + row_a[xb] + row_b[xa] + row_b[xb];
         std::uint32_t g = row_a[xa + 1] + row_a[xb + 1] + row_b[xa + 1] + row_b[xb + 1];
         std::uint32_t r = row_a[xa + 2] + row_a[xb + 2] + row_b[xa + 2] + row_b[xb + 2];
-        to[0] = fan::srgb_to_linear[r / 4];
-        to[1] = fan::srgb_to_linear[g / 4];
-        to[2] = fan::srgb_to_linear[b / 4];
+        // kept as sRGB: fan loads 4 channel pictures as sRGB textures and the GPU turns them linear when drawing.
+        // Made linear here as well, the preview came out darker than the screen
+        to[0] = (std::uint8_t)(r / 4);
+        to[1] = (std::uint8_t)(g / 4);
+        to[2] = (std::uint8_t)(b / 4);
         to[3] = 255;
       }
     }

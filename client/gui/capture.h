@@ -122,9 +122,10 @@
         for (std::size_t i = 0, count = (std::size_t)out_width * out_height; i < count; ++i) {
           const std::uint8_t* from = source + i * 4;
           std::uint8_t* to = &thumb_pixels[i * 4];
-          to[0] = fan::srgb_to_linear[from[2]];
-          to[1] = fan::srgb_to_linear[from[1]];
-          to[2] = fan::srgb_to_linear[from[0]];
+          // kept as sRGB, the texture is an sRGB one (made linear here too, the thumbnails came out too dark)
+          to[0] = from[2];
+          to[1] = from[1];
+          to[2] = from[0];
           to[3] = 255;
         }
         size = fan::vec2i(out_width, out_height);

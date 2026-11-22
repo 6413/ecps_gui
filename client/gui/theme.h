@@ -13,6 +13,8 @@
   // the stream view's area, black behind the picture
   bool stream_area_shown = false;
   fan::vec2 stream_area_min, stream_area_max;
+  // the window is cleared to black while the stream view is up (render_backdrop)
+  bool backdrop_black = false;
 
   // ---- the colours the user picks ---------------------------------------------------------------------------
   // A theme is one accent colour and a few sliders: the dark colour behind the panels, the soft lights of the

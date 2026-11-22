@@ -4,6 +4,10 @@
 
 
 void render_thread_t::ecps_gui_t::apply_backdrop_color() {
+    if (backdrop_black) {
+      owner->engine.set_clear_color(fan::color(0, 0, 0, 1));
+      return;
+    }
     fan::color shown = theme_background_display();
     owner->engine.set_clear_color(backdrop_linear ? fan::color(std::pow(shown.r, 2.2f), std::pow(shown.g, 2.2f), std::pow(shown.b, 2.2f), 1.f)
       : fan::color(shown.r, shown.g, shown.b, 1.f));
@@ -258,12 +262,13 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
         gui::image(glow_image, fan::vec2(radius * 2.f, radius * 2.f), fan::vec2(0, 0), fan::vec2(1, 1), glow.color);
       }
     };
-    // while the stream view is up the whole window is black: no blue strips around the picture or the panels.
-    // The picture is drawn under the gui and is left uncovered, and the side-panel handles are drawn later on top
-    if (stream_area_shown) {
-      gui::get_window_draw_list()->AddRectFilled(origin, origin + display, 0xff000000u);
+    // while the stream view is up the whole window is black: no blue strips around the picture or the panels. Done
+    // with the clear colour: the picture is drawn under the gui, and a black rectangle in the gui covered it too
+    if (stream_area_shown != backdrop_black) {
+      backdrop_black = stream_area_shown;
+      apply_backdrop_color();
     }
-    else {
+    if (!stream_area_shown) {
       draw_glows();
     }
     gui::set_cursor_screen_pos(origin);
