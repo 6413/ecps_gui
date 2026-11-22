@@ -357,11 +357,14 @@ void render_thread_t::ecps_gui_t::push_theme() {
     color(gui::col_tab_dimmed, field_dim);
     color(gui::col_tab_dimmed_selected, blue_dim);
     color(gui::col_border, toward_white(0.28f, 0.22f + 0.78f * k));
-    // the panels: a faint light veil over the backdrop while they are see-through, turning into the background's own
+    // the panels: a faint veil of the Background colour over the backdrop while they are see-through, turning into the background's own
     // colour (a little lighter) as Panels goes to 1. Made from the accent alone it showed grey over a black theme
     {
       f32_t solid = std::clamp((opacity - 0.72f) / 0.28f, 0.f, 1.f);
-      fan::color veil = toward_white(0.45f, 1.f);
+      // the veil is the Background colour lighter, as light as the backdrop allows (dark backdrop, dark veil). It was
+      // made from the accent, so the accent coloured the panels and the background only the hidden backdrop
+      fan::color veil_shown = theme_hsv_to_rgb(theme_hue(), theme_saturation() * 0.7f, std::min(0.45f, theme.background_brightness * 3.2f));
+      fan::color veil(std::pow(veil_shown.r, 2.2f), std::pow(veil_shown.g, 2.2f), std::pow(veil_shown.b, 2.2f), 1.f);
       fan::color own(std::min(bg.r * 2.5f + A.r * 0.015f, 1.f), std::min(bg.g * 2.5f + A.g * 0.015f, 1.f), std::min(bg.b * 2.5f + A.b * 0.015f, 1.f), 1.f);
       color(gui::col_child_bg, fan::color(veil.r + (own.r - veil.r) * solid, veil.g + (own.g - veil.g) * solid,
         veil.b + (own.b - veil.b) * solid, 0.045f + 0.955f * solid));

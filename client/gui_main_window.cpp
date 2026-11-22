@@ -1074,6 +1074,16 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
           gui_ptr->picture_min = center - half;
           gui_ptr->picture_max = center + half;
           gui_ptr->picture_shown = true;
+          // frames stopped coming for a moment: the picture stays, a note at its top says it is waiting
+          if (gui_ptr->picture_stalled) {
+            const char* note = "Connection is slow, waiting for the stream...";
+            fan::vec2 text = gui::calc_text_size(note);
+            fan::vec2 at(std::max(center.x - half.x, gui::get_window_pos().x) + 0.f, std::max(center.y - half.y, gui::get_window_pos().y) + 12.f);
+            at.x = center.x - text.x * 0.5f;
+            auto* list = gui::get_window_draw_list();
+            list->AddRectFilled(at - fan::vec2(12.f, 6.f), at + text + fan::vec2(12.f, 6.f), 0xc0000000u, (text.y + 12.f) * 0.5f);
+            list->AddText(at, 0xffd0d0d0u, note);
+          }
         }
 #if ecps_debug_prints >= 3
         static int debug_counter = 0;

@@ -199,6 +199,9 @@
   // sharer sends one at least every 100 ms, also when its screen is still). Otherwise the last frame stayed on
   std::uint64_t picture_frames_seen = 0;
   std::chrono::steady_clock::time_point picture_last_frame_at;
+  // no new frame for a moment while the stream is still on: the last picture stays, with a note over it
+  bool picture_stalled = false;
+  std::chrono::steady_clock::time_point picture_stall_idr_at;
 
   void update_stale_picture();
 

@@ -35,6 +35,99 @@
     return TRUE;
   }
 
+  // ---- the monitors, each one a choice in the picker's Screens tab --------------------------------------------
+  // A monitor's thumbnail is kept under its HMONITOR with the top bit set, so it never meets a window's HWND
+  static constexpr std::uintptr_t monitor_key_bit = (std::uintptr_t)1 << (sizeof(std::uintptr_t) * 8 - 1);
+  struct capture_monitor_t {
+    std::uintptr_t handle; // HMONITOR
+    std::string title;     // the monitor's own name (Odyssey G81SF), else "Screen N"
+    RECT rect;
+    bool primary;
+  };
+  std::vector<capture_monitor_t> capture_monitors;
+
+  static std::string utf8_of(const wchar_t* text) {
+    int length = (int)wcslen(text);
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
+    std::string out(bytes, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, length, out.data(), bytes, nullptr, nullptr);
+    return out;
+  }
+
+  // DISPLAY1 -> the name the monitor reports, as Windows' display settings show it
+  static std::unordered_map<std::wstring, std::string> monitor_names() {
+    std::unordered_map<std::wstring, std::string> names;
+    UINT32 path_count = 0, mode_count = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) != ERROR_SUCCESS) {
+      return names;
+    }
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, paths.data(), &mode_count, modes.data(), nullptr) != ERROR_SUCCESS) {
+      return names;
+    }
+    for (UINT32 i = 0; i < path_count; ++i) {
+      DISPLAYCONFIG_SOURCE_DEVICE_NAME source {};
+      source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+      source.header.size = sizeof(source);
+      source.header.adapterId = paths[i].sourceInfo.adapterId;
+      source.header.id = paths[i].sourceInfo.id;
+      DISPLAYCONFIG_TARGET_DEVICE_NAME target {};
+      target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+      target.header.size = sizeof(target);
+      target.header.adapterId = paths[i].targetInfo.adapterId;
+      target.header.id = paths[i].targetInfo.id;
+      if (DisplayConfigGetDeviceInfo(&source.header) == ERROR_SUCCESS && DisplayConfigGetDeviceInfo(&target.header) == ERROR_SUCCESS &&
+        target.monitorFriendlyDeviceName[0]) {
+        names[source.viewGdiDeviceName] = utf8_of(target.monitorFriendlyDeviceName);
+      }
+    }
+    return names;
+  }
+
+  static BOOL CALLBACK collect_capture_monitor(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
+    auto* list = (std::vector<capture_monitor_t>*)param;
+    MONITORINFOEXW info {};
+    info.cbSize = sizeof(info);
+    if (GetMonitorInfoW(monitor, &info)) {
+      // the device name for now, swapped for the monitor's own name after
+      list->push_back({(std::uintptr_t)monitor, utf8_of(info.szDevice), info.rcMonitor, (info.dwFlags & MONITORINFOF_PRIMARY) != 0});
+    }
+    return TRUE;
+  }
+
+  void refresh_capture_monitors() {
+    capture_monitors.clear();
+    EnumDisplayMonitors(nullptr, nullptr, collect_capture_monitor, (LPARAM)&capture_monitors);
+    // the main display first, the rest from left to right as they stand
+    std::sort(capture_monitors.begin(), capture_monitors.end(), [](const auto& a, const auto& b) {
+      return a.primary != b.primary ? a.primary : a.rect.left < b.rect.left;
+    });
+    auto names = monitor_names();
+    int number = 1;
+    for (auto& monitor : capture_monitors) {
+      MONITORINFOEXW info {};
+      info.cbSize = sizeof(info);
+      GetMonitorInfoW((HMONITOR)monitor.handle, &info);
+      auto found = names.find(info.szDevice);
+      monitor.title = found != names.end() ? found->second : "Screen " + std::to_string(number);
+      if (monitor.primary) {
+        monitor.title += " (main)";
+      }
+      ++number;
+    }
+  }
+
+  // the screen being shared when no window is: target_monitor, 0 the main display
+  const capture_monitor_t* shared_monitor(std::uintptr_t target_monitor) {
+    for (const auto& monitor : capture_monitors) {
+      if (target_monitor ? monitor.handle == target_monitor : monitor.primary) {
+        return &monitor;
+      }
+    }
+    return nullptr;
+  }
+
   // A small picture of a window as it looks now, for choosing what to share. They are taken here, on the gui thread,
   // a couple per frame at most, and only for what is shown
   struct capture_thumb_t {
@@ -53,7 +146,25 @@
     HWND hwnd = (HWND)handle;
     RECT rect;
     int width, height;
-    if (handle == 0) {
+    // the screen part: the main display (0) or one monitor (its key), copied from the desktop at its place
+    bool screen = handle == 0 || (handle & monitor_key_bit);
+    int source_x = 0, source_y = 0;
+    if (handle & monitor_key_bit) {
+      const capture_monitor_t* monitor = nullptr;
+      for (const auto& m : capture_monitors) {
+        if (m.handle == (handle & ~monitor_key_bit)) {
+          monitor = &m;
+        }
+      }
+      if (!monitor) {
+        return false;
+      }
+      source_x = monitor->rect.left;
+      source_y = monitor->rect.top;
+      width = monitor->rect.right - monitor->rect.left;
+      height = monitor->rect.bottom - monitor->rect.top;
+    }
+    else if (handle == 0) {
       width = GetSystemMetrics(SM_CXSCREEN);
       height = GetSystemMetrics(SM_CYSCREEN);
     }
@@ -75,8 +186,8 @@
     info.bmiHeader.biBitCount = 32;
     info.bmiHeader.biCompression = BI_RGB;
     // the screen is shrunk while it is copied, a window is shrunk after
-    int bitmap_width = handle == 0 ? std::min(width, max_width) : width;
-    int bitmap_height = handle == 0 ? std::max(1, height * bitmap_width / width) : height;
+    int bitmap_width = screen ? std::min(width, max_width) : width;
+    int bitmap_height = screen ? std::max(1, height * bitmap_width / width) : height;
     info.bmiHeader.biWidth = bitmap_width;
     info.bmiHeader.biHeight = -bitmap_height;
     void* bits = nullptr;
@@ -84,10 +195,10 @@
     bool ok = false;
     if (bitmap) {
       HGDIOBJ old = SelectObject(dc, bitmap);
-      if (handle == 0) {
+      if (screen) {
         SetStretchBltMode(dc, HALFTONE);
         SetBrushOrgEx(dc, 0, 0, nullptr);
-        ok = StretchBlt(dc, 0, 0, bitmap_width, bitmap_height, screen_dc, 0, 0, width, height, SRCCOPY) != 0;
+        ok = StretchBlt(dc, 0, 0, bitmap_width, bitmap_height, screen_dc, source_x, source_y, width, height, SRCCOPY) != 0;
       }
       else {
         ok = PrintWindow(hwnd, dc, 2) != 0;
@@ -180,7 +291,7 @@
     capture_windows.clear();
     EnumWindows(collect_capture_window, (LPARAM)&capture_windows);
     for (auto it = capture_thumbs.begin(); it != capture_thumbs.end();) {
-      bool alive = it->first == 0 || std::any_of(capture_windows.begin(), capture_windows.end(), [&](const auto& w) { return w.handle == it->first; });
+      bool alive = it->first == 0 || (it->first & monitor_key_bit) || std::any_of(capture_windows.begin(), capture_windows.end(), [&](const auto& w) { return w.handle == it->first; });
       if (!alive) {
         if (it->second.image.valid()) {
           engine.image_unload(it->second.image);
@@ -215,11 +326,17 @@
 
   // The window picker: every window as a small picture, click one to share it, like the share pickers of chat apps
   fan::vec2 capture_picker_size;
+  // 0 Screens, 1 Applications. The picker opens on the kind being shared
+  int capture_picker_tab = 0;
+  int capture_picker_open_tab = -1;
+  std::chrono::steady_clock::time_point capture_monitors_listed;
 
   void render_capture_picker(fan::graphics::screen_capture_t& capture, render_thread_t* rt) {
     if (capture_picker_requested) {
       capture_picker_requested = false;
       refresh_capture_windows();
+      refresh_capture_monitors();
+      capture_picker_open_tab = capture.target_window.load() != 0 ? 1 : 0;
       capture_picker_opened_at = std::chrono::steady_clock::now();
       // as big as fits in the window, centered, so nothing is out of view
       fan::vec2 display = gui::get_io().DisplaySize;
@@ -238,6 +355,7 @@
     auto now = std::chrono::steady_clock::now();
     if (now - capture_picker_opened_at > std::chrono::milliseconds(1500)) {
       refresh_capture_windows(); // new windows show up, closed ones go
+      refresh_capture_monitors();
       capture_picker_opened_at = now;
     }
 
@@ -245,11 +363,27 @@
     gui::same_line();
     gui::text(fan::color(0.5f, 0.5f, 0.55f, 1.f), "  click one, Esc closes");
 
+    // Screens and Applications as tabs, like the share pickers of chat apps
+    int open_tab = capture_picker_open_tab;
+    capture_picker_open_tab = -1;
+    if (gui::begin_tab_bar("##share_kinds")) {
+      if (gui::begin_tab_item("Screens", nullptr, open_tab == 0 ? gui::tab_item_flags_set_selected : 0)) {
+        capture_picker_tab = 0;
+        gui::end_tab_item();
+      }
+      if (gui::begin_tab_item("Applications", nullptr, open_tab == 1 ? gui::tab_item_flags_set_selected : 0)) {
+        capture_picker_tab = 1;
+        gui::end_tab_item();
+      }
+      gui::end_tab_bar();
+    }
+
     // the cards scroll inside a box of a fixed size, the popup itself never grows past the window
-    fan::vec2 box = capture_picker_size - fan::vec2(28.f, gui::get_frame_height() + 30.f);
+    fan::vec2 box = capture_picker_size - fan::vec2(28.f, gui::get_frame_height() * 2.f + 40.f);
     gui::push_style_color(gui::col_child_bg, fan::color(0, 0, 0, 0));
     gui::begin_child("##capture_cards", box);
     std::uintptr_t current = capture.target_window.load();
+    std::uintptr_t current_monitor = capture.target_monitor.load();
     f32_t title_height = gui::get_font_size() + 10.f;
     const fan::vec2 image_area(200.f, 112.f);
     const fan::vec2 card_size(image_area.x + 12.f, image_area.y + 12.f + title_height);
@@ -260,7 +394,8 @@
     int index = 0;
     auto* list = gui::get_window_draw_list();
 
-    auto card = [&](std::uintptr_t handle, const std::string& title) {
+    // one picture with its name; true when clicked. handle is the thumbnail's key
+    auto card = [&](std::uintptr_t handle, const std::string& title, bool selected) -> bool {
       if (index % columns != 0) {
         gui::same_line(0, spacing);
       }
@@ -270,7 +405,6 @@
       bool clicked = gui::invisible_button("##card", card_size);
       gui::pop_id();
       bool hovered = gui::is_item_hovered();
-      bool selected = handle == current;
       if (hovered) {
         gui::set_tooltip(title);
       }
@@ -282,7 +416,7 @@
         list->AddRect(at, at + card_size, accent_alpha(accent_u32, 0x90), 8.f, 0, 1.5f);
       }
 
-      auto& thumb = refresh_thumb(handle, 320, handle == 0 ? 1500 : 2500, budget);
+      auto& thumb = refresh_thumb(handle, 320, (handle & monitor_key_bit) ? 1500 : 2500, budget);
       if (thumb.loaded) {
         f32_t scale = std::min(image_area.x / thumb.size.x, image_area.y / thumb.size.y);
         fan::vec2 size = thumb.size * scale;
@@ -299,18 +433,31 @@
       gui::set_cursor_screen_pos(at);
       gui::dummy(card_size);
 
-      if (clicked) {
-        if (handle != 0) {
-          capture_window_title = title;
-        }
-        capture.target_window = handle;
-        changed = true;
-      }
+      return clicked;
     };
 
-    card(0, "Whole screen");
-    for (const auto& window : capture_windows) {
-      card(window.handle, window.title);
+    if (capture_picker_tab == 0) {
+      for (const auto& monitor : capture_monitors) {
+        bool selected = current == 0 && (current_monitor ? monitor.handle == current_monitor : monitor.primary);
+        if (card(monitor.handle | monitor_key_bit, monitor.title, selected)) {
+          capture.target_window = 0;
+          // the main display as 0: it stays the main one even if Windows changes which that is
+          capture.target_monitor = monitor.primary ? 0 : monitor.handle;
+          changed = true;
+        }
+      }
+    }
+    else {
+      for (const auto& window : capture_windows) {
+        if (card(window.handle, window.title, window.handle == current)) {
+          capture_window_title = window.title;
+          capture.target_window = window.handle;
+          changed = true;
+        }
+      }
+      if (capture_windows.empty()) {
+        gui::text_disabled("No windows to share");
+      }
     }
     gui::end_child();
     gui::pop_style_color();
@@ -333,7 +480,19 @@
     if (current == 0) {
       capture_window_title.clear();
     }
-    std::string label = current == 0 ? std::string("Whole screen") : capture_window_title;
+    // the monitors again now and then: one plugged in or out shows up in the label and the picker
+    auto now = std::chrono::steady_clock::now();
+    if (capture_monitors.empty() || now - capture_monitors_listed > std::chrono::seconds(5)) {
+      refresh_capture_monitors();
+      capture_monitors_listed = now;
+    }
+    std::string screen_label = "Whole screen";
+    if (capture_monitors.size() > 1) {
+      if (const auto* monitor = shared_monitor(capture.target_monitor.load())) {
+        screen_label = monitor->title;
+      }
+    }
+    std::string label = current == 0 ? screen_label : capture_window_title;
     gui::settings_row("Source", [&] {
       std::string shown = gui::fit_title(label, gui::get_content_region_avail().x - gui::get_style().FramePadding.x * 2.f);
       if (gui::button(shown + "##capture_source", fan::vec2(-1.f, 0.f))) {

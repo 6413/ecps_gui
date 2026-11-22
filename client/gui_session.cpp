@@ -697,15 +697,32 @@ void render_thread_t::ecps_gui_t::update_stale_picture() {
     if (decoded != picture_frames_seen) {
       picture_frames_seen = decoded;
       picture_last_frame_at = now;
+      picture_stalled = false;
       return;
     }
     if (rt->network_frame.get_image() == owner->engine.default_texture) {
+      picture_stalled = false;
       return;
     }
-    // your own share shown as a preview has no one to watch, only the time counts for it
-    bool source_gone = !watch_active && !show_own_stream;
-    if (source_gone || now - picture_last_frame_at > std::chrono::seconds(2)) {
+    // the stream still on: the person watched still shares (or you, for your own preview)
+    bool still_live = show_own_stream ? ecps_backend.is_streaming_to_any_channel() : watch_active;
+    if (still_live && !show_own_stream) {
+      auto sharing = ecps_backend.streamers_of(ecps_backend_t::Protocol_ChannelID_t((std::uint16_t)watch_channel));
+      still_live = std::find(sharing.begin(), sharing.end(), watch_source) != sharing.end();
+    }
+    auto quiet = now - picture_last_frame_at;
+    // A lag spike (here or at the sharer) keeps the last picture, frozen, instead of going black: it was cleared after
+    // 2 s before, and the stream looked like it had stopped. Only a stream that ended, or nothing for 30 s, clears it
+    if (!still_live || quiet > std::chrono::seconds(30)) {
       rt->network_frame.set_image(owner->engine.default_texture);
+      picture_stalled = false;
+      return;
+    }
+    picture_stalled = quiet > std::chrono::milliseconds(1500);
+    // what comes after a gap refers to frames that never came: a keyframe to start from, asked again every 2 s
+    if (picture_stalled && now - picture_stall_idr_at > std::chrono::seconds(2)) {
+      picture_stall_idr_at = now;
+      request_idr_reset();
     }
   }
 
