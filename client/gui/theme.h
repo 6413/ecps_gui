@@ -130,6 +130,29 @@
     accent_hover_u32 = theme_pack(fan::color(theme.accent.r + (1.f - theme.accent.r) * 0.13f, theme.accent.g + (1.f - theme.accent.g) * 0.13f,
       theme.accent.b + (1.f - theme.accent.b) * 0.13f, 1.f));
     apply_backdrop_color();
+    apply_global_colors();
+  }
+  // the tab bars of docked windows, the title bars and the menu bar are drawn outside push_theme(), with the
+  // style's own colours, so these are set there too
+  void apply_global_colors() {
+    const fan::color& A = theme.accent;
+    fan::color shown_bg = theme_background_display();
+    fan::color bg(std::pow(shown_bg.r, 2.2f), std::pow(shown_bg.g, 2.2f), std::pow(shown_bg.b, 2.2f), 1.f);
+    auto set = [](gui::col_t index, fan::color c) {
+      gui::get_style().Colors[index] = ImVec4(c.r, c.g, c.b, c.a);
+    };
+    fan::color blue_dim(A.r * 0.45f, A.g * 0.23f, A.b * 0.2f, 1.f);
+    fan::color blue(A.r * 0.45f, A.g * 0.38f, A.b * 0.38f, 1.f);
+    fan::color field_dim(bg.r * 3.f + A.r * 0.01f, bg.g * 3.f + A.g * 0.01f, bg.b * 3.f + A.b * 0.01f, std::max(theme.panel_opacity - 0.12f, 0.2f));
+    set(gui::col_tab, field_dim);
+    set(gui::col_tab_hovered, blue_dim);
+    set(gui::col_tab_selected, blue);
+    set(gui::col_tab_selected_overline, A);
+    set(gui::col_tab_dimmed, field_dim);
+    set(gui::col_tab_dimmed_selected, blue_dim);
+    set(gui::col_menu_bar_bg, fan::color(bg.r * 1.6f, bg.g * 1.6f, bg.b * 1.6f, 1.f));
+    set(gui::col_title_bg, fan::color(bg.r * 1.6f, bg.g * 1.6f, bg.b * 1.6f, 1.f));
+    set(gui::col_title_bg_active, fan::color(bg.r * 2.2f, bg.g * 2.2f, bg.b * 2.2f, 1.f));
   }
   void save_theme() {
     fan::json saved = fan::json::object();

@@ -320,8 +320,10 @@
   // under it don't show through. Drawn before the message so its lines follow as usual. Reply and pin for all,
   // edit for your own, delete for your own and, in your channel, anyone's
   void render_chat_message_buttons(ecps_backend_t::Protocol_ChannelID_t channel_id, const ecps_backend_t::chat_message_t& message,
-    const chat_tag_t& tag, bool pinned) {
-    fan::vec2 back = gui::get_cursor_screen_pos();
+    const chat_tag_t& tag, bool pinned, fan::vec2 back) {
+    // called after the message's text, so its buttons are the last items there and get the mouse where they overlap
+    // the text's own areas
+    fan::vec2 resume = gui::get_cursor_screen_pos();
     bool mine = message.from == (std::uint32_t)ecps_backend.session_id.i;
     bool can_edit = mine && (tag.kind == chat_tag_t::none || tag.kind == chat_tag_t::reply);
     bool can_delete = mine || ecps_backend.is_current_user_host_of_channel(channel_id);
@@ -379,7 +381,7 @@
       }
     }
     gui::pop_id();
-    gui::set_cursor_screen_pos(back);
+    gui::set_cursor_screen_pos(resume);
   }
 
   std::uint32_t chat_line_message = 0;
@@ -1810,9 +1812,6 @@
           chat_flash_at = std::chrono::steady_clock::now();
         }
         bool pinned = std::find_if(pins.begin(), pins.end(), [&](const chat_pin_t& p) { return p.id == message.id; }) != pins.end();
-        if (chat_hover_id == message.id) {
-          render_chat_message_buttons(channel_id, message, tag, pinned);
-        }
         fan::vec2 top = gui::get_cursor_screen_pos();
         f32_t row_right = top.x + gui::get_content_region_avail().x;
         // the text a little in from the name, so where one person's run starts is easy to see
@@ -1825,6 +1824,9 @@
           gui::text_disabled("(edited)");
         }
         gui::unindent(chat_text_indent);
+        if (chat_hover_id == message.id) {
+          render_chat_message_buttons(channel_id, message, tag, pinned, top);
+        }
         fan::vec2 bottom(row_right, gui::get_cursor_screen_pos().y);
         top.x -= 6.f;
         auto* list = gui::get_window_draw_list();
