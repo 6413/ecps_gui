@@ -113,7 +113,14 @@ struct ecps_gui_t {
         saved_stream.valid = true;
       }
     }
-    updater.collect_state = [this]() { return collect_resume_state(); };
+    // before an update restart (the old process ends at once): the window's place and size saved now, or the new
+    // version opened where it was a while ago
+    updater.collect_state = [this]() {
+      if (auto* settings = fan_settings_menu()) {
+        settings->save();
+      }
+      return collect_resume_state();
+    };
     load_resume_state();
 
     if (config.contains("camera")) {
@@ -294,6 +301,9 @@ struct ecps_gui_t {
   }
 
   void render() {
+#if defined(_WIN32)
+    updater.refocus_after_update((std::uintptr_t)engine.window.get_win32_handle());
+#endif
     update_voice_keys();
     update_panel_keys();
     update_automatically();

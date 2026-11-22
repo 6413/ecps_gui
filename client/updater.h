@@ -112,6 +112,32 @@ struct updater_t {
     return "ecps " + ecps.substr(0, 7) + (is_commit(fan) ? ", fan " + fan.substr(0, 7) : std::string());
   }
 
+  // after an update restart: the window that was in front before it (a game), and until when it is given back
+  std::uintptr_t refocus_window = 0;
+  std::chrono::steady_clock::time_point refocus_until;
+
+  // every frame, with this program's window: if the update's new window took the focus from the game, the game
+  // gets it back, once. Clicking this window later keeps it
+  void refocus_after_update(std::uintptr_t own_window) {
+#if defined(_WIN32)
+    update_notice(); // reads the marker the old version left
+    if (!refocus_window || std::chrono::steady_clock::now() > refocus_until) {
+      refocus_window = 0;
+      return;
+    }
+    HWND front = GetForegroundWindow();
+    if (front && (std::uintptr_t)front == own_window) {
+      HWND game = (HWND)refocus_window;
+      refocus_window = 0;
+      if (IsWindow(game) && game != front) {
+        SetForegroundWindow(game);
+      }
+    }
+#else
+    (void)own_window;
+#endif
+  }
+
   // text for a few seconds after the program restarted itself into an update, empty otherwise
   std::string update_notice() {
     if (!notice_loaded) {
@@ -124,7 +150,12 @@ struct updater_t {
         std::ifstream in(restarted_file);
         std::string previous;
         std::getline(in, previous);
+        // the window that was in front when the old version restarted (a game): it gets the focus back
+        std::string front;
+        std::getline(in, front);
         in.close();
+        refocus_window = (std::uintptr_t)std::strtoull(front.c_str(), nullptr, 10);
+        refocus_until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         std::filesystem::remove(restarted_file, ec);
         std::string now_running = build_short();
         notice_text = "Updated";
@@ -383,6 +414,8 @@ struct updater_t {
     {
       std::ofstream marker(restarted_file, std::ios::trunc);
       marker << "v" << ecps_version << '\n';
+      // an update restarts in the background, often during a game: the new version hands the focus back to it
+      marker << (std::uintptr_t)GetForegroundWindow() << '\n';
     }
     if (collect_state) {
       std::string state = collect_state();
@@ -395,6 +428,9 @@ struct updater_t {
     std::wstring dir = exe.parent_path().wstring();
     STARTUPINFOW si{};
     si.cb = sizeof(si);
+    // shown without being activated, where Windows lets the starter choose
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_SHOWNOACTIVATE;
     PROCESS_INFORMATION pi{};
     if (CreateProcessW(exe.wstring().c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
       CloseHandle(pi.hThread);
