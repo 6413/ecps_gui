@@ -798,6 +798,16 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_encoder_row(rend
         return names;
       }();
 
+      // the encoder in use is the one shown: the Codec choice (VIDEO) changes it too, and a saved pick from before
+      // stayed in this list while another one encoded
+      {
+        std::string in_use = rt->screen_encoder.encoder_.get_codec_name();
+        for (int i = 0; i < (int)encoder_names.size(); ++i) {
+          if (encoder_names[i] == in_use) {
+            gui_ptr->stream_settings.selected_encoder = i;
+          }
+        }
+      }
       gui::settings_row("Encoder", [&] {
         if (!gui::combo("##encoder_compact", &gui_ptr->stream_settings.selected_encoder, encoder_options.data(), encoder_options.size())) {
           return;
@@ -811,6 +821,9 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_encoder_row(rend
           codec_type = codec_config_t::AV1;
         }
         rt->screen_encoder.config_.codec = codec_type;
+        // the Codec choice in VIDEO follows, and is saved
+        gui_ptr->video_codec = (int)codec_type;
+        gui_ptr->save_ui_config();
         rt->screen_encoder.new_codec = gui_ptr->stream_settings.selected_encoder;
         rt->screen_encoder.update_flags |= codec_update_e::codec;
         rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
