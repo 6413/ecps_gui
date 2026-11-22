@@ -965,10 +965,40 @@ private:
   static std::string run_capture(const std::string& command, std::size_t limit = 1 << 16) {
     std::string output;
 #if defined(_WIN32)
-    FILE* pipe = _popen(command.c_str(), "r");
+    // Not _popen: it starts cmd.exe, and the windowed build has no console of its own, so every check opened a console
+    // window for a moment that took the focus. curl.exe runs directly with no window, its output through a pipe
+    std::string arguments = command.rfind("curl ", 0) == 0 ? command.substr(5) : command;
+    int wide_length = MultiByteToWideChar(CP_UTF8, 0, arguments.c_str(), (int)arguments.size(), nullptr, 0);
+    std::wstring wide_arguments(wide_length, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, arguments.c_str(), (int)arguments.size(), wide_arguments.data(), wide_length);
+    std::wstring line = L"\"" + system_tool(L"curl.exe") + L"\" " + wide_arguments;
+    SECURITY_ATTRIBUTES security {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE read_end = nullptr, write_end = nullptr;
+    if (!CreatePipe(&read_end, &write_end, &security, 0)) {
+      return output;
+    }
+    SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = write_end;
+    PROCESS_INFORMATION pi {};
+    BOOL started = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(write_end);
+    if (started) {
+      char buffer[512];
+      DWORD n = 0;
+      while (ReadFile(read_end, buffer, sizeof(buffer), &n, nullptr) && n > 0 && output.size() < limit) {
+        output.append(buffer, n);
+      }
+      WaitForSingleObject(pi.hProcess, 5000);
+      CloseHandle(pi.hProcess);
+      CloseHandle(pi.hThread);
+    }
+    CloseHandle(read_end);
+    return output;
 #else
     FILE* pipe = popen(command.c_str(), "r");
-#endif
     if (!pipe) {
       return output;
     }
@@ -977,12 +1007,9 @@ private:
     while ((n = std::fread(buffer, 1, sizeof(buffer), pipe)) > 0 && output.size() < limit) {
       output.append(buffer, n);
     }
-#if defined(_WIN32)
-    _pclose(pipe);
-#else
     pclose(pipe);
-#endif
     return output;
+#endif
   }
 
   // ecps_version = "0.97";
