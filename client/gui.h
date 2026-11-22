@@ -82,8 +82,9 @@ struct ecps_gui_t {
       }
       if (config.contains("theme") && config["theme"].is_object()) {
         load_theme(config["theme"]);
-        apply_theme();
       }
+      // also without a saved theme: the widgets' palette comes from it
+      apply_theme();
       if (config.contains("saved_themes")) {
         load_saved_themes(config["saved_themes"]);
       }

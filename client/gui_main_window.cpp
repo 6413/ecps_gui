@@ -8,6 +8,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
   auto& engine = gui.owner->engine;
 
       if (!p_open) return;
+      gui.handle_font_keys();
 
       auto* viewport = gui::get_main_viewport();
       fan::vec2 window_pos = fan::vec2(viewport->WorkPos.x, viewport->WorkPos.y);
@@ -132,10 +133,10 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
       }
       auto* list = gui::get_window_draw_list();
       if (is_selected || hovered) {
-        list->AddRectFilled(at, at + fan::vec2(width, row_height), is_selected ? 0xff3a170cu : 0xff1c0f09u, 6.f);
+        list->AddRectFilled(at, at + fan::vec2(width, row_height), is_selected ? gui::widget_palette.accent_surface_hover : gui::widget_palette.surface, 6.f);
       }
       if (is_selected) {
-        list->AddRectFilled(at + fan::vec2(0, 6.f), at + fan::vec2(3.f, row_height - 6.f), 0xffff7a33u, 1.5f);
+        list->AddRectFilled(at + fan::vec2(0, 6.f), at + fan::vec2(3.f, row_height - 6.f), accent_hover_u32, 1.5f);
       }
       f32_t text_y = at.y + (row_height - gui::get_font_size()) * 0.5f;
       // a red dot while someone shares, grey otherwise
@@ -192,7 +193,7 @@ bool render_thread_t::ecps_gui_t::channel_list_window_t::render_back_button(f32_
         gui::set_tooltip("Back to all the channels of the server");
       }
       auto* list = gui::get_window_draw_list();
-      list->AddRectFilled(at, at + size, hovered ? 0xff2a1a12u : 0xff1c0f09u, height * 0.3f);
+      list->AddRectFilled(at, at + size, hovered ? gui::widget_palette.surface_hover : gui::widget_palette.surface, height * 0.3f);
       std::uint32_t ink = hovered ? 0xffffffffu : 0xffc8c8c8u;
       fan::vec2 c = at + fan::vec2(10.f + chevron * 0.5f, height * 0.5f);
       list->AddLine(c + fan::vec2(chevron * 0.5f, -chevron), c + fan::vec2(-chevron * 0.5f, 0), ink, 2.f);
@@ -421,7 +422,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
           gui_ptr->save_side_panel_layout();
         }
         fan::vec2 c = at + fan::vec2(avail_size.x * 0.5f, handle * 0.5f);
-        gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), hot ? 0xffff7a33u : 0x30ffffffu, 3.f);
+        gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), hot ? accent_hover_u32 : 0x30ffffffu, 3.f);
       }
 
       render_channel_details(fan::vec2(avail_size.x, std::max(gui::get_content_region_avail().y, 60.f)));
@@ -521,7 +522,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                     f32_t hit_width = row_width - (has_buttons ? button_size + 12.f + (is_sharing ? button_size + 4.f : 0.f) : 0.f);
                     fan::vec2 hit_end = row_at + fan::vec2(std::max(hit_width, 0.f), row_height);
                     if (gui::is_mouse_hovering_rect(row_at, hit_end)) {
-                      gui::get_window_draw_list()->AddRectFilled(row_at, hit_end, 0xff0b0706u, 6.f);
+                      gui::get_window_draw_list()->AddRectFilled(row_at, hit_end, gui::widget_palette.surface, 6.f);
                       if (!is_me && !gui::is_any_item_hovered() && gui::is_window_hovered()) {
                         gui::set_tooltip("Right-click for volume, mute, watch and send a file");
                       }

@@ -241,7 +241,7 @@
       capture_picker_opened_at = now;
     }
 
-    gui::text(fan::color(0.2f, 0.45f, 1.f, 1.f), "CHOOSE WHAT TO SHARE");
+    gui::text(gui::palette_color(gui::widget_palette.accent_text), "CHOOSE WHAT TO SHARE");
     gui::same_line();
     gui::text(fan::color(0.5f, 0.5f, 0.55f, 1.f), "  click one, Esc closes");
 
@@ -274,7 +274,7 @@
       if (hovered) {
         gui::set_tooltip(title);
       }
-      list->AddRectFilled(at, at + card_size, hovered ? 0xff120b09u : 0xff070505u, 8.f);
+      list->AddRectFilled(at, at + card_size, hovered ? gui::widget_palette.surface_hover : gui::widget_palette.surface, 8.f);
       if (selected) {
         list->AddRect(at, at + card_size, accent_u32, 8.f, 0, 2.5f);
       }

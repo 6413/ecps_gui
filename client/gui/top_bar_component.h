@@ -18,7 +18,7 @@ struct top_bar_t {
     };
     // a dark strip with a thin blue line under it
     fan::vec2 top = area_pos + fan::vec2(0, y_offset > 0 ? 0 : 0);
-    list->AddRectFilled(top, top + fan::vec2(width, bar_height), faded(0xc80c0402u));
+    list->AddRectFilled(top, top + fan::vec2(width, bar_height), faded(Gui::bar_u32));
     list->AddLine(top + fan::vec2(0, bar_height), top + fan::vec2(width, bar_height), faded(Gui::accent_alpha(Gui::accent_u32, 0x70)), 1.f);
 
     f32_t row_y = (bar_height - frame_height) * 0.5f + y_offset;
@@ -47,7 +47,7 @@ struct top_bar_t {
       gui::set_tooltip(overlay
         ? "Pin the bar"
         : "Unpin: hide the bar in Stream View");
-      list->AddCircleFilled(pin_at + fan::vec2(pin_size, pin_size) * 0.5f, pin_size * 0.5f, faded(0xff1a1310u));
+      list->AddCircleFilled(pin_at + fan::vec2(pin_size, pin_size) * 0.5f, pin_size * 0.5f, faded(gui::widget_palette.surface_hover));
     }
     {
       // a push pin: round head, short body, needle. Blue while pinned
@@ -66,7 +66,7 @@ struct top_bar_t {
     std::string name = ecps_backend.get_current_username();
     right -= 14.f + gui::calc_text_size(name).x;
     gui::set_cursor_pos(fan::vec2(right, text_y));
-    gui::text(fan::color(0.35f, 0.5f, 1.f, 1.f), name);
+    gui::text(gui::palette_color(gui::widget_palette.accent_text), name);
     if (gui::is_item_clicked()) {
       gui.username_popup_requested = true;
     }
@@ -144,7 +144,7 @@ struct top_bar_t {
     const char* hint = nullptr;
     fan::color hint_color(1.f, 1.f, 1.f, 1.f);
     switch (updater.state.load()) {
-      case state_e::building: hint = "updating..."; hint_color = fan::color(0.3f, 0.6f, 1.f, 1.f); break;
+      case state_e::building: hint = "updating..."; hint_color = gui::palette_color(gui::widget_palette.accent_text); break;
       case state_e::ready: hint = "restarting..."; hint_color = fan::color(0.15f, 1.f, 0.3f, 1.f); break;
       case state_e::failed:
       case state_e::build_failed: hint = "update failed"; hint_color = fan::color(1.f, 0.25f, 0.2f, 1.f); break;

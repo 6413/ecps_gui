@@ -18,6 +18,34 @@ void render_thread_t::ecps_gui_t::apply_theme() {
     // a little lighter for what the mouse is over
     accent_hover_u32 = theme_pack(fan::color(theme.accent.r + (1.f - theme.accent.r) * 0.13f, theme.accent.g + (1.f - theme.accent.g) * 0.13f,
       theme.accent.b + (1.f - theme.accent.b) * 0.13f, 1.f));
+    // the backdrop's colour as the gui draws it (linear)
+    fan::color shown_bg = theme_background_display();
+    fan::color bg(std::pow(shown_bg.r, 2.2f), std::pow(shown_bg.g, 2.2f), std::pow(shown_bg.b, 2.2f), 1.f);
+    const fan::color& A = theme.accent;
+    f32_t k = theme.contrast;
+    auto mix = [](fan::color a, fan::color b, f32_t t) {
+      return fan::color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.f);
+    };
+    auto scaled = [](fan::color c, f32_t s) { return fan::color(c.r * s, c.g * s, c.b * s, 1.f); };
+    auto gray = [](f32_t v) { return fan::color(v, v, v, 1.f); };
+    // what fan's widgets and the hand-drawn parts here draw with: everything from the accent and the backdrop, so a
+    // theme reaches all of it. High contrast: darker surfaces, white text
+    auto& p = gui::widget_palette;
+    p.accent = accent_u32;
+    p.accent_hover = accent_hover_u32;
+    p.accent_text = theme_pack(mix(mix(A, gray(1.f), 0.4f), A, k));
+    p.text = theme_pack(mix(gray(0.784f), gray(1.f), k));
+    p.text_hot = 0xffffffffu;
+    p.label = theme_pack(mix(fan::color(0.6f, 0.6f, 0.66f, 1.f), gray(0.9f), k));
+    fan::color surface = mix(fan::color(bg.r * 3.f + A.r * 0.03f, bg.g * 3.f + A.g * 0.03f, bg.b * 3.f + A.b * 0.03f, 1.f), gray(0.f), k);
+    p.surface = theme_pack(surface);
+    p.surface_hover = theme_pack(mix(scaled(A, 0.22f), scaled(A, 0.32f), k));
+    p.surface_held = theme_pack(scaled(A, 0.38f));
+    p.accent_surface = theme_pack(mix(scaled(A, 0.16f), scaled(A, 0.22f), k));
+    p.accent_surface_hover = theme_pack(mix(scaled(A, 0.29f), scaled(A, 0.4f), k));
+    p.track = theme_pack(mix(gray(0.075f), gray(0.2f), k));
+    p.track_hover = theme_pack(mix(gray(0.13f), gray(0.3f), k));
+    bar_u32 = (theme_pack(mix(scaled(bg, 0.6f), gray(0.f), k)) & 0x00ffffffu) | (k > 0.5f ? 0xff000000u : 0xc8000000u);
     apply_backdrop_color();
     apply_global_colors();
   }
@@ -34,8 +62,9 @@ void render_thread_t::ecps_gui_t::apply_global_colors() {
       target.z = c.b;
       target.w = c.a;
     };
-    fan::color blue_dim(A.r * 0.45f, A.g * 0.23f, A.b * 0.2f, 1.f);
-    fan::color blue(A.r * 0.45f, A.g * 0.38f, A.b * 0.38f, 1.f);
+    // the accent made darker as a whole: scaling its channels by different amounts turned other hues muddy
+    fan::color blue_dim(A.r * 0.2f, A.g * 0.2f, A.b * 0.2f, 1.f);
+    fan::color blue(A.r * 0.38f, A.g * 0.38f, A.b * 0.38f, 1.f);
     fan::color field_dim(bg.r * 3.f + A.r * 0.01f, bg.g * 3.f + A.g * 0.01f, bg.b * 3.f + A.b * 0.01f, std::max(theme.panel_opacity - 0.12f, 0.2f));
     set(gui::col_tab, field_dim);
     set(gui::col_tab_hovered, blue_dim);
@@ -63,6 +92,7 @@ void render_thread_t::ecps_gui_t::save_theme() {
     saved["background"] = background;
     saved["panel_opacity"] = theme.panel_opacity;
     saved["glow"] = theme.glow;
+    saved["contrast"] = theme.contrast;
     write_to_config("theme", saved);
   }
 
@@ -108,6 +138,7 @@ void render_thread_t::ecps_gui_t::load_theme(const fan::json& saved) {
     theme.background_brightness = std::clamp((f32_t)saved.value("background_brightness", (double)theme.background_brightness), 0.02f, 0.4f);
     theme.panel_opacity = std::clamp((f32_t)saved.value("panel_opacity", (double)theme.panel_opacity), 0.3f, 1.f);
     theme.glow = std::clamp((f32_t)saved.value("glow", (double)theme.glow), 0.f, 1.5f);
+    theme.contrast = std::clamp((f32_t)saved.value("contrast", (double)theme.contrast), 0.f, 1.f);
   }
 
 void render_thread_t::ecps_gui_t::render_theme_tab() {
@@ -191,6 +222,9 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
     });
     gui::settings_row("Glow", [&] {
       changed |= gui::slider("##theme_glow", &theme.glow, 0.f, 1.5f, gui::slider_flags_always_clamp);
+    });
+    gui::settings_row("Contrast", [&] {
+      changed |= gui::slider("##theme_contrast", &theme.contrast, 0.f, 1.f, gui::slider_flags_always_clamp);
     });
 
     if (changed) {
@@ -297,20 +331,22 @@ void render_thread_t::ecps_gui_t::push_theme() {
     fan::color field(bg.r * 3.f + A.r * 0.01f, bg.g * 3.f + A.g * 0.01f, bg.b * 3.f + A.b * 0.01f, opacity);
     fan::color field_hover(field.r * 2.5f, field.g * 2.5f, field.b * 2.5f, std::min(opacity + 0.08f, 1.f));
     fan::color field_dim(field.r, field.g, field.b, std::max(opacity - 0.12f, 0.2f));
-    fan::color blue_dim(A.r * 0.45f, A.g * 0.23f, A.b * 0.2f, 1.f);
-    fan::color blue(A.r * 0.45f, A.g * 0.38f, A.b * 0.38f, 1.f);
+    // the accent made darker as a whole (each channel alike, so every hue keeps its colour)
+    fan::color blue_dim(A.r * 0.2f, A.g * 0.2f, A.b * 0.2f, 1.f);
+    fan::color blue(A.r * 0.38f, A.g * 0.38f, A.b * 0.38f, 1.f);
     fan::color blue_bright = A;
+    f32_t k = theme.contrast;
     fan::color line(bg.r * 3.f + 0.02f, bg.g * 3.f + 0.02f, bg.b * 3.f + 0.02f, 1.f);
 
     color(gui::col_frame_bg, field);
     color(gui::col_frame_bg_hovered, field_hover);
     color(gui::col_frame_bg_active, blue_dim);
-    color(gui::col_button, fan::color(A.r * 0.25f, A.g * 0.1f, A.b * 0.08f, std::min(opacity + 0.03f, 1.f)));
+    color(gui::col_button, fan::color(A.r * 0.1f, A.g * 0.1f, A.b * 0.1f, std::min(opacity + 0.03f, 1.f)));
     color(gui::col_button_hovered, blue_dim);
     color(gui::col_button_active, blue);
     color(gui::col_header, blue_dim);
     color(gui::col_header_hovered, blue);
-    color(gui::col_header_active, fan::color(A.r * 0.8f, A.g * 0.51f, A.b * 0.5f, 1.f));
+    color(gui::col_header_active, fan::color(A.r * 0.5f, A.g * 0.5f, A.b * 0.5f, 1.f));
     color(gui::col_check_mark, blue_bright);
     color(gui::col_slider_grab, blue_bright);
     color(gui::col_slider_grab_active, toward_white(0.15f, 1.f));
@@ -320,7 +356,7 @@ void render_thread_t::ecps_gui_t::push_theme() {
     color(gui::col_tab_selected_overline, blue_bright);
     color(gui::col_tab_dimmed, field_dim);
     color(gui::col_tab_dimmed_selected, blue_dim);
-    color(gui::col_border, toward_white(0.28f, 0.22f));
+    color(gui::col_border, toward_white(0.28f, 0.22f + 0.78f * k));
     color(gui::col_child_bg, toward_white(0.45f, 0.045f));
     color(gui::col_separator, line);
     color(gui::col_separator_hovered, blue);
@@ -339,6 +375,21 @@ void render_thread_t::ecps_gui_t::push_theme() {
     color(gui::col_title_bg_active, fan::color(bg.r * 2.2f, bg.g * 2.2f, bg.b * 2.2f, 1.f));
     color(gui::col_text_selected_bg, fan::color(A.r, A.g, A.b, 0.35f));
     color(gui::col_resize_grip, fan::color(0.f, 0.f, 0.f, 0.f));
+    // the rest of ImGui's own colours that default to blue: links, keyboard focus, drop targets, graphs
+    color(gui::col_text_link, toward_white(0.4f, 1.f));
+    color(gui::col_nav_cursor, blue_bright);
+    color(gui::col_drag_drop_target, blue_bright);
+    color(gui::col_docking_preview, fan::color(A.r, A.g, A.b, 0.5f));
+    color(gui::col_resize_grip_hovered, blue);
+    color(gui::col_resize_grip_active, blue_bright);
+    color(gui::col_plot_lines, toward_white(0.3f, 1.f));
+    color(gui::col_plot_histogram, blue_bright);
+    color(gui::col_tab_dimmed_selected_overline, blue_dim);
+    // high contrast: white text, the grey of disabled text much lighter
+    if (k > 0.f) {
+      color(gui::col_text, fan::color(1.f, 1.f, 1.f, 1.f));
+      color(gui::col_text_disabled, fan::color(0.45f + 0.3f * k, 0.45f + 0.3f * k, 0.45f + 0.3f * k, 1.f));
+    }
 
     var(gui::style_var_frame_rounding, 5.f);
     var(gui::style_var_child_rounding, 8.f);

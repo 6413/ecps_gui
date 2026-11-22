@@ -78,8 +78,8 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
           // a short bar marks where a new message begins, so a run of lines from one person reads as one message
           fan::vec2 group_at = gui::get_cursor_screen_pos();
           gui::get_window_draw_list()->AddRectFilled(group_at + fan::vec2(-4.f, 2.f),
-            group_at + fan::vec2(-2.f, 2.f + gui::get_font_size()), mine ? accent_u32 : 0xffffa070u, 1.f);
-          gui::text(mine ? fan::color(0.55f, 0.8f, 1.f, 1.f) : fan::color(0.95f, 0.8f, 0.45f, 1.f), message.name);
+            group_at + fan::vec2(-2.f, 2.f + gui::get_font_size()), mine ? accent_u32 : 0xff73ccf2u, 1.f);
+          gui::text(mine ? gui::palette_color(gui::widget_palette.accent_text) : fan::color(0.95f, 0.8f, 0.45f, 1.f), message.name);
           fan::vec2 name_min = gui::get_item_rect_min();
           std::string time = chat_time_label(message.time);
           // time sits at the right edge of the same line as the name
@@ -650,7 +650,7 @@ void render_thread_t::ecps_gui_t::chat_draw_link_line(const std::string& line, c
       draw_plain(plain_start, at);
       std::string url = line.substr(at, end - at);
       gui::push_id(line_id + std::to_string(part++));
-      gui::text(fan::color(0.3f, 0.6f, 1.f, 1.f), url);
+      gui::text(gui::palette_color(gui::widget_palette.accent_text), url);
       fan::vec2 lo = gui::get_item_rect_min();
       fan::vec2 hi = gui::get_item_rect_max();
       gui::get_window_draw_list()->AddLine(fan::vec2(lo.x, hi.y - 1.f), fan::vec2(hi.x, hi.y - 1.f), accent_hover_u32, 1.f);
@@ -835,7 +835,7 @@ bool render_thread_t::ecps_gui_t::render_chat_picture(const std::string& text, s
       gui::set_tooltip(on_icon ? "Save a copy of " + name : "Click to view " + name + ", right-click for more");
       auto* list = gui::get_window_draw_list();
       list->AddRect(at, at + size, 0x80ffffffu, 4.f);
-      list->AddRectFilled(icon_min, icon_max, on_icon ? 0xe0302018u : 0xb0000000u, 6.f);
+      list->AddRectFilled(icon_min, icon_max, on_icon ? ((gui::widget_palette.surface_hover & 0x00ffffffu) | 0xe0000000u) : 0xb0000000u, 6.f);
       draw_icon(list, icon_e::download, (icon_min + icon_max) * 0.5f, icon_box * 0.6f, on_icon ? 0xffffffffu : 0xffd0d0d0u);
     }
     if (gui::begin_popup("##chat_picture_menu" + id)) {
@@ -959,7 +959,7 @@ void render_thread_t::ecps_gui_t::render_chat_pending_files() {
         size = fan::vec2(std::clamp(gui::calc_text_size(name).x + 20.f, height, 2.f * height), height);
         gui::dummy(size);
         auto* list = gui::get_window_draw_list();
-        list->AddRectFilled(at, at + size, 0xff1a1310u, 6.f);
+        list->AddRectFilled(at, at + size, gui::widget_palette.surface, 6.f);
         gui::push_clip_rect(at, at + size, true);
         list->AddText(at + fan::vec2(10.f, size.y * 0.5f - gui::get_font_size() * 0.5f), 0xffd0d0d0u, name.c_str());
         gui::pop_clip_rect();

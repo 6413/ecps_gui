@@ -28,6 +28,7 @@
     f32_t background_brightness = 0.14f; // how light the backdrop is
     f32_t panel_opacity = 0.72f;         // how see-through the panels and fields are
     f32_t glow = 1.f;                    // how strong the soft lights in the backdrop are
+    f32_t contrast = 0.f;                // 0 normal, 1 high contrast: white text, solid panels, clear borders
   };
   theme_t theme;
   // themes the user saved, alongside the built-in presets; kept in config.json under saved_themes
@@ -50,6 +51,7 @@
       j["background_brightness"] = value.background_brightness;
       j["panel_opacity"] = value.panel_opacity;
       j["glow"] = value.glow;
+      j["contrast"] = value.contrast;
       return j;
     }
     static saved_theme_t from_json(const fan::json& j) {
@@ -66,6 +68,7 @@
       out.value.background_brightness = std::clamp((f32_t)j.value("background_brightness", 0.14), 0.02f, 0.4f);
       out.value.panel_opacity = std::clamp((f32_t)j.value("panel_opacity", 0.72), 0.3f, 1.f);
       out.value.glow = std::clamp((f32_t)j.value("glow", 1.0), 0.f, 1.5f);
+      out.value.contrast = std::clamp((f32_t)j.value("contrast", 0.0), 0.f, 1.f);
       return out;
     }
   };
@@ -82,7 +85,7 @@
     // colours as they look on screen, taken into the gui's space
     auto lin = [](f32_t r, f32_t g, f32_t b) { return fan::color(std::pow(r, 2.2f), std::pow(g, 2.2f), std::pow(b, 2.2f), 1.f); };
     // a preset's backdrop has the accent's hue, as many of the colours did before they were picked separately
-    auto make = [](fan::color accent, f32_t brightness, f32_t tint, f32_t opacity, f32_t glow) {
+    auto make = [](fan::color accent, f32_t brightness, f32_t tint, f32_t opacity, f32_t glow, f32_t contrast = 0.f) {
       f32_t h, s, v;
       theme_rgb_to_hsv(std::pow(accent.r, 1.f / 2.2f), std::pow(accent.g, 1.f / 2.2f), std::pow(accent.b, 1.f / 2.2f), h, s, v);
       fan::color shown = theme_hsv_to_rgb(h, tint, 1.f);
@@ -92,6 +95,7 @@
       t.background_brightness = brightness;
       t.panel_opacity = opacity;
       t.glow = glow;
+      t.contrast = contrast;
       return t;
     };
     static const std::vector<theme_preset_t> list = {
@@ -101,6 +105,10 @@
       {"Crimson", make(lin(1.f, 0.38f, 0.42f), 0.14f, 0.60f, 0.72f, 1.f)},
       {"Amber", make(lin(1.f, 0.72f, 0.28f), 0.13f, 0.55f, 0.72f, 1.f)},
       {"Graphite", make(lin(0.75f, 0.78f, 0.85f), 0.09f, 0.12f, 0.80f, 0.5f)},
+      // near black, no colour and no lights, solid panels
+      {"Dark", make(lin(0.62f, 0.66f, 0.74f), 0.03f, 0.f, 1.f, 0.f)},
+      // black, yellow and white: everything solid and outlined, for reading it easily
+      {"High contrast", make(lin(1.f, 0.86f, 0.f), 0.02f, 0.f, 1.f, 0.f, 1.f)},
     };
     return list;
   }
@@ -185,6 +193,50 @@
     return 0xff000000u | (byte(c.b) << 16) | (byte(c.g) << 8) | byte(c.r);
   }
 
+  // ---- Ctrl + and Ctrl - make the text bigger and smaller, Ctrl 0 back to normal -------------------------------
+  // Saved as fan's Text size (Graphics settings), the same value its slider changes
+  int font_keys_held = 0;
+  void handle_font_keys() {
+    auto& window = engine.window;
+    bool ctrl = window.is_key_down(fan::key_left_control) || window.is_key_down(fan::key_right_control);
+    int keys = 0;
+    if (ctrl) {
+#if defined(_WIN32)
+      // the layout's own + and - keys (a Finnish + is where a US - is), and the keypad's
+      auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+      keys |= (down(VK_OEM_PLUS) || down(VK_ADD)) ? 1 : 0;
+      keys |= (down(VK_OEM_MINUS) || down(VK_SUBTRACT)) ? 2 : 0;
+      keys |= (down('0') || down(VK_NUMPAD0)) ? 4 : 0;
+#else
+      keys |= (window.is_key_down(fan::key_plus) || window.is_key_down(fan::key_numpad_add)) ? 1 : 0;
+      keys |= (window.is_key_down(fan::key_minus) || window.is_key_down(fan::key_numpad_subtract)) ? 2 : 0;
+      keys |= (window.is_key_down(fan::key_0) || window.is_key_down(fan::key_numpad_0)) ? 4 : 0;
+#endif
+    }
+    int pressed = keys & ~font_keys_held;
+    font_keys_held = keys;
+    if (!pressed) {
+      return;
+    }
+    f32_t scale = gui::get_font_scale();
+    if (pressed & 1) {
+      scale += 0.1f;
+    }
+    if (pressed & 2) {
+      scale -= 0.1f;
+    }
+    if (pressed & 4) {
+      scale = 1.f;
+    }
+    // the range of the settings slider
+    scale = std::clamp(std::round(scale * 10.f) / 10.f, 0.75f, 2.f);
+    gui::set_font_scale(scale);
+    if (auto* settings = fan_settings_menu()) {
+      settings->config.interface_.font_scale = scale;
+      settings->mark_dirty();
+    }
+  }
+
   // the Theme tab of the settings panel: a few ready-made themes, and the accent and four sliders to make one
   void render_theme_tab();
 
@@ -223,6 +275,8 @@
   // the accent for what is drawn by hand: a clear blue until the theme says otherwise (apply_theme)
   inline static std::uint32_t accent_u32 = 0xffff5919u;
   inline static std::uint32_t accent_hover_u32 = 0xffff7a33u;
+  // the strip behind the top bar, from the backdrop's colour
+  inline static std::uint32_t bar_u32 = 0xc80c0402u;
   // the accent for the places that draw with a fixed number: the same colour with another alpha, or darker
   static std::uint32_t accent_alpha(std::uint32_t color, std::uint32_t alpha) {
     return (alpha << 24) | (color & 0x00ffffffu);
@@ -245,7 +299,7 @@
     gui::pop_id();
     bool hovered = gui::is_item_hovered();
     auto* list = gui::get_window_draw_list();
-    list->AddRectFilled(at, at + fan::vec2(width, height), hovered ? 0xff0e0a09u : 0xff070505u, 5.f);
+    list->AddRectFilled(at, at + fan::vec2(width, height), hovered ? gui::widget_palette.surface_hover : gui::widget_palette.surface, 5.f);
     f32_t size = gui::get_font_size() * 0.3f;
     fan::vec2 center = at + fan::vec2(16.f, height * 0.5f);
     if (*open) {
@@ -256,6 +310,6 @@
       list->AddTriangleFilled(center + fan::vec2(-size * 0.55f, -size), center + fan::vec2(-size * 0.55f, size),
         center + fan::vec2(size * 0.75f, 0), accent_u32);
     }
-    list->AddText(at + fan::vec2(32.f, (height - gui::get_font_size()) * 0.5f), hovered ? 0xffffffffu : 0xffd8d8d8u, title);
+    list->AddText(at + fan::vec2(32.f, (height - gui::get_font_size()) * 0.5f), hovered ? gui::widget_palette.text_hot : gui::widget_palette.text, title);
     return *open;
   }
