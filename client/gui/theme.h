@@ -335,12 +335,15 @@
       draw_glows();
     }
     else {
-      // around the picture only: above, below, left and right of it
+      // around the picture only: above, below, left and right of it. On whole pixels, otherwise the bands meet
+      // in a seam a pixel wide where the dark clear colour shows through
+      fan::vec2 pmin(std::floor(picture_min.x), std::floor(picture_min.y));
+      fan::vec2 pmax(std::ceil(picture_max.x), std::ceil(picture_max.y));
       fan::vec2 bands[4][2] = {
-        {origin, fan::vec2(origin.x + display.x, picture_min.y)},
-        {fan::vec2(origin.x, picture_max.y), origin + display},
-        {fan::vec2(origin.x, picture_min.y), fan::vec2(picture_min.x, picture_max.y)},
-        {fan::vec2(picture_max.x, picture_min.y), fan::vec2(origin.x + display.x, picture_max.y)},
+        {origin, fan::vec2(origin.x + display.x, pmin.y)},
+        {fan::vec2(origin.x, pmax.y), origin + display},
+        {fan::vec2(origin.x, pmin.y), fan::vec2(pmin.x, pmax.y)},
+        {fan::vec2(pmax.x, pmin.y), fan::vec2(origin.x + display.x, pmax.y)},
       };
       for (auto& band : bands) {
         if (band[1].x - band[0].x < 1.f || band[1].y - band[0].y < 1.f) {
@@ -361,8 +364,8 @@
         list->AddRectFilled(a, b, 0xff000000u);
       }
       else {
-        fan::vec2 p0(std::clamp(picture_min.x, a.x, b.x), std::clamp(picture_min.y, a.y, b.y));
-        fan::vec2 p1(std::clamp(picture_max.x, a.x, b.x), std::clamp(picture_max.y, a.y, b.y));
+        fan::vec2 p0(std::clamp(std::floor(picture_min.x), a.x, b.x), std::clamp(std::floor(picture_min.y), a.y, b.y));
+        fan::vec2 p1(std::clamp(std::ceil(picture_max.x), a.x, b.x), std::clamp(std::ceil(picture_max.y), a.y, b.y));
         list->AddRectFilled(a, fan::vec2(b.x, p0.y), 0xff000000u);
         list->AddRectFilled(fan::vec2(a.x, p1.y), b, 0xff000000u);
         list->AddRectFilled(fan::vec2(a.x, p0.y), fan::vec2(p0.x, p1.y), 0xff000000u);
