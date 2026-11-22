@@ -512,6 +512,14 @@
   // the accent for what is drawn by hand: a clear blue until the theme says otherwise (apply_theme)
   inline static std::uint32_t accent_u32 = 0xffff5919u;
   inline static std::uint32_t accent_hover_u32 = 0xffff7a33u;
+  // the accent for the places that draw with a fixed number: the same colour with another alpha, or darker
+  static std::uint32_t accent_alpha(std::uint32_t color, std::uint32_t alpha) {
+    return (alpha << 24) | (color & 0x00ffffffu);
+  }
+  static std::uint32_t accent_scaled(f32_t scale, std::uint32_t alpha = 0xff) {
+    auto part = [&](int shift) { return (std::uint32_t)std::clamp((int)std::lround(((accent_u32 >> shift) & 0xff) * scale), 0, 255); };
+    return (alpha << 24) | (part(16) << 16) | (part(8) << 8) | part(0);
+  }
 
   // a part of the panel that folds away: an arrow and its name on a darker strip
   static bool settings_fold(const char* title, bool* open) {

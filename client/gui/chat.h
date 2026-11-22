@@ -337,8 +337,8 @@
     // inside the message's own rows, so the mouse stays over the message while it reaches for a button
     fan::vec2 at(right - width - 2.f, back.y - 1.f);
     auto* list = gui::get_window_draw_list();
-    list->AddRectFilled(at, at + fan::vec2(width, size + pad * 2.f), 0xf0150d08u, 8.f);
-    list->AddRect(at, at + fan::vec2(width, size + pad * 2.f), 0x40ff9a60u, 8.f);
+    list->AddRectFilled(at, at + fan::vec2(width, size + pad * 2.f), accent_scaled(0.1f, 0xf0), 8.f);
+    list->AddRect(at, at + fan::vec2(width, size + pad * 2.f), accent_alpha(accent_hover_u32, 0x40), 8.f);
 
     gui::push_id((int)message.id);
     fan::vec2 cursor = at + fan::vec2(pad, pad);
@@ -432,7 +432,7 @@
       gui::text(fan::color(0.3f, 0.6f, 1.f, 1.f), url);
       fan::vec2 lo = gui::get_item_rect_min();
       fan::vec2 hi = gui::get_item_rect_max();
-      gui::get_window_draw_list()->AddLine(fan::vec2(lo.x, hi.y - 1.f), fan::vec2(hi.x, hi.y - 1.f), 0xffff9955u, 1.f);
+      gui::get_window_draw_list()->AddLine(fan::vec2(lo.x, hi.y - 1.f), fan::vec2(hi.x, hi.y - 1.f), accent_hover_u32, 1.f);
       if (gui::is_item_hovered()) {
         gui::set_tooltip("Open link");
         if (fan::window::is_mouse_clicked(0)) {
@@ -611,7 +611,7 @@
         f32_t x0 = chat_prefix_width(line, i == a ? a_at : 0);
         f32_t x1 = i == b ? chat_prefix_width(line, b_at) : line.max.x - line.min.x + (line.after.empty() ? 0.f : 4.f);
         if (x1 > x0) {
-          list->AddRectFilled(fan::vec2(line.min.x + x0, line.min.y), fan::vec2(line.min.x + x1, line.max.y), 0x70ff8a3du);
+          list->AddRectFilled(fan::vec2(line.min.x + x0, line.min.y), fan::vec2(line.min.x + x1, line.max.y), accent_alpha(accent_hover_u32, 0x70));
         }
       }
     }
@@ -1297,10 +1297,10 @@
         }
       }
       auto* list = gui::get_window_draw_list();
-      std::uint32_t fill = selected ? 0xff3a170cu : hovered ? 0xff1c0f09u : 0x00000000u;
+      std::uint32_t fill = selected ? accent_scaled(0.22f) : hovered ? accent_scaled(0.11f) : 0x00000000u;
       list->AddRectFilled(at, at + fan::vec2(width, height), fill, height * 0.3f);
       if (selected) {
-        list->AddRectFilled(at + fan::vec2(6.f, height - 2.f), at + fan::vec2(width - 6.f, height), 0xffff7a33u, 1.f);
+        list->AddRectFilled(at + fan::vec2(6.f, height - 2.f), at + fan::vec2(width - 6.f, height), accent_hover_u32, 1.f);
       }
       f32_t icon_size = height * 0.55f;
       std::string shown_text = gui::fit_title(text, std::max(width - icon_size - 18.f, 10.f));
@@ -1398,7 +1398,7 @@
       }
       save_side_panel_layout();
     }
-    std::uint32_t color = will_hide ? 0xff4040ffu : hot ? 0xffff7a33u : 0x30ffffffu;
+    std::uint32_t color = will_hide ? 0xff4040ffu : hot ? accent_hover_u32 : 0x30ffffffu;
     fan::vec2 c = at + size * 0.5f;
     if (side == 1) {
       gui::get_window_draw_list()->AddLine(fan::vec2(c.x - 24.f, c.y), fan::vec2(c.x + 24.f, c.y), color, 3.f);
@@ -1443,8 +1443,8 @@
         default: a = side_view_min; b = fan::vec2(side_view_min.x + shown, side_view_max.y); break;
       }
       auto* list = gui::get_foreground_draw_list();
-      list->AddRectFilled(a, b, 0x40ff7a33u, 8.f);
-      list->AddRect(a, b, 0xffff7a33u, 8.f, 0, 2.f);
+      list->AddRectFilled(a, b, accent_alpha(accent_hover_u32, 0x40), 8.f);
+      list->AddRect(a, b, accent_hover_u32, 8.f, 0, 2.f);
       fan::vec2 text_size = gui::calc_text_size(names);
       list->AddText((a + b) * 0.5f - text_size * 0.5f, 0xffffffffu, names.c_str());
     }
@@ -1464,7 +1464,7 @@
     }
     // a rounded bar along the edge
     auto* list = gui::get_window_draw_list();
-    std::uint32_t color = hot ? 0xffff7a33u : 0x50ffffffu;
+    std::uint32_t color = hot ? accent_hover_u32 : 0x50ffffffu;
     fan::vec2 c = at + size * 0.5f;
     if (side == 1) {
       list->AddRectFilled(fan::vec2(c.x - 40.f, c.y - 2.f), fan::vec2(c.x + 40.f, c.y + 2.f), color, 2.f);
@@ -1516,8 +1516,8 @@
       : "Together with " + others + " " + where;
     auto* list = gui::get_foreground_draw_list();
     list->AddRectFilled(min, max, 0x40000000u, 8.f);
-    list->AddRectFilled(a, b, 0x50ff7a33u, 8.f);
-    list->AddRect(a, b, 0xffff7a33u, 8.f, 0, 2.f);
+    list->AddRectFilled(a, b, accent_alpha(accent_hover_u32, 0x50), 8.f);
+    list->AddRect(a, b, accent_hover_u32, 8.f, 0, 2.f);
     fan::vec2 text_size = gui::calc_text_size(where);
     list->AddText((a + b) * 0.5f - text_size * 0.5f, 0xffffffffu, where.c_str());
     gui::set_mouse_cursor(gui::mouse_cursor_resize_all);
@@ -1759,7 +1759,9 @@
       bool first_group = true;
       std::vector<chat_pin_t> pins = chat_pins(messages);
       std::uint32_t hovered_now = 0;
-      bool log_hovered = gui::is_window_hovered(gui::hovered_flags_child_windows);
+      // also while a button is held down: otherwise pressing one made the log "not hovered", the toolbar went away
+      // before the mouse came up, and the click never finished
+      bool log_hovered = gui::is_window_hovered(gui::hovered_flags_child_windows | gui::hovered_flags_allow_when_blocked_by_active_item);
       for (const auto& message : messages) {
         // a run of messages from the same person within a few minutes shares one name line
         chat_line_message = message.id;
@@ -1793,7 +1795,7 @@
           // a short bar marks where a new message begins, so a run of lines from one person reads as one message
           fan::vec2 group_at = gui::get_cursor_screen_pos();
           gui::get_window_draw_list()->AddRectFilled(group_at + fan::vec2(-4.f, 2.f),
-            group_at + fan::vec2(-2.f, 2.f + gui::get_font_size()), mine ? 0xffff5919u : 0xffffa070u, 1.f);
+            group_at + fan::vec2(-2.f, 2.f + gui::get_font_size()), mine ? accent_u32 : 0xffffa070u, 1.f);
           gui::text(mine ? fan::color(0.55f, 0.8f, 1.f, 1.f) : fan::color(0.95f, 0.8f, 0.45f, 1.f), message.name);
           fan::vec2 name_min = gui::get_item_rect_min();
           std::string time = chat_time_label(message.time);
@@ -1830,7 +1832,9 @@
         fan::vec2 bottom(row_right, gui::get_cursor_screen_pos().y);
         top.x -= 6.f;
         auto* list = gui::get_window_draw_list();
-        if (log_hovered && gui::is_mouse_hovering_rect(top - fan::vec2(0, 2.f), bottom)) {
+        // the toolbar can reach below a one-line message, so the mouse on it still counts as over the message
+        fan::vec2 hover_bottom(bottom.x, std::max(bottom.y, top.y + gui::get_frame_height()));
+        if (log_hovered && gui::is_mouse_hovering_rect(top - fan::vec2(0, 2.f), hover_bottom)) {
           hovered_now = message.id;
           list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, 0x0cffffffu, 4.f);
         }
@@ -1841,7 +1845,7 @@
           f32_t t = std::chrono::duration<f32_t>(std::chrono::steady_clock::now() - chat_flash_at).count();
           if (t < 1.6f) {
             std::uint32_t alpha = (std::uint32_t)(0x50 * (1.f - t / 1.6f));
-            list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, (alpha << 24) | 0x00ff9a40u, 4.f);
+            list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, (alpha << 24) | (accent_hover_u32 & 0x00ffffffu), 4.f);
           }
           else {
             chat_flash_id = 0;

@@ -159,7 +159,7 @@
         after_name += size.x + 18.f;
       };
       if (mine) {
-        tag("yours", 0x50ff5919u, 0xffffa070u);
+        tag("yours", accent_alpha(accent_u32, 0x50), accent_hover_u32);
       }
       else if (joined) {
         tag("joined", 0x5040a040u, 0xff90ff90u);
@@ -386,7 +386,7 @@
           }
           if (ecps_backend.is_hosting_channel(This->selected_channel_id)) {
             gui::same_line(0, 10.f);
-            gui::badge("yours", 0x50ff5919u, 0xffffa070u);
+            gui::badge("yours", accent_alpha(accent_u32, 0x50), accent_hover_u32);
           }
           // at the right of the name: the users over the stream on or off, and refreshing them
           {
@@ -472,7 +472,7 @@
                     }
                     if (session.is_host) {
                       gui::same_line(0, 10.f);
-                      gui::badge("host", 0x50ff5919u, 0xffffa070u);
+                      gui::badge("host", accent_alpha(accent_u32, 0x50), accent_hover_u32);
                     }
                     if (is_sharing) {
                       gui::same_line(0, 8.f);

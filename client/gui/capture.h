@@ -278,7 +278,7 @@
         list->AddRect(at, at + card_size, accent_u32, 8.f, 0, 2.5f);
       }
       else if (hovered) {
-        list->AddRect(at, at + card_size, 0x90ff5919u, 8.f, 0, 1.5f);
+        list->AddRect(at, at + card_size, accent_alpha(accent_u32, 0x90), 8.f, 0, 1.5f);
       }
 
       auto& thumb = refresh_thumb(handle, 320, handle == 0 ? 1500 : 2500, budget);
