@@ -242,10 +242,14 @@
   std::string chat_reply_quote;
   // a message to scroll to (a reply's quote or a pin clicked) and the one shown lit for a moment after
   std::uint32_t chat_jump_id = 0;
+  bool chat_jump_retried = false;
   std::uint32_t chat_flash_id = 0;
   std::chrono::steady_clock::time_point chat_flash_at{};
   // the message under the mouse last frame: its Reply and Pin buttons are drawn this frame
   std::uint32_t chat_hover_id = 0;
+  // the message the right click menu is for, and the words marked when it was opened
+  std::uint32_t chat_menu_id = 0;
+  std::string chat_menu_selection;
 
   void chat_send_pin(ecps_backend_t::Protocol_ChannelID_t channel_id, std::uint32_t id, const std::string& text, bool pin) {
     chat_send_text(channel_id, pin ? "[pin #" + std::to_string(id) + "] " + chat_snippet(text) : "[unpin #" + std::to_string(id) + "]");
@@ -382,6 +386,53 @@
     }
     gui::pop_id();
     gui::set_cursor_screen_pos(resume);
+  }
+
+  void render_chat_message_menu(ecps_backend_t::Protocol_ChannelID_t channel_id, const std::vector<ecps_backend_t::chat_message_t>& messages,
+    const std::vector<chat_pin_t>& pins) {
+    if (!gui::begin_popup("##chat_menu")) {
+      return;
+    }
+    auto found = std::find_if(messages.begin(), messages.end(), [&](const auto& m) { return m.id == chat_menu_id; });
+    if (found == messages.end()) {
+      gui::end_popup();
+      return;
+    }
+    ecps_backend_t::chat_message_t message = *found;
+    chat_tag_t tag = chat_parse_tag(message.text);
+    bool mine = message.from == (std::uint32_t)ecps_backend.session_id.i;
+    bool can_edit = mine && (tag.kind == chat_tag_t::none || tag.kind == chat_tag_t::reply);
+    bool can_delete = mine || ecps_backend.is_current_user_host_of_channel(channel_id);
+    bool pinned = std::find_if(pins.begin(), pins.end(), [&](const chat_pin_t& p) { return p.id == message.id; }) != pins.end();
+    if (gui::menu_item("Reply")) {
+      chat_reply_id = message.id;
+      chat_reply_channel = (std::uint32_t)channel_id.i;
+      chat_reply_name = message.name;
+      chat_reply_quote = chat_snippet(tag.body);
+      chat_edit_id = 0;
+      chat_focus_input = true;
+    }
+    if (can_edit && gui::menu_item("Edit")) {
+      chat_edit_id = message.id;
+      chat_edit_channel = (std::uint32_t)channel_id.i;
+      std::size_t line_end = message.text.find('\n');
+      chat_edit_prefix = tag.kind == chat_tag_t::reply && line_end != std::string::npos ? message.text.substr(0, line_end + 1) : std::string();
+      chat_input = message.text.substr(chat_edit_prefix.size());
+      chat_reply_id = 0;
+      chat_focus_input = true;
+    }
+    if (gui::menu_item(chat_menu_selection.empty() ? "Copy" : "Copy selection")) {
+      engine.window.set_clipboard(chat_menu_selection.empty() ? tag.body : chat_menu_selection);
+    }
+    if (gui::menu_item(pinned ? "Unpin" : "Pin")) {
+      chat_send_pin(channel_id, message.id, tag.body, !pinned);
+    }
+    if (can_delete && gui::menu_item("Delete")) {
+      backend_queue([channel_id, id = message.id]() -> fan::event::task_t {
+        return ecps_backend.change_chat(channel_id, id, std::string());
+      });
+    }
+    gui::end_popup();
   }
 
   std::uint32_t chat_line_message = 0;
@@ -619,17 +670,13 @@
     if (chat_has_mark && !gui::get_io().WantTextInput && ctrl && engine.window.is_key_clicked(fan::key_c)) {
       engine.window.set_clipboard(chat_marked_text());
     }
-    // right click: the mark, or without one the whole message under the mouse
+    // right click: a menu for the message under the mouse (reply, edit, copy, pin, delete). Copy takes the marked
+    // words, or without a mark the whole message
     if (over_text && fan::window::is_mouse_clicked(1)) {
-      if (chat_has_mark) {
-        engine.window.set_clipboard(chat_marked_text());
-      }
-      else if (int i = chat_line_index(chat_hit(m).key); i >= 0) {
-        for (const auto& message : messages) {
-          if (message.id == chat_lines[i].message_id) {
-            engine.window.set_clipboard(chat_parse_tag(message.text).body);
-          }
-        }
+      if (int i = chat_line_index(chat_hit(m).key); i >= 0) {
+        chat_menu_id = chat_lines[i].message_id;
+        chat_menu_selection = chat_has_mark ? chat_marked_text() : std::string();
+        gui::open_popup("##chat_menu");
       }
     }
   }
@@ -839,12 +886,26 @@
   fan::vec2 chat_viewer_offset = 0;
   bool chat_viewer_dragged = false;
 
+  // Escape also opens the engine's settings menu. When it closed the picture it is put back as it was, for this and
+  // the next frame (the engine's toggle can come before or after this)
+  int chat_viewer_keep_settings_frames = 0;
+  bool chat_viewer_keep_settings_state = false;
+
   void render_chat_viewer() {
+    if (chat_viewer_keep_settings_frames > 0) {
+      --chat_viewer_keep_settings_frames;
+      engine.get_render_settings_menu() = chat_viewer_keep_settings_state;
+    }
     if (chat_viewer_path.empty()) {
       return;
     }
     auto found = chat_pictures.find(chat_viewer_path);
-    if (found == chat_pictures.end() || !found->second.ready || engine.window.is_key_clicked(fan::key_escape)) {
+    bool escape = engine.window.is_key_clicked(fan::key_escape);
+    if (found == chat_pictures.end() || !found->second.ready || escape) {
+      if (escape) {
+        chat_viewer_keep_settings_state = engine.get_render_settings_menu();
+        chat_viewer_keep_settings_frames = 2;
+      }
       chat_viewer_path.clear();
       return;
     }
@@ -1840,7 +1901,7 @@
         fan::vec2 hover_bottom(bottom.x, std::max(bottom.y, top.y + gui::get_frame_height()));
         if (log_hovered && gui::is_mouse_hovering_rect(top - fan::vec2(0, 2.f), hover_bottom)) {
           hovered_now = message.id;
-          list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, 0x0cffffffu, 4.f);
+          list->AddRectFilled(top - fan::vec2(0, 2.f), bottom, 0x05ffffffu, 4.f);
         }
         if (pinned) {
           list->AddRectFilled(fan::vec2(top.x, top.y), fan::vec2(top.x + 2.f, bottom.y - 3.f), 0xff40b0ffu, 1.f);
@@ -1866,10 +1927,18 @@
         chat_seen_channel = (std::uint32_t)channel_id.i;
         gui::set_scroll_here_y();
       }
-      // a jump to a message no longer kept here goes nowhere
-      chat_jump_id = 0;
+      // the click came after the message it points to was drawn this frame (a reply points to an earlier one), so it
+      // gets one more frame to find it. A message no longer kept here goes nowhere
+      if (chat_jump_id != 0 && !chat_jump_retried) {
+        chat_jump_retried = true;
+      }
+      else {
+        chat_jump_id = 0;
+        chat_jump_retried = false;
+      }
       chat_hover_id = hovered_now;
       chat_update_mark(messages);
+      render_chat_message_menu(channel_id, messages, pins);
     }
     gui::end_child();
 
