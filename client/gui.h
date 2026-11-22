@@ -228,8 +228,72 @@ struct ecps_gui_t {
 
   #include "gui/input.h"
 
+  // ---- keys for the panels and full screen, changeable in Settings > Keybinds ---------------------------------
+  static constexpr const char* action_toggle_chat = "Chat panel";
+  static constexpr const char* action_toggle_settings = "Settings panel";
+  static constexpr const char* action_toggle_channels = "Channels panel";
+  static constexpr const char* action_toggle_fullscreen = "Full screen stream";
+  bool panel_keys_added = false;
+
+  void set_fullscreen_stream(bool on) {
+    if (on == is_fullscreen_stream) {
+      return;
+    }
+    is_fullscreen_stream = on;
+    if (on) {
+      fullscreen_toolbar_alpha = 1.f;
+      fullscreen_toolbar_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+      engine.window.set_borderless();
+    }
+    else {
+      engine.window.set_windowed();
+    }
+  }
+
+  void update_panel_keys() {
+    auto& actions = engine.get_input_action();
+    if (!panel_keys_added) {
+      panel_keys_added = true;
+      // a saved binding, even an emptied one, wins over the default
+      if (!actions.exists(action_toggle_chat)) {
+        actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_c}, action_toggle_chat);
+      }
+      if (!actions.exists(action_toggle_settings)) {
+        actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_s}, action_toggle_settings);
+        actions.add_keycombo({fan::key_left_control, fan::key_comma}, action_toggle_settings);
+      }
+      if (!actions.exists(action_toggle_channels)) {
+        actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_l}, action_toggle_channels);
+      }
+      if (!actions.exists(action_toggle_fullscreen)) {
+        actions.add_keycombo({fan::key_f11}, action_toggle_fullscreen);
+      }
+    }
+    if (auto* settings = fan_settings_menu(); settings && settings->keybind_menu.is_capturing()) {
+      return;
+    }
+    // Ctrl+Shift combos type nothing, they work while typing too (Ctrl+Shift+C closes the chat from its box)
+    if (engine.is_active(action_toggle_chat)) {
+      toggle_side_panel(side_chat);
+    }
+    if (engine.is_active(action_toggle_settings)) {
+      toggle_side_panel(side_settings);
+    }
+    if (engine.is_active(action_toggle_channels)) {
+      toggle_side_panel(side_channels);
+    }
+    if (engine.is_active(action_toggle_fullscreen)) {
+      set_fullscreen_stream(!is_fullscreen_stream);
+    }
+    // Esc leaves full screen, unless it is closing something being typed in
+    if (is_fullscreen_stream && !gui::get_io().WantTextInput && engine.window.is_key_clicked(fan::key_escape)) {
+      set_fullscreen_stream(false);
+    }
+  }
+
   void render() {
     update_voice_keys();
+    update_panel_keys();
     update_automatically();
     apply_video_choice_once();
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
