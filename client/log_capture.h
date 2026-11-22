@@ -142,10 +142,21 @@ private:
     if (has_original) {
       original = _dup(fd);
     }
-    if (_dup2(pipe_fds[1], fd) != 0) {
+    // A windowed program's stdout and stderr belong to no descriptor (_fileno is -2): pointing 1 and 2 at the pipe
+    // left them unconnected, std::cout's writes failed and nothing reached the pipe or ecps_log.txt. They get one
+    // first (NUL), then that one is pointed at the pipe
+    FILE* std_stream = fd == 1 ? stdout : stderr;
+    if (_fileno(std_stream) < 0) {
+      FILE* reopened = nullptr;
+      freopen_s(&reopened, "NUL", "w", std_stream);
+    }
+    int target = _fileno(std_stream) >= 0 ? _fileno(std_stream) : fd;
+    if (_dup2(pipe_fds[1], target) != 0) {
       return;
     }
     _close(pipe_fds[1]);
+    // a write that failed before this left the stream in a failed state that stops every later one
+    (fd == 1 ? std::cout : std::cerr).clear();
 #else
     if (pipe(pipe_fds) != 0) {
       return;
