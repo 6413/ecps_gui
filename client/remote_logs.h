@@ -297,12 +297,11 @@ struct remote_logs_t {
     }
     if (!out.empty()) {
       queue([out]() -> fan::event::task_t {
-        try {
-          for (auto packet : out) {
-            co_await ecps_backend.tcp_write(C2S::Channel_Log_Data, &packet, sizeof(packet));
+        for (auto packet : out) {
+          if (auto sent = co_await ecps_expected(ecps_backend.tcp_write(C2S::Channel_Log_Data, &packet, sizeof(packet))); !sent) {
+            co_return;
           }
         }
-        catch (...) {}
       });
     }
     for (const auto& [channel, peer] : told_stopped) {
@@ -339,10 +338,7 @@ private:
     rest.ChannelID = channel;
     rest.Peer = peer;
     rest.Enable = enable;
-    try {
-      co_await ecps_backend.tcp_write(C2S::Channel_Log_Request, &rest, sizeof(rest));
-    }
-    catch (...) {}
+    (void)co_await ecps_expected(ecps_backend.tcp_write(C2S::Channel_Log_Request, &rest, sizeof(rest)));
   }
 
   static fan::event::task_t send_status(cid_t channel, sid_t peer, std::uint8_t code) {
@@ -351,10 +347,7 @@ private:
     rest.ChannelID = channel;
     rest.Peer = peer;
     rest.State = code;
-    try {
-      co_await ecps_backend.tcp_write(C2S::Channel_Log_Status, &rest, sizeof(rest));
-    }
-    catch (...) {}
+    (void)co_await ecps_expected(ecps_backend.tcp_write(C2S::Channel_Log_Status, &rest, sizeof(rest)));
   }
 
   std::mutex watchers_mutex;

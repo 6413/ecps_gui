@@ -40,15 +40,14 @@
               ecps_backend.ip = ip;
               ecps_backend.port = std::stoul(port);
               This->backend_queue([=]() -> fan::event::task_t {
-                try {
-                  bool did_connect = co_await ecps_backend.connect(ip, string_to_number(port));
-                  if (did_connect) {
-                    co_await ecps_backend.login();
-                    co_await ecps_backend.request_channel_list();
-                  }
+                auto connected = co_await ecps_expected(ecps_backend.connect(ip, string_to_number(port)));
+                if (!connected || !*connected) {
+                  co_return;
                 }
-                catch (...) {
+                if (auto logged = co_await ecps_expected(ecps_backend.login()); !logged) {
+                  co_return;
                 }
+                (void)co_await ecps_expected(ecps_backend.request_channel_list());
                 });
             }
           }

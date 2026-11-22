@@ -283,18 +283,15 @@
       }
       sent_channel_flags[(std::uint32_t)channel.channel_id.i] = wanted;
       backend_queue([channel_id = channel.channel_id, session_id = channel.session_id, wanted]() -> fan::event::task_t {
-        try {
-          ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t rest;
-          rest.ChannelID = channel_id;
-          rest.ChannelSessionID = session_id;
-          rest.Flag = wanted;
-          co_await ecps_backend.tcp_write(
-            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag,
-            &rest,
-            sizeof(rest)
-          );
-        }
-        catch (...) {}
+        ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag_t rest;
+        rest.ChannelID = channel_id;
+        rest.ChannelSessionID = session_id;
+        rest.Flag = wanted;
+        (void)co_await ecps_expected(ecps_backend.tcp_write(
+          ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewSetFlag,
+          &rest,
+          sizeof(rest)
+        ));
       });
     }
     if (refresh) {

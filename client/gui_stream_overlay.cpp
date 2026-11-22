@@ -79,7 +79,7 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     bool just_changed = (panel_open && !was_panel_open) || (unread && !was_unread);
     was_panel_open = panel_open;
     was_unread = unread;
-    if (mouse_near || !has_picture || just_changed || keep_stream_toolbar) {
+    if (mouse_near || !has_picture || just_changed || keep_stream_toolbar || gui::is_popup_open("##stream_volume")) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
@@ -96,6 +96,18 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     if (icon_button("##btn_channels", icon_e::server, panel_shown(side_channels) ? "Hide the channels" : "Show the channels",
       frame_height, icon_style_e::overlay)) {
       toggle_side_panel(side_channels);
+    }
+    // the speaker sits by the channels, the right side keeps the panel and full screen icons
+    gui::same_line(0, 8.f);
+    fan::vec2 volume_at = gui::get_cursor_screen_pos();
+    bool volume_muted = stream_settings.audio_volume <= 0.f;
+    if (icon_button("##btn_stream_volume", volume_muted ? icon_e::speaker_muted : icon_e::speaker,
+      volume_muted ? "Unmute" : "Mute", frame_height, icon_style_e::overlay)) {
+      toggle_audio_volume();
+    }
+    if (gui::is_item_hovered()) {
+      gui::open_popup("##stream_volume");
+      stream_volume_popup_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
     }
     // as wide as the text needs, a fixed width cut the label off
     f32_t button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
@@ -116,6 +128,76 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
       owner->engine.window.set_borderless();
     }
     gui::pop_style_var();
+    render_stream_volume_popup(volume_at, frame_height);
+  }
+
+void render_thread_t::ecps_gui_t::render_stream_volume_popup(fan::vec2 icon_at, f32_t icon_size) {
+    // a tall, narrow bar: no label takes the room, the value shows in the tooltip
+    f32_t width = std::max(34.f, gui::get_font_size() * 1.5f);
+    f32_t height = std::clamp(gui::get_font_size() * 4.6f, 112.f, 150.f);
+    fan::vec2 pos(icon_at.x + icon_size * 0.5f - width * 0.5f, icon_at.y - height - 8.f);
+    // only while the popup is there: a next-window position set for nothing would move the next window drawn
+    if (gui::is_popup_open("##stream_volume")) {
+      gui::set_next_window_pos(pos);
+      gui::set_next_window_size(fan::vec2(width, height));
+    }
+    gui::push_style_var(gui::style_var_window_padding, fan::vec2(0.f, 0.f));
+    bool open = gui::begin_popup("##stream_volume", gui::window_flags_no_move | gui::window_flags_no_saved_settings |
+      gui::window_flags_no_title_bar | gui::window_flags_no_resize | gui::window_flags_no_scrollbar);
+    gui::pop_style_var();
+    if (!open) {
+      return;
+    }
+    fan::vec2 at = gui::get_window_pos();
+    gui::push_id("##volume");
+    gui::invisible_button("##area", fan::vec2(width, height));
+    gui::pop_id();
+    bool hovered = gui::is_item_hovered();
+    bool active = gui::is_item_active();
+
+    f32_t top = at.y + 12.f;
+    f32_t bottom = at.y + height - 12.f;
+    if (active) {
+      f32_t t = 1.f - std::clamp((gui::get_io().MousePos.y - top) / (bottom - top), 0.f, 1.f);
+      f32_t next = std::round(t * 200.f) / 100.f;
+      if (next != stream_settings.audio_volume) {
+        stream_settings.audio_volume = next;
+      }
+    }
+
+    auto* list = gui::get_window_draw_list();
+    f32_t cx = at.x + width * 0.5f;
+    f32_t bar = std::max(7.f, gui::get_font_size() * 0.32f);
+    fan::vec2 a(cx - bar * 0.5f, top);
+    fan::vec2 b(cx + bar * 0.5f, bottom);
+    list->AddRectFilled(a, b, 0x30ffffffu, bar * 0.5f);
+    f32_t t = std::clamp(stream_settings.audio_volume / 2.f, 0.f, 1.f);
+    f32_t fill = b.y - (b.y - a.y) * t;
+    if (t > 0.f) {
+      list->AddRectFilled(fan::vec2(a.x, fill), b, accent_u32, bar * 0.5f);
+    }
+    f32_t knob = bar * (hovered || active ? 1.05f : 0.9f);
+    list->AddCircleFilled(fan::vec2(cx, fill), knob, 0xffffffffu, 20);
+    if (active) {
+      gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
+    }
+    if (hovered || active) {
+      gui::set_tooltip(std::to_string((int)std::lround(stream_settings.audio_volume * 100.f)) + "%");
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (hovered || active || gui::is_window_hovered()) {
+      stream_volume_popup_until = now + std::chrono::milliseconds(300);
+    }
+    if (stream_volume_dragging && !active) {
+      save_audio_settings();
+      stream_volume_dragging = false;
+    }
+    stream_volume_dragging = active;
+    if (!hovered && !active && now > stream_volume_popup_until) {
+      gui::close_current_popup();
+    }
+    gui::end_popup();
   }
 
 void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {

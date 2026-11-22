@@ -32,5 +32,21 @@
     camera_combo_open = open;
   }
 
+  void render_camera_tab() {
+    gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, settings_space(3.f)));
+    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(gui::get_style().FramePadding.x,
+      std::max(gui::get_style().FramePadding.y, gui::get_font_size() * 0.22f)));
+    gui::push_style_var(gui::style_var_frame_rounding, 5.f);
+    settings_section_icon(icon_e::camera, "CAMERA");
+    gui::indent(settings_space(2.f));
+    render_camera_source();
+    settings_hint(stream_settings.share_camera
+      ? "The camera takes the screen's place while you share"
+      : "Turn it on to share your camera instead of the screen");
+    gui::unindent(settings_space(2.f));
+    gui::pop_style_var(3);
+    gui::dummy(fan::vec2(0, 6.f));
+  }
+
   std::vector<fan::graphics::camera_device_t> camera_devices;
   bool camera_combo_open = false;

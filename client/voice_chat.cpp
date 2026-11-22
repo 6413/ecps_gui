@@ -147,29 +147,26 @@ void voice_chat_t::encode(const f32_t* input) {
 fan::event::task_t voice_chat_t::sync() {
     int wanted = wanted_channel.load();
     int active = active_channel.load();
-    try {
-      if (active != -1 && !ecps_backend.voice_known(channel_id_t((uint16_t)active))) {
-        active_channel.store(active = -1);
-      }
-      if (active != -1 && active != wanted) {
-        active_channel.store(-1);
-        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)active), false);
-        announced_muted.store(-1);
-        active = -1;
-      }
-      if (wanted != -1 && active == -1 && ecps_backend.voice_known(channel_id_t((uint16_t)wanted))) {
-        announced_muted.store((int)muted.load());
-        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)wanted), true, muted.load());
-        active_channel.store(active = wanted);
-      }
-      // the others see who muted themselves: tell the server when it changes
-      if (active != -1 && announced_muted.load() != (int)muted.load()) {
-        announced_muted.store((int)muted.load());
-        co_await ecps_backend.send_voice_join(channel_id_t((uint16_t)active), true, muted.load());
-      }
-      co_await ecps_backend.probe_voice();
+    if (active != -1 && !ecps_backend.voice_known(channel_id_t((uint16_t)active))) {
+      active_channel.store(active = -1);
     }
-    catch (...) {}
+    if (active != -1 && active != wanted) {
+      active_channel.store(-1);
+      (void)co_await ecps_expected(ecps_backend.send_voice_join(channel_id_t((uint16_t)active), false));
+      announced_muted.store(-1);
+      active = -1;
+    }
+    if (wanted != -1 && active == -1 && ecps_backend.voice_known(channel_id_t((uint16_t)wanted))) {
+      announced_muted.store((int)muted.load());
+      (void)co_await ecps_expected(ecps_backend.send_voice_join(channel_id_t((uint16_t)wanted), true, muted.load()));
+      active_channel.store(active = wanted);
+    }
+    // the others see who muted themselves: tell the server when it changes
+    if (active != -1 && announced_muted.load() != (int)muted.load()) {
+      announced_muted.store((int)muted.load());
+      (void)co_await ecps_expected(ecps_backend.send_voice_join(channel_id_t((uint16_t)active), true, muted.load()));
+    }
+    (void)co_await ecps_expected(ecps_backend.probe_voice());
 
     std::vector<std::vector<std::uint8_t>> packets;
     {
@@ -178,7 +175,7 @@ fan::event::task_t voice_chat_t::sync() {
     }
     for (const auto& packet : packets) {
       if (active != -1) {
-        co_await ecps_backend.write_voice(channel_id_t((uint16_t)active), packet.data(), packet.size());
+        (void)co_await ecps_expected(ecps_backend.write_voice(channel_id_t((uint16_t)active), packet.data(), packet.size()));
       }
     }
   }

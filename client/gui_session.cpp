@@ -120,17 +120,26 @@ void render_thread_t::ecps_gui_t::render_new_channel_popup() {
       std::string name = channel_rename_input;
       write_to_config("channel_title", name);
       backend_queue([this, name]() -> fan::event::task_t {
-        try {
-          ecps_backend.own_channel_title = ecps_backend_t::trim_password(name).substr(0, 31);
-          auto channel_id = co_await ecps_backend.channel_create();
-          co_await ecps_backend.channel_join(channel_id, true);
-          co_await ecps_backend.request_channel_list();
-          co_await ecps_backend.request_channel_session_list(channel_id);
-          selected_channel_id = channel_id;
+        ecps_backend.own_channel_title = ecps_backend_t::trim_password(name).substr(0, 31);
+        auto created = co_await ecps_expected(ecps_backend.channel_create());
+        if (!created) {
+          fan::print("Failed to create channel: " + created.error());
+          co_return;
         }
-        catch (...) {
-          fan::print("Failed to create channel");
+        auto joined = co_await ecps_expected(ecps_backend.channel_join(*created, true));
+        if (!joined) {
+          fan::print("Failed to join the new channel: " + joined.error());
+          co_return;
         }
+        if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+          fan::print("Failed to refresh the channel list: " + listed.error());
+          co_return;
+        }
+        if (auto sessions = co_await ecps_expected(ecps_backend.request_channel_session_list(*created)); !sessions) {
+          fan::print("Failed to load the channel's users: " + sessions.error());
+          co_return;
+        }
+        selected_channel_id = *created;
       });
       gui::close_current_popup();
     }
@@ -187,13 +196,17 @@ void render_thread_t::ecps_gui_t::render_password_popup() {
     gui::begin_disabled(!can_join);
     if (gui::button("Join") || (enter && can_join)) {
       backend_queue([id = password_popup_channel, password = password_input]() -> fan::event::task_t {
-        try {
-          co_await ecps_backend.channel_join(id, false, password);
-          co_await ecps_backend.request_channel_list();
-          co_await ecps_backend.request_channel_session_list(id);
+        auto joined = co_await ecps_expected(ecps_backend.channel_join(id, false, password));
+        if (!joined) {
+          fan::print("Failed to join channel: " + joined.error());
+          co_return;
         }
-        catch (...) {
-          fan::print("Failed to join channel");
+        if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+          fan::print("Failed to refresh the channel list: " + listed.error());
+          co_return;
+        }
+        if (auto sessions = co_await ecps_expected(ecps_backend.request_channel_session_list(id)); !sessions) {
+          fan::print("Failed to load the channel's users: " + sessions.error());
         }
       });
       password_input.clear();
@@ -211,7 +224,7 @@ void render_thread_t::ecps_gui_t::render_password_popup() {
   }
 
 void render_thread_t::ecps_gui_t::render_channel_password_controls(ecps_backend_t::Protocol_ChannelID_t channel_id) {
-    gui::settings_section("NAME");
+    settings_section_icon(icon_e::users, "NAME");
     gui::push_item_width(-1.f);
     bool rename_enter = gui::input_text("##channel_rename", &channel_rename_input, gui::input_text_flags_enter_returns_true);
     gui::pop_item_width();
@@ -223,7 +236,7 @@ void render_thread_t::ecps_gui_t::render_channel_password_controls(ecps_backend_
         co_return;
       });
     }
-    gui::settings_section("PASSWORD");
+    settings_section_icon(icon_e::lock, "PASSWORD");
     if (!ecps_backend.channel_passwords_supported(channel_id)) {
       gui::text_wrapped_disabled("This server is too old for channel passwords, update it first");
       return;
@@ -240,7 +253,7 @@ void render_thread_t::ecps_gui_t::render_channel_password_controls(ecps_backend_
     gui::checkbox("Show##channel_password_show", &channel_password_show);
     // what it is now, so the host can tell the others exactly that
     if (has_password) {
-      std::string current = ecps_backend.own_saved_password();
+      std::string current = ecps_backend.saved_password(channel_id);
       if (!current.empty()) {
         gui::same_line();
         gui::text_wrapped_disabled("Current: " + (channel_password_show ? current : std::string(current.size(), '*')));
@@ -251,11 +264,8 @@ void render_thread_t::ecps_gui_t::render_channel_password_controls(ecps_backend_
     f32_t button_width = gui::get_content_region_avail().x;
     if (gui::button(has_password ? "Change password" : "Set password", fan::vec2(button_width, 0))) {
       backend_queue([channel_id, password = channel_password_input]() -> fan::event::task_t {
-        try {
-          co_await ecps_backend.channel_set_password(channel_id, password);
-        }
-        catch (...) {
-          fan::print("Failed to set the channel password");
+        if (auto set = co_await ecps_expected(ecps_backend.channel_set_password(channel_id, password)); !set) {
+          fan::print("Failed to set the channel password: " + set.error());
         }
       });
       channel_password_input.clear();
@@ -264,11 +274,8 @@ void render_thread_t::ecps_gui_t::render_channel_password_controls(ecps_backend_
     if (has_password) {
       if (gui::button("Remove password", fan::vec2(button_width, 0))) {
         backend_queue([channel_id]() -> fan::event::task_t {
-          try {
-            co_await ecps_backend.channel_set_password(channel_id, std::string());
-          }
-          catch (...) {
-            fan::print("Failed to remove the channel password");
+          if (auto removed = co_await ecps_expected(ecps_backend.channel_set_password(channel_id, std::string())); !removed) {
+            fan::print("Failed to remove the channel password: " + removed.error());
           }
         });
       }
@@ -288,11 +295,8 @@ void render_thread_t::ecps_gui_t::render_delete_channel_button(ecps_backend_t::P
       gui::text_wrapped_disabled("Everyone in it is sent out, and its chat is lost.");
       if (gui::button("Delete##delete_channel_yes")) {
         backend_queue([channel_id]() -> fan::event::task_t {
-          try {
-            co_await ecps_backend.delete_channel(channel_id);
-          }
-          catch (...) {
-            fan::print("Failed to delete the channel");
+          if (auto deleted = co_await ecps_expected(ecps_backend.delete_channel(channel_id)); !deleted) {
+            fan::print("Failed to delete the channel: " + deleted.error());
           }
         });
         gui::close_current_popup();
@@ -345,7 +349,6 @@ void render_thread_t::ecps_gui_t::update_auto_join() {
     // a new connection: its channel list is asked for at once, "nothing to join" is told as soon as it is here
     if ((std::uint32_t)ecps_backend.session_id.i != auto_join_session) {
       auto_join_session = (std::uint32_t)ecps_backend.session_id.i;
-      auto_created = false;
       next_auto_join = now;
       next_auto_join_list = now;
     }
@@ -357,10 +360,7 @@ void render_thread_t::ecps_gui_t::update_auto_join() {
     if (now >= next_auto_join_list) {
       next_auto_join_list = now + std::chrono::seconds(6);
       backend_queue([]() -> fan::event::task_t {
-        try {
-          co_await ecps_backend.request_channel_list();
-        }
-        catch (...) {}
+        (void)co_await ecps_expected(ecps_backend.request_channel_list());
       });
     }
 
@@ -385,36 +385,14 @@ void render_thread_t::ecps_gui_t::update_auto_join() {
       }
       auto_join_tried[channel.name] = now;
       backend_queue([id = channel.channel_id]() -> fan::event::task_t {
-        try {
-          co_await ecps_backend.channel_join(id);
-          co_await ecps_backend.request_channel_list();
-          co_await ecps_backend.request_channel_session_list(id);
+        if (auto joined = co_await ecps_expected(ecps_backend.channel_join(id)); !joined) {
+          co_return;
         }
-        catch (...) {}
+        if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+          co_return;
+        }
+        (void)co_await ecps_expected(ecps_backend.request_channel_session_list(id));
       });
-    }
-
-    // Nothing to join: our own channel is made instead, so the one we wait for finds us there and joins it
-    // (their "Join automatically" for our name does that). Once per connection, and only when we are in no channel
-    if (!auto_join_host.empty() && !auto_created && ecps_backend.channel_list_received &&
-      ecps_backend.channel_info.empty() && !ecps_backend.is_hosting_any_channel()) {
-      bool target_exists = std::any_of(ecps_backend.available_channels.begin(), ecps_backend.available_channels.end(),
-        [&](const auto& channel) { return channel.name == auto_join_host; });
-      if (!target_exists) {
-        auto_created = true;
-        backend_queue([this]() -> fan::event::task_t {
-          try {
-            auto channel_id = co_await ecps_backend.channel_create();
-            co_await ecps_backend.channel_join(channel_id, true);
-            co_await ecps_backend.request_channel_list();
-            co_await ecps_backend.request_channel_session_list(channel_id);
-            selected_channel_id = channel_id;
-          }
-          catch (...) {
-            fan::print("could not make a channel to wait in");
-          }
-        });
-      }
     }
 
     // the channel that was open before an update, once we are in it
@@ -491,8 +469,11 @@ void render_thread_t::ecps_gui_t::load_resume_state() {
     fan::io::file::read(std::string(updater_t::state_file), &data);
     std::error_code ec;
     std::filesystem::remove(updater_t::state_file, ec);
-    try {
-      fan::json state = fan::json::parse(data);
+    auto state_result = ecps_parse_json(data);
+    if (!state_result) {
+      return;
+    }
+    fan::json state = std::move(*state_result);
       // a leftover from long ago is not what the user just did
       std::int64_t age = (std::int64_t)std::time(nullptr) - state.value("saved_at", (std::int64_t)0);
       if (age < 0 || age > 600) {
@@ -534,8 +515,6 @@ void render_thread_t::ecps_gui_t::load_resume_state() {
           resume_join.push_back(resume_share.channel);
         }
       }
-    }
-    catch (...) {}
   }
 
 void render_thread_t::ecps_gui_t::update_resume_share() {
@@ -574,23 +553,13 @@ void render_thread_t::ecps_gui_t::update_resume_share() {
     resume_share.next_try = now + std::chrono::seconds(5);
     if (target) {
       backend_queue([id = target->channel_id]() -> fan::event::task_t {
-        try {
-          co_await ecps_backend.channel_join(id);
-          co_await ecps_backend.request_channel_list();
-          co_await ecps_backend.request_channel_session_list(id);
+        if (auto joined = co_await ecps_expected(ecps_backend.channel_join(id)); !joined) {
+          co_return;
         }
-        catch (...) {}
-      });
-    }
-    else if (!ecps_backend.is_hosting_any_channel()) {
-      backend_queue([this]() -> fan::event::task_t {
-        try {
-          auto channel_id = co_await ecps_backend.channel_create();
-          co_await ecps_backend.channel_join(channel_id, true);
-          co_await ecps_backend.request_channel_list();
-          co_await ecps_backend.request_channel_session_list(channel_id);
+        if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+          co_return;
         }
-        catch (...) {}
+        (void)co_await ecps_expected(ecps_backend.request_channel_session_list(id));
       });
     }
   }

@@ -166,10 +166,7 @@ ecps_backend_t::ecps_backend_t() {
     auto joined = msg->ChannelID;
     if (auto* channel = backend.find_channel(joined); channel && !channel->is_own) {
       backend.view_need_keyframe = true;
-      try {
-        co_await backend.send_idr_request(joined);
-      }
-      catch (...) {}
+      (void)co_await ecps_expected(backend.send_idr_request(joined));
     }
     co_return;
   };

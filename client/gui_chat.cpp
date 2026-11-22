@@ -1030,6 +1030,10 @@ void render_thread_t::ecps_gui_t::render_side_panel_content(int side) {
         window_handler.render_stream_settings_content_compact();
         gui::end_tab_item();
       }
+      if (gui::begin_tab_item("Camera", nullptr, 0)) {
+        render_camera_tab();
+        gui::end_tab_item();
+      }
       if (gui::begin_tab_item("Audio", nullptr, 0)) {
         render_audio_tab();
         gui::end_tab_item();

@@ -66,7 +66,7 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
   // frames in a row that gave no picture. A decoder fed frames whose reference is missing can keep going without
   // an error and without a picture: after a few, a keyframe is asked for, the picture comes back from it
   static int without_picture = 0;
-  try {
+  auto decoded = ecps_expected_sync([&]() -> bool {
     auto frame = rt->screen_decoder.decode(frame_data.data(), frame_data.size(), rt->network_frame);
     // the stream changed codec: only the new codec's keyframe can start it
     if (std::exchange(rt->screen_decoder.decoder_.codec_switched_, false)) {
@@ -78,7 +78,7 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
       rt->latest_frame.publish(frame);
       rt->screen_decoder.recycle(frame);
       ecps_backend.view_frames_decoded.fetch_add(1, std::memory_order_relaxed);
-      return;
+      return true;
     }
     if (++without_picture >= 5) {
       without_picture = 0;
@@ -90,10 +90,14 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
       }
       ecps_backend.view.RequestKeyframe();
     }
+    return false;
+  });
+  if (decoded && *decoded) {
+    return;
   }
-  catch (const std::exception& e) {
+  if (!decoded) {
   #if ecps_debug_prints >= 1
-    ecps_print_throttled("NETWORK: Decode exception: {}", e.what());
+    ecps_print_throttled("NETWORK: Decode exception: {}", decoded.error());
   #endif
   }
   ecps_backend.view_decode_failed.fetch_add(1, std::memory_order_relaxed);

@@ -286,6 +286,61 @@
     return (alpha << 24) | (part(16) << 16) | (part(8) << 8) | part(0);
   }
 
+  // settings rhythm: a 4 pt half-step scaled with the text, on an 8 pt-like grid (4/8/12/16/24/32)
+  static f32_t settings_unit() {
+    return std::max(4.f, std::round(gui::get_font_size() * 0.25f));
+  }
+  static f32_t settings_space(f32_t steps) {
+    return settings_unit() * steps;
+  }
+
+  // a settings section header: an icon in a tinted square, its name, and a line out to the edge
+  static void settings_section_icon(icon_e icon, const char* title) {
+    gui::dummy(fan::vec2(0, settings_space(3.f)));
+    f32_t box = gui::get_frame_height() * 0.9f;
+    fan::vec2 at = gui::get_cursor_screen_pos();
+    auto* list = gui::get_window_draw_list();
+    list->AddRectFilled(at, at + fan::vec2(box, box), accent_scaled(0.24f, 0x70), 5.f);
+    draw_icon(list, icon, at + fan::vec2(box, box) * 0.5f, box * 0.62f, accent_u32);
+    f32_t text_x = at.x + box + 10.f;
+    list->AddText(fan::vec2(text_x, at.y + (box - gui::get_font_size()) * 0.5f),
+      gui::widget_palette.accent_text, title);
+    f32_t line_x = text_x + gui::calc_text_size(title).x + 10.f;
+    f32_t right = at.x + gui::get_content_region_avail().x;
+    if (right > line_x + 4.f) {
+      f32_t y = at.y + box * 0.5f;
+      list->AddLine(fan::vec2(line_x, y), fan::vec2(right, y), accent_alpha(accent_u32, 0x40), 1.f);
+    }
+    gui::dummy(fan::vec2(0, box + settings_space(2.f)));
+  }
+
+  // a dim line of help under a control: smaller, indented, closer to its row than to the next
+  static void settings_hint(const std::string& text) {
+    gui::font_scope_t small(gui::get_font_size() * 0.9f);
+    gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
+    fan::color dim = gui::palette_color(gui::widget_palette.label);
+    dim.a *= 0.55f;
+    gui::push_style_color(gui::col_text, dim);
+    gui::push_text_wrap_pos(0.f);
+    gui::text(text);
+    gui::pop_text_wrap_pos();
+    gui::pop_style_color();
+    gui::dummy(fan::vec2(0, settings_space(1.f)));
+  }
+
+  // an amber line for a choice with a catch, quieter than an error
+  static void settings_warning(const std::string& text) {
+    gui::font_scope_t small(gui::get_font_size() * 0.9f);
+    gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
+    fan::color warm(0.75f, 0.35f, 0.08f, 1.f);
+    gui::push_style_color(gui::col_text, warm);
+    gui::push_text_wrap_pos(0.f);
+    gui::text(text);
+    gui::pop_text_wrap_pos();
+    gui::pop_style_color();
+    gui::dummy(fan::vec2(0, settings_space(1.f)));
+  }
+
   // a part of the panel that folds away: an arrow and its name on a darker strip
   static bool settings_fold(const char* title, bool* open) {
     gui::dummy(fan::vec2(0, 2.f));

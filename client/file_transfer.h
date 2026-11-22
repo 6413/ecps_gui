@@ -301,18 +301,15 @@ fan::event::task_t send_file(Protocol_ChannelID_t channel_id, Protocol_SessionID
     co_return;
   }
 
-  try {
-    Protocol_C2S_t::Channel_File_Offer_t rest;
-    std::memset(&rest, 0, sizeof(rest));
-    rest.ChannelID = channel_id;
-    rest.Peer = peer;
-    rest.TransferID = t->id;
-    rest.FileSize = t->size;
-    std::memcpy(rest.EphemeralPublic, t->eph_public.data(), t->eph_public.size());
-    std::memcpy(rest.Name, t->name_field.data(), t->name_field.size());
-    co_await tcp_write(Protocol_C2S_t::Channel_File_Offer, &rest, sizeof(rest));
-  }
-  catch (...) {
+  Protocol_C2S_t::Channel_File_Offer_t rest;
+  std::memset(&rest, 0, sizeof(rest));
+  rest.ChannelID = channel_id;
+  rest.Peer = peer;
+  rest.TransferID = t->id;
+  rest.FileSize = t->size;
+  std::memcpy(rest.EphemeralPublic, t->eph_public.data(), t->eph_public.size());
+  std::memcpy(rest.Name, t->name_field.data(), t->name_field.size());
+  if (auto sent = co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_File_Offer, &rest, sizeof(rest))); !sent) {
     end_file_transfer(t, file_transfer_t::state_e::failed, "couldn't send the offer");
   }
 }
@@ -347,7 +344,6 @@ void on_file_response(const Protocol_S2C_t::Channel_File_Response_t& m) {
 }
 
 fan::event::task_t file_send_loop(std::shared_ptr<file_transfer_t> t) {
-  try {
     Protocol_C2S_t::Channel_File_Chunk_t rest;
     while (t->next_index < t->total_chunks) {
       if (t->state != file_transfer_t::state_e::transferring) {
@@ -377,16 +373,15 @@ fan::event::task_t file_send_loop(std::shared_ptr<file_transfer_t> t) {
         end_file_transfer(t, file_transfer_t::state_e::failed, "encryption failed");
         break;
       }
-      co_await tcp_write(Protocol_C2S_t::Channel_File_Chunk, &rest, sizeof(rest));
+      if (auto sent = co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_File_Chunk, &rest, sizeof(rest))); !sent) {
+        if (!file_state_finished(t->state)) {
+          end_file_transfer(t, file_transfer_t::state_e::failed, "connection lost");
+        }
+        co_return;
+      }
       t->next_index++;
       t->transferred += n;
     }
-  }
-  catch (...) {
-    if (!file_state_finished(t->state)) {
-      end_file_transfer(t, file_transfer_t::state_e::failed, "connection lost");
-    }
-  }
 }
 
 void on_file_ack(const Protocol_S2C_t::Channel_File_Ack_t& m) {
@@ -444,10 +439,7 @@ fan::event::task_t send_file_response(Protocol_ChannelID_t channel_id, Protocol_
   if (eph_public) {
     std::memcpy(rest.EphemeralPublic, eph_public->data(), eph_public->size());
   }
-  try {
-    co_await tcp_write(Protocol_C2S_t::Channel_File_Response, &rest, sizeof(rest));
-  }
-  catch (...) {}
+  (void)co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_File_Response, &rest, sizeof(rest)));
 }
 
 static std::filesystem::path file_unique_path(const std::filesystem::path& dir, const std::string& name) {
@@ -520,10 +512,7 @@ fan::event::task_t send_file_cancel(Protocol_ChannelID_t channel_id, Protocol_Se
   rest.ChannelID = channel_id;
   rest.Peer = peer;
   rest.TransferID = id;
-  try {
-    co_await tcp_write(Protocol_C2S_t::Channel_File_Cancel, &rest, sizeof(rest));
-  }
-  catch (...) {}
+  (void)co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_File_Cancel, &rest, sizeof(rest)));
 }
 
 fan::event::task_t cancel_file(uint32_t id, Protocol_SessionID_t peer, bool outgoing) {
@@ -595,9 +584,6 @@ fan::event::task_t on_file_chunk(Protocol_S2C_t::Channel_File_Chunk_t m) {
     rest.Peer = t->peer;
     rest.TransferID = t->id;
     rest.Received = t->next_index;
-    try {
-      co_await tcp_write(Protocol_C2S_t::Channel_File_Ack, &rest, sizeof(rest));
-    }
-    catch (...) {}
+    (void)co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_File_Ack, &rest, sizeof(rest)));
   }
 }

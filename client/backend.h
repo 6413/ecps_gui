@@ -43,18 +43,7 @@ inline struct ecps_backend_t {
 
   fan::event::task_t tcp_read() {
     while (!should_stop_tcp_read.load()) {
-      fan::network::typed_message_t<tcp::ProtocolBasePacket_t> msg;
-      try {
-        msg = co_await tcp_client.read<tcp::ProtocolBasePacket_t>();
-      }
-      catch (const std::exception& e) {
-        mark_disconnected(e.what());
-        co_return;
-      }
-      catch (const fan::exception_t& e) {
-        mark_disconnected(e.reason);
-        co_return;
-      }
+      auto msg = co_await tcp_client.read<tcp::ProtocolBasePacket_t>();
       if (should_stop_tcp_read.load()) {
         co_return;
       }
@@ -63,11 +52,8 @@ inline struct ecps_backend_t {
         co_return;
       }
       last_rx = fan::event::now();
-      try {
-        co_await(*Protocol_S2C.NA(msg->Command))(*this, msg.data);
-      }
-      catch (const std::exception& e) {
-        fan::print("Message processing error: " + std::string(e.what()));
+      if (auto handled = co_await ecps_expected((*Protocol_S2C.NA(msg->Command))(*this, msg.data)); !handled) {
+        fan::print("Message processing error: " + handled.error());
       }
     }
   }
@@ -90,7 +76,9 @@ inline struct ecps_backend_t {
     if (len) {
       std::memcpy(packet.data() + sizeof(bp), data, len);
     }
-    co_await tcp_client.write_raw(std::move(packet));
+    if (int status = co_await tcp_client.write_raw(std::move(packet)); status < 0) {
+      fan::throw_error("tcp write failed");
+    }
     co_return bp.ID;
   }
   template <typename T>
@@ -348,8 +336,6 @@ inline struct ecps_backend_t {
 
     connected = false;
     tcp_secure_ready = false;
-    restore_own_channel = false;
-    restore_streaming = false;
     should_stop_tcp_read.store(true);
     task_tcp_read = {};
     task_udp_listen = {};
@@ -366,10 +352,9 @@ inline struct ecps_backend_t {
       task_supervisor = supervise();
     }
     tcp_client.reset();
-    try {
-      co_await tcp_client.connect(ip, port);
+    if (int connect_status = co_await tcp_client.connect(ip, port); connect_status != 0) {
+      co_return false;
     }
-    catch (...) { co_return false; }
 
     should_stop_tcp_read.store(false);
 
@@ -496,15 +481,13 @@ inline struct ecps_backend_t {
     fan::print("connected to the server");
     last_rx = fan::event::now();
     task_tcp_read = tcp_read();
-    try {
-      if (!fan::network::crypto::x25519_keygen(handshake_private, handshake_public)) {
-        fan::throw_error("x25519 keygen failed");
-      }
-      Protocol_C2S_t::KeyExchange_t rest;
-      __builtin_memcpy(rest.ClientPublic, handshake_public.data(), handshake_public.size());
-      co_await tcp_write(Protocol_C2S_t::KeyExchange, &rest, sizeof(rest));
+    if (!fan::network::crypto::x25519_keygen(handshake_private, handshake_public)) {
+      mark_disconnected("key exchange send failed");
+      co_return false;
     }
-    catch (...) {
+    Protocol_C2S_t::KeyExchange_t rest;
+    __builtin_memcpy(rest.ClientPublic, handshake_public.data(), handshake_public.size());
+    if (auto sent = co_await ecps_expected(tcp_write(Protocol_C2S_t::KeyExchange, &rest, sizeof(rest))); !sent) {
       mark_disconnected("key exchange send failed");
       co_return false;
     }
@@ -517,12 +500,6 @@ inline struct ecps_backend_t {
     connected = false;
     tcp_secure_ready = false;
     should_stop_tcp_read.store(true);
-    for (const auto& channel : channel_info) {
-      if (channel.is_own) {
-        restore_own_channel = true;
-        restore_streaming = channel.is_streaming;
-      }
-    }
     session_id = {};
     udp_crypto = {};
     server_new = false;
@@ -549,51 +526,33 @@ inline struct ecps_backend_t {
         task_keep_alive = send_keep_alive();
         continue;
       }
-      bool own = restore_own_channel, streaming = restore_streaming;
       if (!co_await connect(ip, port)) {
-        restore_own_channel = own;
-        restore_streaming = streaming;
         backoff_ms = std::min(backoff_ms * 2, 8000u);
         continue;
       }
       backoff_ms = 500;
       fan::print("reconnected to", ip + ":" + std::to_string(port));
-      task_restore = restore(own, streaming);
+      task_restore = restore();
     }
   }
   fan::event::task_t send_keep_alive() {
-    try {
-      if (!tcp_secure_ready) {
-        co_return;
-      }
-      co_await tcp_write(Protocol_C2S_t::KeepAlive, 0, 0);
-      keepalive_sent_time = fan::event::now();
-      co_await udp_write(0, ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0);
+    if (!tcp_secure_ready) {
+      co_return;
     }
-    catch (...) {
+    if (auto sent = co_await ecps_expected(tcp_write(Protocol_C2S_t::KeepAlive, 0, 0)); !sent) {
+      mark_disconnected("keep alive write failed");
+      co_return;
+    }
+    keepalive_sent_time = fan::event::now();
+    if (auto sent = co_await ecps_expected(udp_write(0, ProtocolUDP::C2S_t::KeepAlive, {}, 0, 0)); !sent) {
       mark_disconnected("keep alive write failed");
     }
   }
-  fan::event::task_t restore(bool own, bool streaming) {
-    try {
-      co_await login();
-      if (own) {
-        auto channel_id = co_await channel_create();
-        co_await channel_join(channel_id, true);
-        if (streaming) {
-          share.m_NetworkFlow.Bucket = 0;
-          share.m_NetworkFlow.TimerLastCallAt = fan::event::now();
-          share.m_NetworkFlow.TimerCallCount = 0;
-          share.CalculateNetworkFlowBucket();
-          set_channel_streaming(channel_id, true);
-        }
-        if (reconnected_cb) {
-          reconnected_cb(channel_id);
-        }
-      }
-      co_await request_channel_list();
+  fan::event::task_t restore() {
+    if (auto logged = co_await ecps_expected(login()); !logged) {
+      co_return;
     }
-    catch (...) {}
+    (void)co_await ecps_expected(request_channel_list());
   }
   // An older server drops a connection that sends it a message it doesn't know. This turns true when the server
   // sends the name message right after login, which only a newer one does, and every newer message waits for it
@@ -624,63 +583,48 @@ inline struct ecps_backend_t {
     if (!server_new.load()) {
       co_return;
     }
-    try {
-      Protocol_C2S_t::Channel_ScreenShare_Share_StreamState_t rest;
-      std::memset(&rest, 0, sizeof(rest));
-      rest.ChannelID = channel_id;
-      rest.ChannelSessionID = channel_session_id;
-      rest.Streaming = streaming ? 1 : 0;
-      co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_Share_StreamState, &rest, sizeof(rest));
-    }
-    catch (...) {}
+    Protocol_C2S_t::Channel_ScreenShare_Share_StreamState_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel_id;
+    rest.ChannelSessionID = channel_session_id;
+    rest.Streaming = streaming ? 1 : 0;
+    (void)co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_ScreenShare_Share_StreamState, &rest, sizeof(rest)));
   }
 
   fan::event::task_t send_watch(Protocol_ChannelID_t channel_id, Protocol_ChannelSessionID_t channel_session_id, Protocol_SessionID_t source) {
     if (!server_new.load()) {
       co_return;
     }
-    try {
-      Protocol_C2S_t::Channel_ScreenShare_View_Watch_t rest;
-      std::memset(&rest, 0, sizeof(rest));
-      rest.ChannelID = channel_id;
-      rest.ChannelSessionID = channel_session_id;
-      rest.HasSource = 1;
-      rest.Source = source;
-      co_await tcp_write(Protocol_C2S_t::Channel_ScreenShare_View_Watch, &rest, sizeof(rest));
-      // a new picture starts with a keyframe, ask the new streamer for one
-      co_await send_idr_request(channel_id);
+    Protocol_C2S_t::Channel_ScreenShare_View_Watch_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel_id;
+    rest.ChannelSessionID = channel_session_id;
+    rest.HasSource = 1;
+    rest.Source = source;
+    if (auto sent = co_await ecps_expected(tcp_write(Protocol_C2S_t::Channel_ScreenShare_View_Watch, &rest, sizeof(rest))); !sent) {
+      co_return;
     }
-    catch (...) {}
+    // a new picture starts with a keyframe, ask the new streamer for one
+    (void)co_await ecps_expected(send_idr_request(channel_id));
   }
 
   fan::event::task_t send_set_username(std::string name) {
     if (!server_new.load()) {
       co_return;
     }
-    try {
-      Protocol_C2S_t::SetUsername_t rest;
-      std::memset(&rest, 0, sizeof(rest));
-      std::strncpy(rest.Name, name.c_str(), sizeof(rest.Name) - 1);
-      co_await tcp_write(Protocol_C2S_t::SetUsername, &rest, sizeof(rest));
-    }
-    catch (...) {}
+    Protocol_C2S_t::SetUsername_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    std::strncpy(rest.Name, name.c_str(), sizeof(rest.Name) - 1);
+    (void)co_await ecps_expected(tcp_write(Protocol_C2S_t::SetUsername, &rest, sizeof(rest)));
   }
 
   fan::event::task_t login() {
-    // while (1) {
-    try {
-      Protocol_C2S_t::Request_Login_t rest;
-      rest.Type = Protocol::LoginType_t::Anonymous;
-      co_await tcp_write(Protocol_C2S_t::Request_Login, &rest, sizeof(rest));
-      // the saved name is asked for when the server shows it is a new one, see the SetUsername_Result handler
-      co_return;
+    Protocol_C2S_t::Request_Login_t rest;
+    rest.Type = Protocol::LoginType_t::Anonymous;
+    if (auto sent = co_await ecps_expected(tcp_write(Protocol_C2S_t::Request_Login, &rest, sizeof(rest))); !sent) {
+      // the reason points at the expected's string, which lives until login_fail_cb is done
+      login_fail_cb(fan::exception_t{ sent.error().c_str() });
     }
-    catch (fan::exception_t e) {
-      login_fail_cb(e);
-    }
-    //co_await fan::co_sleep(1000);
-    //co_await connect(ip, port);
- // }
   }
   bool verify_server_key(const fan::network::crypto::x25519_key_t& key) {
     using namespace fan::network::crypto;
@@ -706,29 +650,11 @@ inline struct ecps_backend_t {
     if (!is_channel_id_valid(channel_id)) {
       throw std::runtime_error("the server refused to create the channel");
     }
-    // a new channel of ours (after a server restart, say) gets the password ours had again
-    if (std::string password = own_saved_password(); !password.empty()) {
-      Protocol_C2S_t::SetChannelPassword_t password_rest;
-      std::memset(&password_rest, 0, sizeof(password_rest));
-      password_rest.ChannelID = channel_id;
-      std::memcpy(password_rest.Password, password.data(), std::min(password.size(), sizeof(password_rest.Password) - 1));
-      co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &password_rest, sizeof(password_rest));
-    }
     if (!own_channel_title.empty()) {
       pending_renames.set((std::uint32_t)channel_id.i, own_channel_title,
         Protocol_MessageTraits::retries<ProtocolUDP::C2S_t::Channel_Rename_t>());
     }
     co_return channel_id;
-  }
-  // the password saved for our own channel, which is named after us
-  std::string own_saved_password() {
-    std::string name = get_current_username();
-    if (name.empty()) {
-      return {};
-    }
-    std::lock_guard<std::mutex> lock(password_mutex);
-    auto it = channel_passwords.find(password_key(name));
-    return it == channel_passwords.end() ? std::string() : it->second;
   }
   // answers the coroutine waiting in channel_create
   void finish_request(uint32_t request_id, Protocol_ChannelID_t channel_id) {
@@ -877,9 +803,11 @@ inline struct ecps_backend_t {
     rest.ChannelID = channel_id;
     std::memcpy(rest.Password, password.data(), std::min(password.size(), sizeof(rest.Password) - 1));
     co_await tcp_write(Protocol_C2S_t::SetChannelPassword, &rest, sizeof(rest));
-    // kept like a channel joined with it: coming back to our own channel, or making it again, needs it
-    // only the host sets it, so it is always our own channel: kept under our name, which a rename doesn't change
-    std::string name = get_current_username();
+    // kept under this channel's own name, so another channel of ours doesn't take its password over
+    std::string name = channel_name_of(channel_id);
+    if (name.empty()) {
+      name = own_channel_title.empty() ? get_current_username() : own_channel_title;
+    }
     if (password.empty()) {
       forget_password(name);
     }
@@ -1194,7 +1122,6 @@ inline struct ecps_backend_t {
 
   std::function<void(fan::exception_t)> login_fail_cb;
   std::function<void(const uint8_t*, uintptr_t)> audio_cb;
-  std::function<void(Protocol_ChannelID_t)> reconnected_cb;
   fan::event::task_t task_supervisor;
   fan::event::task_t task_restore;
   fan::event::task_t task_keep_alive;
@@ -1202,8 +1129,6 @@ inline struct ecps_backend_t {
   std::uint64_t last_rx = 0;
   bool connected = false;
   bool tcp_secure_ready = false;
-  bool restore_own_channel = false;
-  bool restore_streaming = false;
 
   fan::event::task_t request_channel_list() {
     uint8_t a;
@@ -1287,12 +1212,11 @@ inline struct ecps_backend_t {
         viewed.push_back(channel.channel_id);
       }
     }
-    try {
-      for (auto channel_id : viewed) {
-        co_await send_idr_request(channel_id);
+    for (auto channel_id : viewed) {
+      if (auto sent = co_await ecps_expected(send_idr_request(channel_id)); !sent) {
+        co_return;
       }
     }
-    catch (...) {}
   }
 
   void update_host_mouse_coordinate(Protocol_ChannelID_t channel_id, const fan::vec2ui& pos);

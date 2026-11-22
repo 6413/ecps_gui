@@ -26,11 +26,10 @@ struct notify_sounds_t {
         continue;
       }
       last_played[k] = now;
-      try {
+      (void)ecps_expected_sync([&] {
         // one push plays the whole short clip once, then the player falls silent
         players[k].push(pcm[k].data(), (std::uint32_t)(pcm[k].size() / 2));
-      }
-      catch (...) {}
+      });
     }
   }
 

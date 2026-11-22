@@ -170,11 +170,7 @@ void clipboard_image_begin() {
     clipboard_image_reading = true;
   }
   std::thread([] {
-    std::string image;
-    try {
-      image = clipboard_image_file();
-    }
-    catch (...) {}
+    std::string image = ecps_expected_sync([] { return clipboard_image_file(); }).value_or(std::string());
     std::lock_guard<std::mutex> lock(clipboard_image_mutex);
     if (!image.empty()) {
       clipboard_image_finished.push_back(std::move(image));

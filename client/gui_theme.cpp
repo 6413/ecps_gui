@@ -142,11 +142,14 @@ void render_thread_t::ecps_gui_t::load_theme(const fan::json& saved) {
   }
 
 void render_thread_t::ecps_gui_t::render_theme_tab() {
-    gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
+    gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, settings_space(3.f)));
+    gui::push_style_var(gui::style_var_frame_padding, fan::vec2(gui::get_style().FramePadding.x,
+      std::max(gui::get_style().FramePadding.y, gui::get_font_size() * 0.22f)));
     gui::push_style_var(gui::style_var_frame_rounding, 5.f);
     bool changed = false;
 
-    gui::settings_section("THEMES");
+    settings_section_icon(icon_e::palette, "THEMES");
+    gui::indent(settings_space(2.f));
     f32_t swatch = std::round(gui::get_frame_height() * 1.15f);
     const auto& presets = theme_presets();
     for (std::size_t i = 0; i < presets.size(); ++i) {
@@ -179,7 +182,9 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       }
     }
 
-    gui::settings_section("SAVED");
+    gui::unindent(settings_space(2.f));
+    settings_section_icon(icon_e::download, "SAVED");
+    gui::indent(settings_space(2.f));
     gui::settings_row("Name", [&] {
       bool enter = gui::input_text("##save_theme_name", &theme_name_input, gui::input_text_flags_enter_returns_true);
       gui::same_line(0, 6.f);
@@ -207,7 +212,9 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       gui::pop_id();
     }
 
-    gui::settings_section("CUSTOM");
+    gui::unindent(settings_space(2.f));
+    settings_section_icon(icon_e::edit, "CUSTOM");
+    gui::indent(settings_space(2.f));
     gui::settings_row("Accent", [&] {
       changed |= gui::color_edit3("##theme_accent", &theme.accent);
     });
@@ -236,7 +243,8 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       save_theme();
       theme_dirty = false;
     }
-    gui::pop_style_var(2);
+    gui::unindent(settings_space(2.f));
+    gui::pop_style_var(3);
   }
 
 void render_thread_t::ecps_gui_t::setup_backdrop() {

@@ -14,6 +14,8 @@ import fan.graphics.stb;
 using namespace fan::graphics;
 #endif
 
+#include "expected_task.h"
+
 #include "midi/midi_synth.h"
 #include "midi/midi_input.h"
 #include "midi/midi_worker.h"

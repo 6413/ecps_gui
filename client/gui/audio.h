@@ -95,6 +95,8 @@
 
   void toggle_mic_mute();
 
+  void toggle_audio_volume();
+
   void toggle_deafen();
 
   // the keys work anywhere in the program except while typing or picking a new key in the settings

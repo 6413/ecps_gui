@@ -45,7 +45,7 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
       for (size_t i = 0; i < planes.size(); ++i) {
         planes[i] = shown_frame.data[i].empty() ? nullptr : shown_frame.data[i].data();
       }
-      try {
+      auto uploaded = ecps_expected_sync([&] {
         stage_scope_t upload_scope {stage_times.upload};
         if (shown_frame.gpu_slot >= 0) {
           // decoded on the GPU and still there: copied inside the GPU into the picture, rows tightly packed
@@ -61,10 +61,10 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
             fan::vec2ui(shown_frame.stride[0].x, shown_frame.image_size.y)
           );
         }
-      }
-      catch (const std::exception& e) {
+      });
+      if (!uploaded) {
       #if ecps_debug_prints >= 1
-        ecps_print_throttled("RENDER: frame upload failed: {}", e.what());
+        ecps_print_throttled("RENDER: frame upload failed: {}", uploaded.error());
       #endif
       }
     }
@@ -173,7 +173,6 @@ void run_decode_thread() {
 
 // one pass over the gui's backend_queue() work, run on the network thread: a few tasks, or a 1 ms sleep when none
 static fan::event::task_t queue_pass(render_thread_t* rt) {
-  try {
     constexpr size_t MAX_BATCH_SIZE = 4;
     std::vector<std::function<fan::event::task_t()>> local_tasks;
 
@@ -189,17 +188,15 @@ static fan::event::task_t queue_pass(render_thread_t* rt) {
     }
 
     for (const auto& f : local_tasks) {
-      co_await f();
+      if (auto done = co_await ecps_expected(f()); !done) {
+        fan::print("error: " + done.error());
+      }
     }
 
     if (local_tasks.empty()) {
       co_await fan::co_sleep(1);
     }
   }
-  catch (...) {
-    fan::print("error");
-  }
-}
 
 // The queue's task for the whole run. It was an idle handle, run on every pass of the event loop, which kept the
 // loop from ever waiting: a whole CPU core busy all the time, taken from the game being shared. Now it sleeps 1 ms
@@ -237,13 +234,12 @@ fan::event::runv_t<bool> network_tick() {
         // people who join after it was opened never show up
         auto selected_channel_id = rt->ecps_gui.selected_channel_id;
         rt->ecps_gui.backend_queue([selected_channel_id]() -> fan::event::task_t {
-          try {
-            co_await ecps_backend.request_channel_list();
-            if (selected_channel_id.i != (uint16_t)-1) {
-              co_await ecps_backend.request_channel_session_list(selected_channel_id);
-            }
+          if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+            co_return;
           }
-          catch (...) {}
+          if (selected_channel_id.i != (uint16_t)-1) {
+            (void)co_await ecps_expected(ecps_backend.request_channel_session_list(selected_channel_id));
+          }
         });
         refresh_timer.restart();
       }

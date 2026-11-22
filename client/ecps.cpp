@@ -20,11 +20,6 @@ int main() {
   // from here on everything printed can be read by another client that is allowed to
   log_capture().start();
   fan::print(std::string("ecps client v") + ecps_version);
-  ecps_backend.reconnected_cb = [](ecps_backend_t::Protocol_ChannelID_t channel_id) {
-    if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
-      rt->ecps_gui.selected_channel_id = channel_id;
-    }
-  };
   ecps_backend.audio_cb = [](const uint8_t* data, uintptr_t size) {
     audio_share.on_packet(data, size);
   };
@@ -50,7 +45,6 @@ int main() {
     auto* rt = get_render_thread();
     if (rt) {
       rt->ecps_gui.backend_queue([request_data = std::move(request_data)]() -> fan::event::task_t {
-        try {
           ecps_backend_t::ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest_t rest;
           rest.ChannelID = ecps_backend_t::Protocol_ChannelID_t(0);
           rest.ChannelSessionID = ecps_backend_t::Protocol_ChannelSessionID_t(0);
@@ -63,15 +57,13 @@ int main() {
             }
           }
 
-          co_await ecps_backend.udp_write(
+          (void)co_await ecps_expected(ecps_backend.udp_write(
             0,
             ecps_backend_t::ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest,
             rest,
             request_data.data(),
             request_data.size()
-          );
-        }
-        catch (...) {}
+          ));
       });
     }
   };
@@ -80,7 +72,6 @@ int main() {
     auto* rt = get_render_thread();
     if (rt) {
       rt->ecps_gui.backend_queue([packet_data]() -> fan::event::task_t {
-        try {
           auto* channel = ecps_backend.streaming_channel();
           if (!channel) {
             co_return;
@@ -89,15 +80,13 @@ int main() {
           rest.ChannelID = channel->channel_id;
           rest.ChannelSessionID = channel->session_id;
 
-          co_await ecps_backend.udp_write(
+          (void)co_await ecps_expected(ecps_backend.udp_write(
             0,
             ecps_backend_t::ProtocolUDP::C2S_t::Channel_ScreenShare_Host_StreamData,
             rest,
             packet_data.data(),
             packet_data.size()
-          );
-        }
-        catch (...) {}
+          ));
       });
     }
   };

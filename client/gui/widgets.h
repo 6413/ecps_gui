@@ -98,7 +98,7 @@
 
   // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
   // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
-  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users, close, reply, pin, edit, trash, speaker, speaker_muted, mic, mic_muted };
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users, close, reply, pin, edit, trash, speaker, speaker_muted, mic, mic_muted, chip, palette, lock, camera };
 
   // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
   static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
@@ -296,6 +296,40 @@
         if (icon == icon_e::mic_muted) {
           line(P(-0.62f, -0.62f), P(0.62f, 0.62f));
         }
+        break;
+      }
+      case icon_e::chip: {
+        list->AddRect(P(-0.5f, -0.5f) - fan::vec2(grow, grow), P(0.5f, 0.5f) + fan::vec2(grow, grow), color, h * 0.12f, 0, t);
+        list->AddRect(P(-0.18f, -0.18f), P(0.18f, 0.18f), color, h * 0.05f, 0, t * 0.8f);
+        for (int i = -1; i <= 1; ++i) {
+          f32_t p = i * 0.33f;
+          line(P(p, -0.82f), P(p, -0.5f));
+          line(P(p, 0.5f), P(p, 0.82f));
+          line(P(-0.82f, p), P(-0.5f, p));
+          line(P(0.5f, p), P(0.82f, p));
+        }
+        break;
+      }
+      case icon_e::palette:
+        list->AddCircle(c, h * 0.68f, color, 20, t);
+        dot(P(-0.3f, -0.26f), h * 0.13f);
+        dot(P(0.04f, -0.4f), h * 0.13f);
+        dot(P(0.34f, -0.08f), h * 0.13f);
+        dot(P(-0.06f, 0.34f), h * 0.13f);
+        break;
+      case icon_e::lock: {
+        list->AddRect(P(-0.6f, -0.05f), P(0.6f, 0.85f), color, h * 0.12f, 0, t);
+        list->PathArcTo(P(0, -0.05f), h * 0.42f, 3.14159265f, 2.f * 3.14159265f, 16);
+        list->PathStroke(color, 0, t);
+        dot(P(0, 0.36f), h * 0.1f);
+        line(P(0, 0.36f), P(0, 0.52f), t * 0.8f);
+        break;
+      }
+      case icon_e::camera: {
+        // a camcorder body and the cone of its lens
+        list->AddRect(P(-0.85f, -0.4f), P(0.25f, 0.4f), color, h * 0.16f, 0, t);
+        list->AddTriangleFilled(P(0.25f, -0.35f), P(0.85f, 0), P(0.25f, 0.35f), color);
+        dot(P(-0.55f, 0), h * 0.1f);
         break;
       }
     }

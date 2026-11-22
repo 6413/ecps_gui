@@ -2,18 +2,15 @@
 
   void queue_host_input(int command, auto rest) {
     backend_queue([command, rest]() -> fan::event::task_t {
-      try {
-        for (const auto& channel : ecps_backend.channel_info) {
-          if (channel.is_viewing) {
-            auto packet = rest;
-            packet.ChannelID = channel.channel_id;
-            packet.ChannelSessionID = channel.session_id;
-            co_await ecps_backend.tcp_write(command, &packet, sizeof(packet));
-            break;
-          }
+      for (const auto& channel : ecps_backend.channel_info) {
+        if (channel.is_viewing) {
+          auto packet = rest;
+          packet.ChannelID = channel.channel_id;
+          packet.ChannelSessionID = channel.session_id;
+          (void)co_await ecps_expected(ecps_backend.tcp_write(command, &packet, sizeof(packet)));
+          break;
         }
       }
-      catch (...) {}
     });
   }
 
@@ -37,19 +34,16 @@
     rest.Data1 = data1;
     rest.Data2 = data2;
     backend_queue([rest]() -> fan::event::task_t {
-      try {
-        for (const auto& channel : ecps_backend.channel_info) {
-          // any channel we are in, but don't host, whose host lets MIDI in. No stream needed
-          if (!ecps_backend.is_hosting_channel(channel.channel_id) &&
-            (channel.flag & ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl)) {
-            auto packet = rest;
-            packet.ChannelID = channel.channel_id;
-            packet.ChannelSessionID = channel.session_id;
-            co_await ecps_backend.tcp_write(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, &packet, sizeof(packet));
-          }
+      for (const auto& channel : ecps_backend.channel_info) {
+        // any channel we are in, but don't host, whose host lets MIDI in. No stream needed
+        if (!ecps_backend.is_hosting_channel(channel.channel_id) &&
+          (channel.flag & ecps_backend_t::ProtocolChannel::ScreenShare::ChannelFlag::MidiControl)) {
+          auto packet = rest;
+          packet.ChannelID = channel.channel_id;
+          packet.ChannelSessionID = channel.session_id;
+          (void)co_await ecps_expected(ecps_backend.tcp_write(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_View_ApplyToHostMidi, &packet, sizeof(packet)));
         }
       }
-      catch (...) {}
     });
   }
 

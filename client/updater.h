@@ -553,13 +553,11 @@ private:
         }
         continue;
       }
-      fan::json j;
-      try {
-        j = fan::json::parse(line.substr(5));
-      }
-      catch (...) {
+      auto parsed = ecps_parse_json(line.substr(5));
+      if (!parsed) {
         continue;
       }
+      fan::json j = std::move(*parsed);
       if (!j.is_object()) {
         continue;
       }
@@ -596,10 +594,12 @@ private:
           std::size_t open = out.find('[');
           std::size_t percent = out.find("%]");
           if (open != std::string::npos && percent != std::string::npos && percent > open) {
-            try {
-              nix_compile_percent = std::clamp(std::stoi(out.substr(open + 1, percent - open - 1)), 0, 100);
+            int value = 0;
+            std::string text = out.substr(open + 1, percent - open - 1);
+            auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (error == std::errc{} && end == text.data() + text.size()) {
+              nix_compile_percent = std::clamp(value, 0, 100);
             }
-            catch (...) {}
           }
         }
       }

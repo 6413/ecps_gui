@@ -485,12 +485,8 @@
     auto& picture = chat_pictures[path];
     if (!picture.ready && !picture.failed && !picture.loading.valid()) {
       picture.loading = std::async(std::launch::async, [path]() {
-        try {
-          return fan::image::load_owned(path);
-        }
-        catch (...) {
-          return fan::image::owned_t{};
-        }
+        auto loaded = ecps_load_image(path);
+        return loaded ? std::move(*loaded) : fan::image::owned_t{};
       });
     }
     if (picture.loading.valid() && picture.loading.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {

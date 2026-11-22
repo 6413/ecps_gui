@@ -236,17 +236,16 @@
     rest.Data1 = data1;
     rest.Data2 = data2;
     backend_queue([rest]() -> fan::event::task_t {
-      try {
-        for (const auto& channel : ecps_backend.channel_info) {
-          if (ecps_backend.is_hosting_channel(channel.channel_id)) {
-            auto packet = rest;
-            packet.ChannelID = channel.channel_id;
-            packet.ChannelSessionID = channel.session_id;
-            co_await ecps_backend.tcp_write(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi, &packet, sizeof(packet));
+      for (const auto& channel : ecps_backend.channel_info) {
+        if (ecps_backend.is_hosting_channel(channel.channel_id)) {
+          auto packet = rest;
+          packet.ChannelID = channel.channel_id;
+          packet.ChannelSessionID = channel.session_id;
+          if (auto sent = co_await ecps_expected(ecps_backend.tcp_write(ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewMidi, &packet, sizeof(packet))); !sent) {
+            co_return;
           }
         }
       }
-      catch (...) {}
     });
   }
 

@@ -174,33 +174,24 @@ struct ecps_gui_t {
     }
     if (ip.size() && port.size()) {
       backend_queue([=]() -> fan::event::task_t {
-        try {
-          if (!co_await ecps_backend.connect(ip, string_to_number(port))) {
-            co_return;
-          }
-          co_await ecps_backend.login();
-
-          // no channel is made for you, pick one from the list or make your own with "Add new"
-          co_await ecps_backend.request_channel_list();
+        auto connected = co_await ecps_expected(ecps_backend.connect(ip, string_to_number(port)));
+        if (!connected || !*connected) {
+          co_return;
         }
-        catch (...) {
-
+        if (auto logged = co_await ecps_expected(ecps_backend.login()); !logged) {
+          co_return;
         }
+        // no channel is made for you, pick one from the list or make your own with "Add new"
+        (void)co_await ecps_expected(ecps_backend.request_channel_list());
         });
     }
   }
   static uint32_t string_to_number(const std::string& str) {
     uint32_t v = 0;
-    try {
-      v = std::stoul(str);
-    }
-    catch (const std::invalid_argument& e) {
-      fan::print("The input couldn't be converted to a number");
-      return -1;
-    }
-    catch (const std::out_of_range& e) {
-      fan::print("The input was too large for unsigned long");
-      return -1;
+    auto [end, error] = std::from_chars(str.data(), str.data() + str.size(), v);
+    if (error == std::errc::invalid_argument || error == std::errc::result_out_of_range || end != str.data() + str.size()) {
+      fan::print(error == std::errc::result_out_of_range ? "The input was too large for unsigned long" : "The input couldn't be converted to a number");
+      return (uint32_t)-1;
     }
     return v;
   }
@@ -404,6 +395,9 @@ struct ecps_gui_t {
   bool about_popup_requested = false;
   f32_t toolbar_alpha = 1.f;
   std::chrono::steady_clock::time_point toolbar_visible_until;
+  // the speaker in the toolbar: its vertical slider stays up while hovered, and goes down when the mouse leaves
+  std::chrono::steady_clock::time_point stream_volume_popup_until;
+  bool stream_volume_dragging = false;
   // on: the stream toolbar stays on screen; off: it fades out unless the mouse is near the bottom
   bool keep_stream_toolbar = false;
   f32_t fullscreen_toolbar_alpha = 1.f;

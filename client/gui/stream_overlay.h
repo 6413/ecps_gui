@@ -12,6 +12,10 @@
   void render_stream_toolbar();
 
 
+  // the up and down volume slider that comes up over the toolbar's speaker
+  void render_stream_volume_popup(fan::vec2 icon_at, f32_t icon_size);
+
+
   // what the stream view says while there is no picture
   void render_stream_empty_hint(fan::vec2 area);
 

@@ -7,7 +7,7 @@
     uint32_t last_applied_width = 0;
     uint32_t last_applied_height = 0;
 
-    void render_resolution_controls() {
+    void render_resolution_controls(bool with_aspect = true) {
       auto* rt = render_thread_ptr.load(std::memory_order_acquire);
       uint32_t current_width = 0, current_height = 0;
       if (rt) {
@@ -21,22 +21,9 @@
         last_applied_height = current_height;
       }
 
-      auto aspect_options = rt->screen_encoder.resolution_manager.get_aspect_ratio_options();
-
-      std::vector<std::string> aspect_strings;
-      std::vector<const char*> aspect_cstrings;
-      for (const auto& [name, ratio] : aspect_options) {
-        aspect_strings.push_back(name);
+      if (with_aspect) {
+        render_aspect_row();
       }
-      for (const auto& str : aspect_strings) {
-        aspect_cstrings.push_back(str.c_str());
-      }
-
-      gui::settings_row("Aspect", [&] {
-        if (gui::combo("##aspect_ratio", &selected_aspect_ratio, aspect_cstrings.data(), aspect_cstrings.size())) {
-          apply_closest_resolution(current_height);
-        }
-      });
 
       std::vector<resolution_system_t::resolution_t> available_resolutions = get_filtered_resolutions();
 
@@ -79,7 +66,34 @@
       });
     }
 
+    // the aspect row alone, for the Advanced fold under the resolution it filters
+    void render_aspect_control() {
+      render_aspect_row();
+    }
+
   private:
+    void render_aspect_row() {
+      auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+      if (!rt) {
+        return;
+      }
+      uint32_t current_height = rt->screen_encoder.config_.height;
+      auto aspect_options = rt->screen_encoder.resolution_manager.get_aspect_ratio_options();
+      std::vector<std::string> aspect_strings;
+      std::vector<const char*> aspect_cstrings;
+      for (const auto& [name, ratio] : aspect_options) {
+        aspect_strings.push_back(name);
+      }
+      for (const auto& str : aspect_strings) {
+        aspect_cstrings.push_back(str.c_str());
+      }
+      gui::settings_row("Aspect", [&] {
+        if (gui::combo("##aspect_ratio", &selected_aspect_ratio, aspect_cstrings.data(), aspect_cstrings.size())) {
+          apply_closest_resolution(current_height);
+        }
+      });
+    }
+
     std::vector<resolution_system_t::resolution_t> get_filtered_resolutions() {
       auto* rt = render_thread_ptr.load(std::memory_order_acquire);
       if (!rt) return {};

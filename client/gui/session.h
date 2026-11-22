@@ -115,8 +115,6 @@
   std::vector<std::string> resume_join;
   std::string resume_select;
   std::chrono::steady_clock::time_point next_auto_join;
-  // the channel made when there was nothing to join, once per connection
-  bool auto_created = false;
   std::uint32_t auto_join_session = 0;
   std::chrono::steady_clock::time_point next_auto_join_list;
   std::unordered_map<std::string, std::chrono::steady_clock::time_point> auto_join_tried;

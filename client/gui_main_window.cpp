@@ -56,14 +56,12 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
         if (first_open && p_open) {
           first_open = false;
           gui.backend_queue([&]() -> fan::event::task_t {
-            try {
-              co_await ecps_backend.request_channel_list();
-              if (gui.selected_channel_id.i != (uint16_t)-1) {
-                co_await ecps_backend.request_channel_session_list(gui.selected_channel_id);
-              }
+            if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+              fan::print("Failed to auto-refresh channel list: " + listed.error());
+              co_return;
             }
-            catch (...) {
-              fan::print("Failed to auto-refresh channel list");
+            if (gui.selected_channel_id.i != (uint16_t)-1) {
+              (void)co_await ecps_expected(ecps_backend.request_channel_session_list(gui.selected_channel_id));
             }
             });
         }
@@ -123,11 +121,8 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
           channels_browsing = false;
         }
         gui_ptr->backend_queue([channel_id = channel.channel_id]() -> fan::event::task_t {
-          try {
-            co_await ecps_backend.request_channel_session_list(channel_id);
-          }
-          catch (...) {
-            fan::print("Failed to request session list");
+          if (auto sessions = co_await ecps_expected(ecps_backend.request_channel_session_list(channel_id)); !sessions) {
+            fan::print("Failed to request session list: " + sessions.error());
           }
         });
       }
@@ -173,7 +168,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
         tag("joined", 0x5040a040u, 0xff90ff90u);
       }
       if (channel.is_password_protected) {
-        tag("password", 0x40909090u, 0xffc0c0c0u);
+        // a lock says it without a word, and takes less room than a tag
+        f32_t lock = gui::get_font_size() * 0.82f;
+        if (after_name + lock + 10.f <= at.x + width - right_width - 12.f) {
+          draw_icon(list, icon_e::lock, fan::vec2(after_name + lock * 0.5f, at.y + row_height * 0.5f), lock, 0xff40b8f0u);
+        }
       }
       list->AddText(fan::vec2(at.x + width - right_width - 10.f, text_y), 0xff909090u, right.c_str());
     
@@ -214,13 +213,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::leave_channel(ecps_back
         }
       }
       gui_ptr->backend_queue([channel_id]() -> fan::event::task_t {
-        try {
-          co_await ecps_backend.channel_quit(channel_id);
-          co_await ecps_backend.request_channel_list();
+        if (auto quit = co_await ecps_expected(ecps_backend.channel_quit(channel_id)); !quit) {
+          fan::print("Failed to leave channel: " + quit.error());
+          co_return;
         }
-        catch (...) {
-          fan::print("Failed to leave channel");
-        }
+        (void)co_await ecps_expected(ecps_backend.request_channel_list());
       });
     
 }
@@ -229,14 +226,14 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::join_channel(ecps_backe
   auto* gui_ptr = &*OFFSETLESS(this, ecps_gui_t, window_handler);
   gui_ptr->selected_channel_id = channel_id;
   gui_ptr->backend_queue([channel_id]() -> fan::event::task_t {
-    try {
-      co_await ecps_backend.channel_join(channel_id);
-      co_await ecps_backend.request_channel_list();
-      co_await ecps_backend.request_channel_session_list(channel_id);
+    if (auto joined = co_await ecps_expected(ecps_backend.channel_join(channel_id)); !joined) {
+      fan::print("Failed to join channel: " + joined.error());
+      co_return;
     }
-    catch (...) {
-      fan::print("Failed to join channel");
+    if (auto listed = co_await ecps_expected(ecps_backend.request_channel_list()); !listed) {
+      co_return;
     }
+    (void)co_await ecps_expected(ecps_backend.request_channel_session_list(channel_id));
   });
 }
 
@@ -458,28 +455,6 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
             gui::same_line(0, 10.f);
             gui::badge("yours", accent_alpha(accent_u32, 0x50), accent_hover_u32);
           }
-          // at the right of the name: the users over the stream on or off, and refreshing them
-          {
-            f32_t button = gui::get_frame_height();
-            gui::same_line();
-            gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(gui::get_content_region_avail().x - button * 2.f - 8.f, 0.f));
-            if (icon_button("##toggle_stream_users", icon_e::users,
-              gui_ptr->show_stream_users ? "Hide the users over the stream" : "Show the users over the stream", button,
-              gui_ptr->show_stream_users ? icon_style_e::accent : icon_style_e::plain)) {
-              gui_ptr->show_stream_users = !gui_ptr->show_stream_users;
-            }
-            gui::same_line(0, 4.f);
-            if (icon_button("##refresh_users", icon_e::refresh, "Refresh the users", button)) {
-              gui_ptr->backend_queue([channel_id = gui_ptr->selected_channel_id]() -> fan::event::task_t {
-                try {
-                  co_await ecps_backend.request_channel_session_list(channel_id);
-                }
-                catch (...) {
-                  fan::print("Failed to refresh session list");
-                }
-              });
-            }
-          }
           if (!ecps_backend.is_hosting_channel(gui_ptr->selected_channel_id) && !channel_name.empty()) {
             bool auto_join_on = gui_ptr->auto_join_host == channel_name;
             if (gui::settings_switch("Join automatically", &auto_join_on,
@@ -497,6 +472,27 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
             if (gui::begin_tab_item("Users", nullptr, detail_tab == 0 ? gui::tab_item_flags_set_selected : 0)) {
               if (detail_tab == 0) detail_tab = -1;
 
+              gui::spacing();
+
+              // the list's own controls, out of the channel's title line
+              {
+                f32_t button = gui::get_frame_height() * 0.9f;
+                f32_t row = gui::get_content_region_avail().x;
+                gui::set_cursor_pos_x(gui::get_cursor_pos_x() + std::max(row - button * 2.f - 8.f, 0.f));
+                if (icon_button("##toggle_stream_users", icon_e::users,
+                  gui_ptr->show_stream_users ? "Hide the users over the stream" : "Show the users over the stream", button,
+                  gui_ptr->show_stream_users ? icon_style_e::accent : icon_style_e::plain)) {
+                  gui_ptr->show_stream_users = !gui_ptr->show_stream_users;
+                }
+                gui::same_line(0, 6.f);
+                if (icon_button("##refresh_users", icon_e::refresh, "Refresh the users", button)) {
+                  gui_ptr->backend_queue([channel_id = gui_ptr->selected_channel_id]() -> fan::event::task_t {
+                    if (auto sessions = co_await ecps_expected(ecps_backend.request_channel_session_list(channel_id)); !sessions) {
+                      fan::print("Failed to refresh session list: " + sessions.error());
+                    }
+                  });
+                }
+              }
               gui::spacing();
 
               if (gui::begin_child("SessionList", fan::vec2(0, 0), true)) {
@@ -676,18 +672,20 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
   auto* gui_ptr = &*OFFSETLESS(this, ecps_gui_t, window_handler);
   auto& engine = gui_ptr->owner->engine;
 
-      gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, 8.f));
+      gui::push_style_var(gui::style_var_item_spacing, fan::vec2(8.f, settings_space(3.f)));
+      gui::push_style_var(gui::style_var_frame_padding, fan::vec2(gui::get_style().FramePadding.x,
+        std::max(gui::get_style().FramePadding.y, gui::get_font_size() * 0.22f)));
       gui::push_style_var(gui::style_var_frame_rounding, 5.f);
       bool streaming = ecps_backend.is_streaming_to_any_channel();
       bool viewing = ecps_backend.is_viewing_any_channel();
       auto* rt = get_render_thread();
 
       // ---- what you share
-      gui::settings_section("SHARING");
+      settings_section_icon(icon_e::monitor, "SHARING");
+      gui::indent(settings_space(2.f));
       gui_ptr->render_capture_source();
-      gui_ptr->render_camera_source();
       if (streaming && rt) {
-        gui_ptr->resolution_controls.render_resolution_controls();
+        gui_ptr->resolution_controls.render_resolution_controls(false);
 
         gui::settings_row("Framerate", [&] {
           gui::slider("##framerate_compact", &gui_ptr->stream_settings.framerate, 3.f, 244.f);
@@ -703,57 +701,65 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
           }
         });
 
-        gui::settings_row("Bitrate", [&] {
-          const char* bitrate_modes[] = { "Automatic", "Manual" };
-          if (gui::combo("##bitrate_mode", &gui_ptr->stream_settings.bitrate_mode, bitrate_modes, 2)) {
-            gui_ptr->stream_settings.use_adaptive_bitrate = gui_ptr->stream_settings.bitrate_mode == 0;
-          }
-        });
-        if (gui_ptr->stream_settings.bitrate_mode == 1) {
-          gui::settings_row("Mbit/s", [&] {
-            if (gui::slider("##bitrate_compact", &gui_ptr->stream_settings.bitrate_mbps, 0.5f, 50.0f, gui::slider_flags_always_clamp)) {
-              rt->screen_encoder.config_.bitrate = gui_ptr->stream_settings.bitrate_mbps * 1000000;
-              std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
-              rt->screen_encoder.update_flags |= codec_update_e::rate_control;
-            }
-          });
-        }
-
-        bool remote_control = gui_ptr->stream_settings.input_control != 0;
-        if (gui::settings_switch("Remote control", &remote_control,
-          "Viewers can use your mouse and keyboard")) {
-          gui_ptr->stream_settings.input_control = remote_control ? 1 : 0;
-          gui_ptr->send_input_control_flag();
-        }
-
         gui_ptr->render_share_audio_checkbox();
       }
-      else if (!streaming) {
-        gui::text_wrapped_disabled("Shown while you share.");
-      }
+      gui::unindent(settings_space(2.f));
 
       // ---- what you watch
       if (viewing) {
-        gui::settings_section("WATCHING");
+        settings_section_icon(icon_e::speaker, "WATCHING");
+        gui::indent(settings_space(2.f));
         gui_ptr->render_play_audio_controls();
+        gui::unindent(settings_space(2.f));
       }
 
       // ---- on the graphics card or on the processor
       gui_ptr->render_video_choice();
 
       // ---- how it shows
-      gui::settings_section("DISPLAY");
+      settings_section_icon(icon_e::eye, "DISPLAY");
+      gui::indent(settings_space(2.f));
       gui::settings_switch("Stats over the picture", &gui_ptr->show_stream_stats,
         "Drag the box to move it");
+      if (gui_ptr->show_stream_stats) {
+        settings_hint("FPS and bitrate are drawn over the picture");
+      }
       if (gui::settings_switch("Always show the bottom bar", &gui_ptr->keep_stream_toolbar,
         "Off: it hides unless the mouse is near the bottom")) {
         gui_ptr->save_ui_config();
       }
+      bool remote_control = gui_ptr->stream_settings.input_control != 0;
+      if (gui::settings_switch("Remote control", &remote_control,
+        "Viewers can use your mouse and keyboard")) {
+        gui_ptr->stream_settings.input_control = remote_control ? 1 : 0;
+        gui_ptr->send_input_control_flag();
+      }
+      if (remote_control) {
+        settings_warning("Viewers can use your mouse and keyboard");
+      }
+      gui::unindent(settings_space(2.f));
 
       // ---- the details, folded away
       gui::dummy(fan::vec2(0, 6.f));
       if (settings_fold("Advanced", &advanced_open)) {
         if (streaming && rt) {
+          gui_ptr->resolution_controls.render_aspect_control();
+          gui_ptr->render_hdr_light();
+          gui::settings_row("Bitrate", [&] {
+            const char* bitrate_modes[] = { "Automatic", "Manual" };
+            if (gui::combo("##bitrate_mode", &gui_ptr->stream_settings.bitrate_mode, bitrate_modes, 2)) {
+              gui_ptr->stream_settings.use_adaptive_bitrate = gui_ptr->stream_settings.bitrate_mode == 0;
+            }
+          });
+          if (gui_ptr->stream_settings.bitrate_mode == 1) {
+            gui::settings_row("Mbit/s", [&] {
+              if (gui::slider("##bitrate_compact", &gui_ptr->stream_settings.bitrate_mbps, 0.5f, 50.0f, gui::slider_flags_always_clamp)) {
+                rt->screen_encoder.config_.bitrate = gui_ptr->stream_settings.bitrate_mbps * 1000000;
+                std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+                rt->screen_encoder.update_flags |= codec_update_e::rate_control;
+              }
+            });
+          }
           render_encoder_row(rt);
           render_scaling_row(rt);
         }
@@ -772,14 +778,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
             gui::set_tooltip("30 fps, 5 Mbit/s, remote control off");
           }
         }
-        else if (!viewing) {
-          gui::text_wrapped_disabled("Shown while you share or watch.");
-        }
       }
       if (settings_fold("Network", &network_open)) {
         render_network_details();
       }
-      gui::pop_style_var(2);
+      gui::pop_style_var(3);
     
 }
 

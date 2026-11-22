@@ -505,23 +505,34 @@
     render_capture_picker(capture, rt);
     // an HDR screen is tone mapped for sharing, how bright that comes out is up to taste and differs per game
     capture.hdr_exposure = hdr_exposure;
-    if (capture.hdr_active.load()) {
-      gui::settings_row("HDR light", [&] {
-        gui::slider("##hdr_brightness", &hdr_exposure, 0.2f, 2.f, gui::slider_flags_always_clamp);
-        if (gui::is_item_hovered()) {
-          gui::set_tooltip("How bright the HDR picture looks");
-        }
-        if (gui::is_item_deactivated_after_edit()) {
-          save_ui_config();
-        }
-      });
-    }
     gui::settings_switch("Preview", &preview_own_share, "See what you share");
     capture_preview_wanted = preview_own_share;
     if (preview_own_share) {
       render_preview_fps();
       draw_share_preview(current, gui::get_content_region_avail().x);
     }
+  }
+
+  // the HDR brightness slider, in the Advanced fold: it only exists on an HDR screen
+  void render_hdr_light() {
+    auto* rt = get_render_thread();
+    if (!rt) {
+      return;
+    }
+    auto& capture = rt->screen_encoder.mdscr;
+    capture.hdr_exposure = hdr_exposure;
+    if (!capture.hdr_active.load()) {
+      return;
+    }
+    gui::settings_row("HDR light", [&] {
+      gui::slider("##hdr_brightness", &hdr_exposure, 0.2f, 2.f, gui::slider_flags_always_clamp);
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip("How bright the HDR picture looks");
+      }
+      if (gui::is_item_deactivated_after_edit()) {
+        save_ui_config();
+      }
+    });
   }
 
   // The host's pointer goes to the viewers apart from the picture. Windows hands out the picture without it, and
@@ -568,21 +579,20 @@
     cursor_sent_at = now;
 
     backend_queue([x, y, visible]() -> fan::event::task_t {
-      try {
-        for (const auto& channel : ecps_backend.channel_info) {
-          if (channel.is_streaming) {
-            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor_t rest;
-            rest.ChannelID = channel.channel_id;
-            rest.ChannelSessionID = channel.session_id;
-            rest.X = x;
-            rest.Y = y;
-            rest.Visible = visible ? 1 : 0;
-            co_await ecps_backend.tcp_write(
-              ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor, &rest, sizeof(rest));
+      for (const auto& channel : ecps_backend.channel_info) {
+        if (channel.is_streaming) {
+          ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor_t rest;
+          rest.ChannelID = channel.channel_id;
+          rest.ChannelSessionID = channel.session_id;
+          rest.X = x;
+          rest.Y = y;
+          rest.Visible = visible ? 1 : 0;
+          if (auto sent = co_await ecps_expected(ecps_backend.tcp_write(
+            ecps_backend_t::Protocol_C2S_t::Channel_ScreenShare_Share_InformationToViewCursor, &rest, sizeof(rest))); !sent) {
+            co_return;
           }
         }
       }
-      catch (...) {}
     });
   }
 
