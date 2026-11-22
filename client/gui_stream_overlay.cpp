@@ -79,7 +79,7 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     bool just_changed = (panel_open && !was_panel_open) || (unread && !was_unread);
     was_panel_open = panel_open;
     was_unread = unread;
-    if (mouse_near || !has_picture || just_changed) {
+    if (mouse_near || !has_picture || just_changed || keep_stream_toolbar) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;

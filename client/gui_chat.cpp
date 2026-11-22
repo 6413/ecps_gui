@@ -11,6 +11,12 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       return;
     }
 
+    // a pasted picture was saved off the render thread: it waits above the input now
+    for (auto& image : clipboard_image_take()) {
+      chat_pending_files.push_back(std::move(image));
+      chat_focus_input = true;
+    }
+
     // dropped or attached files wait above the input for Enter or Send
     if (!chat_dropped_files.empty()) {
       chat_pending_files.insert(chat_pending_files.end(), chat_dropped_files.begin(), chat_dropped_files.end());
@@ -220,7 +226,16 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
     bool ctrl = owner->engine.window.is_key_down(fan::key_left_control) || owner->engine.window.is_key_down(fan::key_right_control);
     bool pasting = chat_input_active && ctrl && owner->engine.window.is_key_clicked(fan::key_v);
     std::string before = chat_input;
-    std::vector<std::string> pasted_files = pasting ? chat_clipboard_files() : std::vector<std::string>{};
+    std::vector<std::string> pasted_files;
+    bool pasted_image = false;
+    if (pasting) {
+      pasted_files = chat_clipboard_files();
+      if (pasted_files.empty()) {
+        // a screenshot or a copied picture: saving it happens in the background, so the stream keeps drawing
+        clipboard_image_begin();
+        pasted_image = clipboard_has_image();
+      }
+    }
 
     if (chat_focus_input) {
       gui::set_keyboard_focus_here();
@@ -247,8 +262,9 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       enter = !chat_input.empty();
     }
     gui::pop_item_width();
-    // pasted files wait above the input, like dropped ones
-    if (!pasted_files.empty()) {
+    // pasted files wait above the input, like dropped ones. A picture isn't ready yet: it joins them when the
+    // background read finishes (render_chat_tab takes it in)
+    if (!pasted_files.empty() || pasted_image) {
       chat_input = before;
       chat_pending_files.insert(chat_pending_files.end(), pasted_files.begin(), pasted_files.end());
     }
@@ -1051,7 +1067,7 @@ void render_thread_t::ecps_gui_t::render_side_panel_handle(fan::vec2 size, int s
       stored = std::clamp(side_drag_raw, side == 1 ? 150.f : 250.f, (side == 1 ? area.y : area.x) * 0.7f);
       will_hide = side_drag_raw < hide_below;
       if (will_hide) {
-        gui::set_tooltip("Let go to push it against the edge. Drag it out from there to bring it back");
+        gui::set_tooltip("Drop at the edge to hide; drag out to show");
       }
     }
     else if (side_panel_resizing && side_resizing_side == side && !fan::window::is_mouse_down(0)) {
@@ -1093,7 +1109,7 @@ void render_thread_t::ecps_gui_t::render_side_grip(fan::vec2 size, int side) {
     if (hot) {
       gui::set_mouse_cursor(side == 1 ? gui::mouse_cursor_resize_ns : gui::mouse_cursor_resize_ew);
       if (!active) {
-        gui::set_tooltip("Show " + names + " (click, or drag out to size it)");
+        gui::set_tooltip("Show " + names + " (click or drag to size)");
       }
     }
     if (active && gui::is_mouse_dragging(0, 4.f)) {

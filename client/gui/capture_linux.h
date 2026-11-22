@@ -22,7 +22,7 @@
         capture_armed = true;
       }
       if (gui::is_item_hovered()) {
-        gui::set_tooltip("Pick a screen or window in the system dialog");
+        gui::set_tooltip("Choose a screen or window");
       }
       if (chosen && !sharing) {
         gui::same_line();

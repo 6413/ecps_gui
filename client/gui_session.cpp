@@ -609,7 +609,7 @@ void render_thread_t::ecps_gui_t::update_stream_settings_persistence() {
         if (saved_stream.width >= 160 && saved_stream.height >= 120 && saved_stream.width <= 7680 && saved_stream.height <= 4320) {
           encoder.set_user_resolution((std::uint32_t)saved_stream.width, (std::uint32_t)saved_stream.height);
         }
-        if (saved_stream.fps >= 3 && saved_stream.fps <= 144) {
+        if (saved_stream.fps >= 3 && saved_stream.fps <= 244) {
           stream_settings.framerate = saved_stream.fps;
           encoder.config_.frame_rate = saved_stream.fps;
           std::lock_guard<std::mutex> lock(encoder.mutex);

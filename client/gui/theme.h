@@ -228,8 +228,8 @@
     if (pressed & 4) {
       scale = 1.f;
     }
-    // the range of the settings slider
-    scale = std::clamp(std::round(scale * 10.f) / 10.f, 0.75f, 2.f);
+    // the range fan's Text size slider allows
+    scale = std::clamp(std::round(scale * 10.f) / 10.f, 0.5f, 3.f);
     gui::set_font_scale(scale);
     if (auto* settings = fan_settings_menu()) {
       settings->config.interface_.font_scale = scale;

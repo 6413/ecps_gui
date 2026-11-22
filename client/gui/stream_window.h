@@ -57,7 +57,7 @@
         return;
       }
 
-      This->network_frame_helper.setup_network_frame(stream_area);
+      This->network_frame_helper.setup_network_frame(stream_area, true);
       This->render_fps_counter(stream_area.x);
       This->draw_host_cursor();
 
@@ -183,7 +183,7 @@
     if (hot) {
       gui::set_mouse_cursor(gui::mouse_cursor_resize_ew);
       if (!active) {
-        gui::set_tooltip("Show the panel (click, or drag out to size it)");
+        gui::set_tooltip("Show the panel (click or drag to size)");
       }
     }
     if (active && gui::is_mouse_dragging(0, 4.f)) {

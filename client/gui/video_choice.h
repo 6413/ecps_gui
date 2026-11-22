@@ -109,7 +109,12 @@
   static std::string join_names(const std::vector<std::string>& names) {
     std::string text;
     for (const auto& name : names) {
-      text += (text.empty() ? "" : ", ") + name;
+      // just the card's make: "NVIDIA", not "NVIDIA (h264_nvenc)"
+      std::string make = name.substr(0, name.find(" ("));
+      if (text.find(make) != std::string::npos) {
+        continue;
+      }
+      text += (text.empty() ? "" : ", ") + make;
     }
     return text;
   }
@@ -136,9 +141,8 @@
       static const char* names[] = {"H.264", "HEVC", "AV1"};
       static const char* tips[] = {
         "Plays on every computer",
-        "Sharper than H.264 at the same bitrate. Viewers need a GPU from the last several years",
-        "The sharpest for its bitrate. Viewers need an AV1 decoder: RTX 30 or newer, RX 6000 or newer, Intel Arc. "
-        "Your card needs an AV1 encoder (RTX 40 or newer, RX 7000 or newer), else H.264 is sent",
+        "Sharper than H.264; viewers need a recent GPU",
+        "Sharpest; viewers need AV1 (RTX 30+), you need RTX 40+ (else H.264)",
       };
       f32_t width = (gui::get_content_region_avail().x - 8.f) / 3.f;
       for (int i = 0; i < 3; ++i) {
@@ -166,12 +170,10 @@
       }
     });
     if (video_codec == 2) {
-      gui::text_wrapped_disabled("Sharp text: not with AV1, no AV1 encoder or decoder has full-resolution colour. Pick HEVC for it");
+      gui::text_wrapped_disabled("AV1 can't do sharp text. Pick HEVC.");
     }
     else if (gui::settings_switch("Sharp text", &sharp_text,
-      "Colour at full resolution (4:4:4): coloured text and thin lines stay sharp, for code and documents. Needs "
-      "about a quarter more bitrate for the same look. Your card: NVIDIA. Viewers: a card that decodes 4:4:4 "
-      "(NVIDIA RTX 20 or newer with HEVC)")) {
+      "Keeps text sharp. Uses 25% more bitrate; needs HEVC 4:4:4 (RTX 20+)")) {
       apply_codec_choice();
       save_ui_config();
     }
@@ -179,7 +181,7 @@
       gui::text_wrapped_disabled("In use: " + rt->screen_encoder.encoder_.get_codec_name());
     }
     else {
-      gui::text_wrapped_disabled(gpu_encoding_found ? "GPU: " + join_names(gpus) : std::string("GPU: none found, it will use the CPU (x264)"));
+      gui::text_wrapped_disabled(gpu_encoding_found ? "GPU: " + join_names(gpus) : std::string("No GPU encoder, using CPU"));
     }
 
     auto& decoder = rt->screen_decoder.decoder_;
@@ -192,9 +194,9 @@
     });
     if (ecps_backend.is_viewing_any_channel()) {
       gui::text_wrapped_disabled("In use: " + std::string(decoder.using_hardware_ ? decoder.get_hardware_type_string() : "CPU") +
-        (rt->screen_decoder.zero_copy_active() ? ", zero copy" : ""));
+        (rt->screen_decoder.zero_copy_active() ? " (zero copy)" : ""));
     }
     else {
-      gui::text_wrapped_disabled(gpu_decoding_usable ? "GPU: available" : "GPU: none found, CPU is used");
+      gui::text_wrapped_disabled(gpu_decoding_usable ? "GPU: available" : "No GPU decoder, using CPU");
     }
   }

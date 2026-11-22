@@ -105,6 +105,12 @@ std::string clipboard_image_file() {
   CloseClipboard();
   return written ? path.string() : std::string();
 }
+
+bool clipboard_has_image() {
+  static UINT png_format = RegisterClipboardFormatW(L"PNG");
+  return (png_format && IsClipboardFormatAvailable(png_format)) || IsClipboardFormatAvailable(CF_BITMAP) ||
+    IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_DIBV5);
+}
 #endif
 
 
@@ -138,4 +144,48 @@ std::string clipboard_image_file() {
   std::filesystem::remove(path, ec);
   return {};
 }
+
+// asking for the picture takes a clipboard program here, so there is no quick check: the read is always tried in the
+// background and simply comes back empty when the clipboard has no image
+bool clipboard_has_image() {
+  return false;
+}
 #endif
+
+
+// One picture is read at a time, in a thread of its own: a clipboard bitmap's conversion and PNG write take long
+// enough to freeze the render thread (and with it the stream on screen) when done in a frame.
+namespace {
+  std::mutex clipboard_image_mutex;
+  std::vector<std::string> clipboard_image_finished;
+  bool clipboard_image_reading = false;
+}
+
+void clipboard_image_begin() {
+  {
+    std::lock_guard<std::mutex> lock(clipboard_image_mutex);
+    if (clipboard_image_reading) {
+      return;
+    }
+    clipboard_image_reading = true;
+  }
+  std::thread([] {
+    std::string image;
+    try {
+      image = clipboard_image_file();
+    }
+    catch (...) {}
+    std::lock_guard<std::mutex> lock(clipboard_image_mutex);
+    if (!image.empty()) {
+      clipboard_image_finished.push_back(std::move(image));
+    }
+    clipboard_image_reading = false;
+  }).detach();
+}
+
+std::vector<std::string> clipboard_image_take() {
+  std::lock_guard<std::mutex> lock(clipboard_image_mutex);
+  std::vector<std::string> images;
+  images.swap(clipboard_image_finished);
+  return images;
+}

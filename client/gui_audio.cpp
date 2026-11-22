@@ -2,6 +2,30 @@
 #include "gui_std.h" // precompiled, first
 #include "ecps_app.h"
 
+// a gain slider shown as a percentage (1 = 100%), the way call apps show volume
+static bool percent_slider(const char* id, f32_t* value, f32_t max = 2.f) {
+  f32_t shown = *value * 100.f;
+  f32_t shown_min = 0.f;
+  f32_t shown_max = max * 100.f;
+  bool changed = gui::slider_scalar(id, gui::get_imgui_data_type<f32_t>(), &shown, &shown_min, &shown_max,
+    "%.0f%%", gui::slider_flags_always_clamp);
+  if (changed) {
+    *value = shown / 100.f;
+  }
+  return changed;
+}
+
+// a click on a speaker icon mutes and remembers the level, another brings it back
+static void toggle_volume(f32_t* value, f32_t& previous) {
+  if (*value > 0.f) {
+    previous = *value;
+    *value = 0.f;
+  }
+  else {
+    *value = previous > 0.f ? previous : 1.f;
+  }
+}
+
 void render_thread_t::ecps_gui_t::render_share_audio_checkbox() {
     if (!fan::audio::loopback_capture_t::is_supported()) {
       return;
@@ -56,11 +80,6 @@ void render_thread_t::ecps_gui_t::render_share_audio_checkbox() {
     else if (!default_device) {
       gui::text_wrapped_disabled("Records only what plays on this device");
     }
-    else if (can_exclude && gui::settings_switch("Leave out Discord", &exclude,
-      "Every app except Discord, so calls stay private")) {
-      settings.exclude_discord = exclude;
-      save_audio_settings();
-    }
     // the notes below are about leaving out Discord, which only the default output does
     exclude = exclude && default_device && !one_window;
     if (exclude && !find_sonar_gaming().empty()) {
@@ -73,7 +92,7 @@ void render_thread_t::ecps_gui_t::render_share_audio_checkbox() {
     }
 
     gui::settings_row("Level", [&] {
-      gui::slider("##audio_gain", &settings.gain, 0.f, 2.f, gui::slider_flags_always_clamp);
+      percent_slider("##audio_gain", &settings.gain);
       if (gui::is_item_deactivated_after_edit()) {
         save_audio_settings();
       }
@@ -95,7 +114,14 @@ void render_thread_t::ecps_gui_t::render_play_audio_controls() {
     }
     if (stream_settings.play_audio) {
       gui::settings_row("Volume", [&] {
-        gui::slider("##audio_volume", &stream_settings.audio_volume, 0.f, 2.f, gui::slider_flags_always_clamp);
+        if (icon_button("##mute_audio_volume",
+          stream_settings.audio_volume > 0.f ? icon_e::speaker : icon_e::speaker_muted,
+          stream_settings.audio_volume > 0.f ? "Mute" : "Unmute")) {
+          toggle_volume(&stream_settings.audio_volume, premute_audio_volume);
+          save_audio_settings();
+        }
+        gui::same_line();
+        percent_slider("##audio_volume", &stream_settings.audio_volume);
         if (gui::is_item_deactivated_after_edit()) {
           save_audio_settings();
         }
@@ -108,7 +134,7 @@ bool render_thread_t::ecps_gui_t::render_voice_switch(ecps_backend_t::Protocol_C
       return false;
     }
     bool in_voice = voice_chat.is_wanted(channel_id);
-    if (gui::settings_switch("Voice chat", &in_voice, "Talk with the others in this channel. Your microphone stays off until you join")) {
+    if (gui::settings_switch("Voice chat", &in_voice, "Talk in this channel; your mic starts muted")) {
       if (in_voice) {
         voice_chat.join(channel_id);
       }
@@ -120,7 +146,7 @@ bool render_thread_t::ecps_gui_t::render_voice_switch(ecps_backend_t::Protocol_C
     if (in_voice) {
       // the microphone is muted by clicking your own voice badge in the list, or with its key
       bool deafened = voice_chat.deafened.load();
-      if (gui::settings_switch("Mute others", &deafened, ("You stop hearing the voice chat. Key: " + voice_key_text(action_toggle_deafen)).c_str())) {
+      if (gui::settings_switch("Mute others", &deafened, ("Mute the voice chat. Key: " + voice_key_text(action_toggle_deafen)).c_str())) {
         voice_chat.deafened.store(deafened);
         save_server_voice(true);
       }
@@ -143,19 +169,19 @@ void render_thread_t::ecps_gui_t::render_voice_settings() {
     }
     bool echo_cancel = stream_settings.voice_echo_cancel;
     if (gui::settings_switch("Echo cancellation", &echo_cancel,
-      "For speakers: keeps the others from hearing themselves back through your microphone. Not needed with headphones, and adds a little delay")) {
+      "Stops echo when using speakers. Adds a little delay")) {
       stream_settings.voice_echo_cancel = echo_cancel;
       save_voice_settings();
     }
     bool noise_suppress = stream_settings.voice_noise_suppress;
     if (gui::settings_switch("Noise suppression", &noise_suppress,
-      "Removes steady background noise from your microphone: fans, hiss, hum. Your voice is left as it is")) {
+      "Removes background noise like fans and hum")) {
       stream_settings.voice_noise_suppress = noise_suppress;
       save_voice_settings();
     }
     bool normalize = stream_settings.voice_normalize;
     if (gui::settings_switch("Voice normalization", &normalize,
-      "Evens out the others' volume: a quiet voice is brought up and a loud one down, so you don't keep adjusting each one. Silence and background noise are left alone")) {
+      "Evens out loud and quiet voices")) {
       stream_settings.voice_normalize = normalize;
       save_voice_settings();
     }
@@ -201,9 +227,23 @@ void render_thread_t::ecps_gui_t::render_voice_settings() {
     device_row("Microphone", "##voice_device", 0, stream_settings.voice_device);
     device_row("Speakers", "##voice_output", 1, stream_settings.voice_output);
 
-    gui::saved_slider("Mic level", "##voice_gain", &stream_settings.voice_gain, 2.f, [this] { save_voice_settings(); });
-    gui::saved_slider("Send above", "##voice_threshold", &stream_settings.voice_threshold, voice_meter_range,
-      [this] { save_voice_settings(); });
+    gui::settings_row("Mic level", [&] {
+      bool muted = voice_chat.muted.load();
+      if (icon_button("##mute_mic", muted ? icon_e::mic_muted : icon_e::mic, muted ? "Unmute mic" : "Mute mic")) {
+        toggle_mic_mute();
+      }
+      gui::same_line();
+      percent_slider("##voice_gain", &stream_settings.voice_gain);
+      if (gui::is_item_deactivated_after_edit()) {
+        save_voice_settings();
+      }
+    });
+    gui::settings_row("Send above", [&] {
+      percent_slider("##voice_threshold", &stream_settings.voice_threshold, voice_meter_range);
+      if (gui::is_item_deactivated_after_edit()) {
+        save_voice_settings();
+      }
+    });
 
     fan::vec2 at = gui::get_cursor_screen_pos();
     f32_t width = gui::get_content_region_avail().x;
@@ -216,11 +256,33 @@ void render_thread_t::ecps_gui_t::render_voice_settings() {
     list->AddRectFilled(at + fan::vec2(mark - 1.f, -2.f), at + fan::vec2(mark + 1.f, 6.f), 0xffffffffu);
     gui::dummy(fan::vec2(width, 6.f));
 
-    gui::saved_slider("Volume", "##voice_volume", &stream_settings.voice_volume, 2.f, [this] { save_voice_settings(); });
+    gui::settings_row("Volume", [&] {
+      if (icon_button("##mute_voice_volume",
+        stream_settings.voice_volume > 0.f ? icon_e::speaker : icon_e::speaker_muted,
+        stream_settings.voice_volume > 0.f ? "Mute" : "Unmute")) {
+        toggle_volume(&stream_settings.voice_volume, premute_voice_volume);
+        save_voice_settings();
+      }
+      gui::same_line();
+      percent_slider("##voice_volume", &stream_settings.voice_volume);
+      if (gui::is_item_deactivated_after_edit()) {
+        save_voice_settings();
+      }
+    });
     // message, join and leave sounds. Letting go plays one, to hear the new level
-    gui::saved_slider("Notification sounds", "##notify_volume", &stream_settings.notify_volume, 2.f, [this] {
-      save_voice_settings();
-      notify_sounds.request(notify_sounds_t::message);
+    gui::settings_row("Notification sounds", [&] {
+      if (icon_button("##mute_notify_volume",
+        stream_settings.notify_volume > 0.f ? icon_e::speaker : icon_e::speaker_muted,
+        stream_settings.notify_volume > 0.f ? "Mute" : "Unmute")) {
+        toggle_volume(&stream_settings.notify_volume, premute_notify_volume);
+        save_voice_settings();
+      }
+      gui::same_line();
+      percent_slider("##notify_volume", &stream_settings.notify_volume);
+      if (gui::is_item_deactivated_after_edit()) {
+        save_voice_settings();
+        notify_sounds.request(notify_sounds_t::message);
+      }
     });
   }
 
@@ -314,8 +376,14 @@ void render_thread_t::ecps_gui_t::render_user_volume_popup() {
       return;
     }
     gui::text("Voice volume for " + volume_user_name);
+    bool muted = user_volume(volume_user_name) <= 0.f;
+    if (icon_button("##mute_user_volume", muted ? icon_e::speaker_muted : icon_e::speaker, muted ? "Unmute" : "Mute")) {
+      toggle_user_mute(volume_user_session, volume_user_name);
+      volume_user_value = user_volume(volume_user_name);
+    }
+    gui::same_line();
     // heard while dragging, saved when let go
-    if (gui::slider("##user_volume_slider", &volume_user_value, 0.f, 2.f, gui::slider_flags_always_clamp)) {
+    if (percent_slider("##user_volume_slider", &volume_user_value)) {
       voice_chat.set_user_volume(volume_user_session, volume_user_value);
     }
     if (gui::is_item_deactivated_after_edit()) {

@@ -1,5 +1,5 @@
   void render_camera_source() {
-    if (gui::settings_switch("Share camera", &stream_settings.share_camera, "Send a camera's picture in place of the screen")) {
+    if (gui::settings_switch("Share camera", &stream_settings.share_camera, "Show your camera instead of the screen")) {
       camera_devices = fan::graphics::get_camera_devices();
     }
     if (!stream_settings.share_camera) {

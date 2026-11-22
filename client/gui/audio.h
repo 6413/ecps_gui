@@ -103,6 +103,10 @@
 
   // someone muted just for you with a click on their voice badge, the volume they had comes back on the next click
   std::map<std::string, f32_t> premute_user_volumes;
+  // the levels the speaker icons muted, brought back by the next click
+  f32_t premute_audio_volume = 1.f;
+  f32_t premute_voice_volume = 1.f;
+  f32_t premute_notify_volume = 1.f;
   void toggle_user_mute(std::uint32_t session, const std::string& name);
 
 

@@ -407,7 +407,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channels_content
         bool hot = gui::is_item_hovered() || gui::is_item_active();
         if (hot) {
           gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
-          gui::set_tooltip("Drag to make the list taller or shorter, double click to fit it to the channels");
+          gui::set_tooltip("Drag to resize, double-click to fit");
         }
         if (gui::is_item_active()) {
           channels_list_height = list_height + gui::get_io().MouseDelta.y;
@@ -690,7 +690,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
         gui_ptr->resolution_controls.render_resolution_controls();
 
         gui::settings_row("Framerate", [&] {
-          gui::slider("##framerate_compact", &gui_ptr->stream_settings.framerate, 3.f, 144.f);
+          gui::slider("##framerate_compact", &gui_ptr->stream_settings.framerate, 3.f, 244.f);
           if (gui::is_item_deactivated_after_edit()) {
             rt->screen_encoder.config_.frame_rate = gui_ptr->stream_settings.framerate;
             std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
@@ -729,7 +729,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
         gui_ptr->render_share_audio_checkbox();
       }
       else if (!streaming) {
-        gui::text_wrapped_disabled("Quality, audio and remote control show here while you share.");
+        gui::text_wrapped_disabled("Shown while you share.");
       }
 
       // ---- what you watch
@@ -745,6 +745,10 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
       gui::settings_section("DISPLAY");
       gui::settings_switch("Stats over the picture", &gui_ptr->show_stream_stats,
         "Drag the box to move it");
+      if (gui::settings_switch("Always show the bottom bar", &gui_ptr->keep_stream_toolbar,
+        "Off: it hides unless the mouse is near the bottom")) {
+        gui_ptr->save_ui_config();
+      }
 
       // ---- the details, folded away
       gui::dummy(fan::vec2(0, 6.f));
@@ -769,7 +773,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
           }
         }
         else if (!viewing) {
-          gui::text_wrapped_disabled("Encoder and decoder settings show while you share or watch.");
+          gui::text_wrapped_disabled("Shown while you share or watch.");
         }
       }
       if (settings_fold("Network", &network_open)) {

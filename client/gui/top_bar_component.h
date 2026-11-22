@@ -348,7 +348,7 @@ struct top_bar_t {
         gui::get_content_region_avail().x);
       if (gui::begin_child("##auto_update_row", fan::vec2(switch_width, gui::get_frame_height()), false)) {
         if (gui::settings_switch("Update automatically", &gui.auto_update,
-          "Installs a new version as soon as it is found and restarts into it, also while you share your screen")) {
+          "Installs updates automatically and restarts, even while sharing")) {
           gui.save_ui_config();
         }
       }
@@ -381,7 +381,7 @@ struct top_bar_t {
       update_error_copied_at = std::chrono::steady_clock::now();
     }
     if (gui::is_item_hovered()) {
-      gui::set_tooltip("Copies the error and the end of the update log, to paste where it can be looked at");
+      gui::set_tooltip("Copy the error and update log");
     }
   }
 

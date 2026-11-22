@@ -509,7 +509,7 @@
       gui::settings_row("HDR light", [&] {
         gui::slider("##hdr_brightness", &hdr_exposure, 0.2f, 2.f, gui::slider_flags_always_clamp);
         if (gui::is_item_hovered()) {
-          gui::set_tooltip("How bright the HDR screen looks to viewers");
+          gui::set_tooltip("How bright the HDR picture looks");
         }
         if (gui::is_item_deactivated_after_edit()) {
           save_ui_config();

@@ -7,6 +7,7 @@
     fan::json ui = fan::json::object();
     ui["compact_bar"] = top_bar_compact;
     ui["autohide"] = ui_autohide;
+    ui["keep_toolbar"] = keep_stream_toolbar;
     ui["preview_size"] = preview_fraction;
     ui["hdr_brightness"] = hdr_exposure;
     ui["preview_fps"] = preview_fps;

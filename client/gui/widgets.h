@@ -98,7 +98,7 @@
 
   // ---- icons, drawn with lines and shapes so they stay sharp at any size ------------------------------------
   // (colours are linear, the window shows them through sRGB: small numbers look lighter on screen)
-  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users, close, reply, pin, edit, trash };
+  enum class icon_e { gear, fullscreen, exit_fullscreen, plus, server, leave, join, refresh, send_file, eye, monitor, stop, chat, copy, download, users, close, reply, pin, edit, trash, speaker, speaker_muted, mic, mic_muted };
 
   // an icon in a box of `size` around `c`. grow makes every line and dot thicker, for a dark outline drawn under it
   static void draw_icon(gui::draw_list_t* list, icon_e icon, fan::vec2 c, f32_t size, std::uint32_t color, f32_t grow = 0.f) {
@@ -263,6 +263,41 @@
         list->PathStroke(color, 0, t * 1.25f);
         break;
       }
+      case icon_e::speaker:
+      case icon_e::speaker_muted: {
+        // a speaker box with its cone opening to the right, and sound leaving it
+        list->PathLineTo(P(-0.85f, -0.22f));
+        list->PathLineTo(P(-0.45f, -0.22f));
+        list->PathLineTo(P(0.02f, -0.62f));
+        list->PathLineTo(P(0.02f, 0.62f));
+        list->PathLineTo(P(-0.45f, 0.22f));
+        list->PathLineTo(P(-0.85f, 0.22f));
+        list->PathStroke(color, 1, t);
+        if (icon == icon_e::speaker_muted) {
+          line(P(0.3f, -0.32f), P(0.82f, 0.32f));
+          line(P(0.3f, 0.32f), P(0.82f, -0.32f));
+        }
+        else {
+          list->PathArcTo(P(0.12f, 0), h * 0.36f, -0.9f, 0.9f, 12);
+          list->PathStroke(color, 0, t);
+          list->PathArcTo(P(0.12f, 0), h * 0.66f, -0.75f, 0.75f, 16);
+          list->PathStroke(color, 0, t);
+        }
+        break;
+      }
+      case icon_e::mic:
+      case icon_e::mic_muted: {
+        // a capsule head, a holder around its bottom and a small stand
+        list->AddRect(P(-0.28f, -0.85f), P(0.28f, -0.05f), color, h * 0.28f, 0, t);
+        list->PathArcTo(P(0, 0.05f), h * 0.5f, 0.f, 3.14159265f, 16);
+        list->PathStroke(color, 0, t);
+        line(P(0, 0.55f), P(0, 0.82f));
+        line(P(-0.32f, 0.82f), P(0.32f, 0.82f));
+        if (icon == icon_e::mic_muted) {
+          line(P(-0.62f, -0.62f), P(0.62f, 0.62f));
+        }
+        break;
+      }
     }
   }
 
@@ -308,8 +343,9 @@
   struct network_frame_helper_t {
     #undef This
     #define This OFFSETLESS(this, ecps_gui_t, network_frame_helper) 
-    // Zoom: Ctrl+wheel over the stream zooms at the mouse, dragging with the middle button (or Ctrl+left) moves the
-    // zoomed picture, Ctrl+middle click goes back to the whole picture
+    // Zoom: Ctrl+wheel over the stream zooms at the mouse (in full screen the wheel alone does), dragging with the
+    // middle button (or Ctrl+left) moves the zoomed picture, Ctrl+middle click (in full screen the middle button)
+    // goes back to the whole picture
     f32_t zoom = 1.f;
     fan::vec2 offset = 0;
 
@@ -317,7 +353,7 @@
     fan::vec2 shown_position = 0;
     fan::vec2 shown_half = 0;
 
-    void setup_network_frame(fan::vec2 available_area) {
+    void setup_network_frame(fan::vec2 available_area, bool fullscreen = false) {
       auto rt = get_render_thread();
       if (!rt) return;
 
@@ -331,17 +367,19 @@
       fan::vec2 mouse = fan::vec2(io.MousePos) - origin;
       bool over = gui::is_window_hovered() && mouse.x >= 0 && mouse.y >= 0 && mouse.x <= available_area.x && mouse.y <= available_area.y;
       bool ctrl = engine.window.is_key_down(fan::key_left_control) || engine.window.is_key_down(fan::key_right_control);
-      if (over && ctrl && io.MouseWheel != 0.f) {
+      // in full screen there is nothing else for the wheel to do: it zooms without Ctrl
+      bool zoom_mod = ctrl || fullscreen;
+      if (over && zoom_mod && io.MouseWheel != 0.f) {
         f32_t old_zoom = zoom;
         zoom = std::clamp(zoom * std::pow(1.15f, io.MouseWheel), 1.f, 10.f);
         fan::vec2 at = center + offset;
         at = mouse + (at - mouse) * (zoom / old_zoom);
         offset = at - center;
       }
-      if (over && zoom > 1.f && (gui::is_mouse_dragging(2, 2.f) || (ctrl && gui::is_mouse_dragging(0, 2.f)))) {
+      if (over && zoom > 1.f && (gui::is_mouse_dragging(2, 2.f) || (zoom_mod && gui::is_mouse_dragging(0, 2.f)))) {
         offset += fan::vec2(io.MouseDelta);
       }
-      if (over && ctrl && fan::window::is_mouse_clicked(2)) {
+      if (over && zoom_mod && fan::window::is_mouse_clicked(2)) {
         zoom = 1.f;
       }
       if (zoom <= 1.f) {

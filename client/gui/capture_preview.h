@@ -106,7 +106,7 @@
     gui::settings_row("Preview fps", [&] {
       gui::slider("##preview_fps", &preview_fps, 1, 60, gui::slider_flags_always_clamp);
       if (gui::is_item_hovered()) {
-        gui::set_tooltip("How often the preview updates. Higher costs a little more");
+        gui::set_tooltip("How often the preview updates (costs more)");
       }
       if (gui::is_item_deactivated_after_edit()) {
         save_ui_config();

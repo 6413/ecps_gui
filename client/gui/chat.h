@@ -479,14 +479,14 @@
   void render_chat_file_actions(const std::string& text, std::uint32_t message_id, std::uint32_t from);
 
 
-  // the picture at path, loaded the first time it is asked for: read and decoded off the gui thread, big pictures
-  // made smaller to at most 1600 wide or high. ready or failed tell when it is done
+  // the picture at path, loaded the first time it is asked for: read and decoded off the gui thread at its original
+  // size, so the viewer and zoom show every pixel. ready or failed tell when it is done
   chat_picture_t& chat_picture_for(const std::string& path) {
     auto& picture = chat_pictures[path];
     if (!picture.ready && !picture.failed && !picture.loading.valid()) {
       picture.loading = std::async(std::launch::async, [path]() {
         try {
-          return fan::image::load_owned(path, fan::vec2ui(1600, 1600));
+          return fan::image::load_owned(path);
         }
         catch (...) {
           return fan::image::owned_t{};
@@ -780,7 +780,7 @@
         side_panel_moving = panel;
       }
       if (hovered && side_panel_moving < 0 && !is_fullscreen_stream) {
-        gui::set_tooltip("Drag to move it to the right, the bottom or the left. Drop it on another one to share a panel");
+        gui::set_tooltip("Drag to move or dock; drop on another to combine");
       }
       if (clicked && side_panel_moving < 0) {
         side_front[is_fullscreen_stream ? 3 : side_of[panel]] = panel;
@@ -924,21 +924,14 @@
   void render_chat_pending_files();
 
 
-  // the files on the clipboard: Explorer's copied files on Windows, file:// lines or paths elsewhere
+  // the files on the clipboard: Explorer's copied files on Windows, file:// lines or paths elsewhere. A picture is
+  // saved in the background (clipboard_image_begin), it joins the pending files when it is done
   std::vector<std::string> chat_clipboard_files() {
     std::vector<std::string> paths;
   #if defined(_WIN32)
     paths = clipboard_file_paths();
     if (!paths.empty()) {
       return paths;
-    }
-    // an image goes as a picture file
-    if (std::string image = clipboard_image_file(); !image.empty()) {
-      return { image };
-    }
-  #else
-    if (std::string image = clipboard_image_file(); !image.empty()) {
-      return { image };
     }
   #endif
     std::string text = engine.window.get_clipboard();

@@ -127,6 +127,12 @@ struct worker_thread_scope_t {
 // makes the requires check dependent, so a missing member is not an error
 std::vector<std::string> clipboard_file_paths();
 std::string clipboard_image_file();
+// a quick "is there a picture on the clipboard" check (Windows only, elsewhere false). The picture itself is saved
+// by clipboard_image_begin in the background, so the render thread never waits for it; clipboard_image_take hands
+// over the ones that finished
+bool clipboard_has_image();
+void clipboard_image_begin();
+std::vector<std::string> clipboard_image_take();
 
 
 

@@ -93,6 +93,7 @@ struct ecps_gui_t {
         top_bar_compact = ui.value("compact_bar", false);
         top_bar_stats_mode = std::clamp((int)ui.value("stats_mode", 1.0), 0, 1);
         ui_autohide = ui.value("autohide", false);
+        keep_stream_toolbar = ui.value("keep_toolbar", false);
         auto_update = ui.value("auto_update", false);
         preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
         hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
@@ -403,6 +404,8 @@ struct ecps_gui_t {
   bool about_popup_requested = false;
   f32_t toolbar_alpha = 1.f;
   std::chrono::steady_clock::time_point toolbar_visible_until;
+  // on: the stream toolbar stays on screen; off: it fades out unless the mouse is near the bottom
+  bool keep_stream_toolbar = false;
   f32_t fullscreen_toolbar_alpha = 1.f;
   std::chrono::steady_clock::time_point fullscreen_toolbar_visible_until;
 
