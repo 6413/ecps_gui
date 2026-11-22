@@ -1,5 +1,5 @@
 // Theme implementation, out of line so a theme edit does not recompile the whole client.
-#include "globals.h"
+#include "app_state.h"
 
 
 void render_thread_t::ecps_gui_t::apply_backdrop_color() {

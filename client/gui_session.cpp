@@ -1,5 +1,5 @@
 // Session implementation, out of line.
-#include "globals.h"
+#include "app_state.h"
 
 std::string render_thread_t::ecps_gui_t::username_notice_text() const {
     if (!username_notice.empty() && std::chrono::steady_clock::now() < username_notice_until) {

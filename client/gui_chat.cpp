@@ -1,5 +1,5 @@
 // Chat implementation, out of line so a chat edit does not recompile the whole client.
-#include "globals.h"
+#include "app_state.h"
 
 
 void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_ChannelID_t channel_id) {

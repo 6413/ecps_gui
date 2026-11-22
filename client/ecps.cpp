@@ -1,4 +1,4 @@
-#include "globals.h"
+#include "app_state.h"
 
 static fan::vec2i capture_origin(render_thread_t* rt) {
 #if defined(_WIN32)

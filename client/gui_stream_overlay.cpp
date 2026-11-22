@@ -1,5 +1,5 @@
 // Stream overlay implementation, out of line.
-#include "globals.h"
+#include "app_state.h"
 
 void render_thread_t::ecps_gui_t::render_stream_users_overlay() {
     if (!show_stream_users) {

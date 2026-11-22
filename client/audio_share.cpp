@@ -1,5 +1,5 @@
 // Audio share implementation, out of line.
-#include "globals.h"
+#include "app_state.h"
 
 void audio_share_t::update(bool share, bool play, f32_t volume, const capture_options_t& options) {
     bool want_capture = share && ecps_backend.is_streaming_to_any_channel();

@@ -1,5 +1,5 @@
 // Voice chat implementation, out of line.
-#include "globals.h"
+#include "app_state.h"
 
 void voice_chat_t::join(channel_id_t channel_id) {
     wanted_channel.store(channel_id.i);

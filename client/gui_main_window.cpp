@@ -1,5 +1,5 @@
 // Main window implementation, out of line.
-#include "globals.h"
+#include "app_state.h"
 
 
 void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
