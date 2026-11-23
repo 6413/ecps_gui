@@ -8,6 +8,8 @@
   f32_t hdr_exposure = 0.8f;                         // how bright a tone mapped HDR screen comes out (Windows)
   int preview_fps = 5;                               // how often the preview is updated
   std::atomic<bool> capture_preview_wanted {false};
+  // set by the encode thread when the shared window closed; the gui stops the share on the next frame
+  std::atomic<bool> stream_source_lost {false};
   std::atomic<int> capture_preview_width {960};     // the width the preview is drawn at, the copy is made about that wide
 
   std::mutex capture_preview_mutex;

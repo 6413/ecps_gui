@@ -724,6 +724,10 @@ void render_thread_t::ecps_gui_t::update_watch() {
   }
 
 void render_thread_t::ecps_gui_t::update_stream_state() {
+    if (stream_source_lost.exchange(false)) {
+      fan::print("share: the shared window closed, stopped sharing");
+      stream_button_renderer_t::set_sharing(false);
+    }
     auto now = std::chrono::steady_clock::now();
     bool refresh = now - stream_state_sent_at > std::chrono::seconds(10);
     for (const auto& channel : ecps_backend.channel_info) {

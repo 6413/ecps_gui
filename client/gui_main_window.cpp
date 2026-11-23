@@ -172,6 +172,16 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
         f32_t lock = gui::get_font_size() * 0.82f;
         if (after_name + lock + 10.f <= at.x + width - right_width - 12.f) {
           draw_icon(list, icon_e::lock, fan::vec2(after_name + lock * 0.5f, at.y + row_height * 0.5f), lock, 0xff40b8f0u);
+          after_name += lock + 10.f;
+        }
+      }
+      if (voice_chat.is_wanted(channel.channel_id)) {
+        // voice and the microphone's state stay visible even with the member list closed
+        bool muted = voice_chat.muted.load();
+        f32_t mic = gui::get_font_size() * 0.8f;
+        if (after_name + mic + 10.f <= at.x + width - right_width - 12.f) {
+          draw_icon(list, muted ? icon_e::mic_muted : icon_e::mic, fan::vec2(after_name + mic * 0.5f, at.y + row_height * 0.5f),
+            mic, muted ? 0xff8080ffu : 0xff90ff90u);
         }
       }
       list->AddText(fan::vec2(at.x + width - right_width - 10.f, text_y), 0xff909090u, right.c_str());

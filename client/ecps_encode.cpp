@@ -71,7 +71,14 @@ void run_encode_thread() {
       }
     #endif
       // waits for the next frame of the desktop, but a failed read returns at once
-      if (!rt->screen_encoder.screen_read()) {
+      bool read_ok = rt->screen_encoder.screen_read();
+    #if defined(_WIN32)
+      // the window that was shared closed: stop sharing instead of silently switching the viewers to the desktop
+      if (rt->screen_encoder.mdscr.take_target_window_closed()) {
+        rt->ecps_gui.stream_source_lost.store(true);
+      }
+    #endif
+      if (!read_ok) {
       #if !defined(_WIN32)
         if (rt->screen_encoder.take_capture_open_failed()) {
           rt->ecps_gui.capture_armed = false;
