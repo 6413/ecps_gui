@@ -9,6 +9,9 @@
   std::atomic<bool> capture_armed {false};     // keep the capture open while not sharing, for the preview and the next share
   std::atomic<bool> capture_reselect {false};  // close the capture, the next read opens the dialog again
 
+  // HDR tone mapping is Windows-only; the setting doesn't exist here
+  void render_hdr_light() {}
+
   void render_capture_source() {
     bool sharing = ecps_backend.is_streaming_to_any_channel();
     bool chosen = capture_armed.load() || sharing;

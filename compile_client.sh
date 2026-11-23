@@ -24,11 +24,33 @@ wayland_screen=n
 
 cd "$fan_dir"
 
+# the client modules and sources beside main; fan only adds main on its own
+client_sources=(
+  "$script_dir/client/ecps_version.cpp"
+  "$script_dir/client/ecps_core.ixx"
+  "$script_dir/client/ecps_app.ixx"
+  "$script_dir/client/ecps_s2c.cpp"
+  "$script_dir/client/ecps_backend.cpp"
+  "$script_dir/client/ecps_encode.cpp"
+  "$script_dir/client/ecps_threads.cpp"
+  "$script_dir/client/app_state.cpp"
+  "$script_dir/client/audio_share.cpp"
+  "$script_dir/client/clipboard.cpp"
+  "$script_dir/client/gui_audio.cpp"
+  "$script_dir/client/gui_chat.cpp"
+  "$script_dir/client/gui_main_window.cpp"
+  "$script_dir/client/gui_session.cpp"
+  "$script_dir/client/gui_stream_overlay.cpp"
+  "$script_dir/client/gui_theme.cpp"
+  "$script_dir/client/voice_chat.cpp"
+)
+extra_main=$(IFS=,; echo "${client_sources[*]}")
+
 xmake f -y -c -m "$mode" --compiler="$compiler" \
   --FAN_WINDOW=y --FAN_2D=y --FAN_GUI=y --FAN_PHYSICS_2D=y --FAN_JSON=y --FAN_NETWORK=y \
   --FAN_VIDEO=y --FAN_FMT=y --FAN_SHADERC=y --FAN_3D=n --FAN_AUDIO=n --FAN_AUDIO_STREAM=y \
   --FAN_WAYLAND_SCREEN="$wayland_screen" --FAN_REFLECTION=n \
-  --FAN_DEBUG_INFO=y --main="$main" --ldflags="-lev -lssl -lcrypto"
+  --FAN_DEBUG_INFO=y --main="$main" --extra_main="$extra_main" --ldflags="-lev -lssl -lcrypto"
 xmake -y -j"$(nproc)" a.exe
 
 # cp then mv, so a running ecps.exe gets replaced instead of failing with "Text file busy"
