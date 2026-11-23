@@ -99,8 +99,9 @@ struct ecps_gui_t {
         hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
         preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
         encode_on_gpu = ui.value("encode_on_gpu", true);
-        video_codec = std::clamp(ui.value("video_codec", 0), 0, 2);
+        video_codec = std::clamp(ui.value("video_codec", 2), 0, 2);
         sharp_text = ui.value("sharp_text", false);
+        lossless = ui.value("lossless", false);
         decode_on_gpu = ui.value("decode_on_gpu", true);
       }
       if (config.contains("stream") && config["stream"].is_object()) {

@@ -157,7 +157,7 @@
         rt->screen_encoder.set_user_resolution(resolution.width, resolution.height);
         rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
 
-        if (rt->ecps_gui.stream_settings.bitrate_mode == 0) {
+        if (!rt->ecps_gui.lossless && rt->ecps_gui.stream_settings.bitrate_mode == 0) {
           rt->screen_encoder.config_.bitrate = dynamic_config_t::get_adaptive_bitrate();
           {
             std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);

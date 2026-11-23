@@ -9,9 +9,39 @@
   bool decode_on_gpu = true;
   // the codec shared with: 0 H.264, 1 HEVC, 2 AV1 (codec_config_t's order). A card that can't encode it falls back to
   // H.264 by itself. Viewers find out from the stream which one it is
-  int video_codec = 0;
+  int video_codec = 2;
   // colour at full resolution (4:4:4): sharp coloured text, for code and documents. H.264 and HEVC on an NVIDIA card
   bool sharp_text = false;
+
+  // HEVC 4:4:4 at QP 0: no quality knob left, but hundreds of Mbit/s. For a LAN, or a very fast link
+  bool lossless = false;
+
+  void apply_lossless() {
+    if (auto* rt = get_render_thread()) {
+      if (lossless) {
+        video_codec = 1;
+        sharp_text = true;
+        rt->screen_encoder.config_.codec = codec_config_t::H265;
+        rt->screen_encoder.config_.chroma_444 = true;
+        rt->screen_encoder.config_.rate_control = codec_config_t::CRF;
+        rt->screen_encoder.config_.crf_value = 0;
+        rt->screen_encoder.config_.bitrate = 1000000000;
+      }
+      else {
+        rt->screen_encoder.config_.chroma_444 = sharp_text;
+        rt->screen_encoder.config_.rate_control = codec_config_t::CBR;
+        rt->screen_encoder.config_.crf_value = 23;
+        rt->screen_encoder.config_.bitrate = stream_settings.bitrate_mode == 1
+          ? (int)(stream_settings.bitrate_mbps * 1000000)
+          : (int)dynamic_config_t::get_adaptive_bitrate();
+      }
+      {
+        std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+        rt->screen_encoder.update_flags |= codec_update_e::codec;
+      }
+      rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
+    }
+  }
 
   void apply_codec_choice() {
     if (auto* rt = get_render_thread()) {
@@ -68,6 +98,15 @@
       rt->screen_encoder.config_.software_only = !encode_on_gpu;
       rt->screen_encoder.config_.codec = (codec_config_t::codec_type_e)std::clamp(video_codec, 0, 2);
       rt->screen_encoder.config_.chroma_444 = sharp_text;
+      if (lossless) {
+        video_codec = 1;
+        sharp_text = true;
+        rt->screen_encoder.config_.codec = codec_config_t::H265;
+        rt->screen_encoder.config_.chroma_444 = true;
+        rt->screen_encoder.config_.rate_control = codec_config_t::CRF;
+        rt->screen_encoder.config_.crf_value = 0;
+        rt->screen_encoder.config_.bitrate = 1000000000;
+      }
       rt->screen_decoder.decoder_.allow_hardware_ = decode_on_gpu;
       video_choice_applied = true;
     }
@@ -156,11 +195,13 @@
           gui::push_style_color(gui::col_button_hovered, gui::palette_color(gui::widget_palette.surface_held));
         }
         gui::push_id(i);
+        gui::begin_disabled(lossless);
         if (gui::button(names[i], fan::vec2(width, 0)) && !selected) {
           video_codec = i;
           apply_codec_choice();
           save_ui_config();
         }
+        gui::end_disabled();
         gui::pop_id();
         if (gui::is_item_hovered()) {
           gui::set_tooltip(tips[i]);
@@ -174,17 +215,22 @@
         }
       }
     });
-    if (video_codec == 2) {
+    if (lossless) {
+      settings_hint("Lossless uses HEVC 4:4:4");
+    }
+    else if (video_codec == 2) {
       settings_warning("AV1 can't do sharp text. Pick HEVC.");
     }
     else {
       settings_hint(tips[video_codec]);
     }
+    gui::begin_disabled(lossless);
     if (video_codec != 2 && gui::settings_switch("Sharp text", &sharp_text,
       "Keeps text sharp. Uses 25% more bitrate; needs HEVC 4:4:4 (RTX 20+)")) {
       apply_codec_choice();
       save_ui_config();
     }
+    gui::end_disabled();
     if (ecps_backend.is_streaming_to_any_channel()) {
       std::string used = rt->screen_encoder.encoder_.get_codec_name();
       std::string codec_name = used.find("av1") != std::string::npos ? "AV1"

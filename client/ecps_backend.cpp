@@ -105,10 +105,10 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
 }
 
 void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& frame) {
-  if (frame.size < 32 || frame.size > 0x500000) {
+  if (frame.size < 32 || frame.size > 0x1000000) {
     this->m_stats.Frame_Drop++;
   #if ecps_debug_prints >= 1
-    ecps_print_throttled("NETWORK: Frame dropped - invalid size: {} bytes (valid range: 32 - 5MB)", frame.size);
+    ecps_print_throttled("NETWORK: Frame dropped - invalid size: {} bytes (valid range: 32 - 16MB)", frame.size);
   #endif
     return;
   }
@@ -166,6 +166,10 @@ uint32_t dynamic_config_t::get_target_framerate() {
 
 uint64_t dynamic_config_t::get_adaptive_bitrate() {
   auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+  if (rt && rt->ecps_gui.lossless) {
+    // lossless: the pacer must not clamp it to the adaptive rate
+    return 1000000000;
+  }
   if (rt && rt->ecps_gui.stream_settings.bitrate_mode == 1) {
     return rt->ecps_gui.stream_settings.bitrate_mbps * 1000000;
   }

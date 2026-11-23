@@ -26,7 +26,7 @@
 struct frame_assembler_t {
   static constexpr std::uint16_t sequence_mask = 0xfff;   // frames are numbered in 12 bits
   static constexpr std::size_t packet_bytes = 0x400;
-  static constexpr std::size_t max_packets = 0x1000;      // 4 MB frames
+  static constexpr std::size_t max_packets = 0x4000;      // 16 MB frames, room for lossless keyframes
   // frames held at once: enough for a resend at a high ping (24 frames at 60 fps is 400 ms)
   static constexpr std::size_t slot_count = 24;
   // a frame this far ahead of the one being waited for means the stream restarted (another sharer, a reconnect)

@@ -694,7 +694,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
             std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
             rt->screen_encoder.update_flags |= codec_update_e::frame_rate;
             // Automatic: the bitrate follows the framerate too, not only the resolution
-            if (gui_ptr->stream_settings.bitrate_mode == 0) {
+            if (!gui_ptr->lossless && gui_ptr->stream_settings.bitrate_mode == 0) {
               rt->screen_encoder.config_.bitrate = dynamic_config_t::get_adaptive_bitrate();
               rt->screen_encoder.update_flags |= codec_update_e::rate_control;
             }
@@ -745,20 +745,30 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
         if (streaming && rt) {
           gui_ptr->resolution_controls.render_aspect_control();
           gui_ptr->render_hdr_light();
-          gui::settings_row("Bitrate", [&] {
-            const char* bitrate_modes[] = { "Automatic", "Manual" };
-            if (gui::combo("##bitrate_mode", &gui_ptr->stream_settings.bitrate_mode, bitrate_modes, 2)) {
-              gui_ptr->stream_settings.use_adaptive_bitrate = gui_ptr->stream_settings.bitrate_mode == 0;
-            }
-          });
-          if (gui_ptr->stream_settings.bitrate_mode == 1) {
-            gui::settings_row("Mbit/s", [&] {
-              if (gui::slider("##bitrate_compact", &gui_ptr->stream_settings.bitrate_mbps, 0.5f, 50.0f, gui::slider_flags_always_clamp)) {
-                rt->screen_encoder.config_.bitrate = gui_ptr->stream_settings.bitrate_mbps * 1000000;
-                std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
-                rt->screen_encoder.update_flags |= codec_update_e::rate_control;
+          if (gui::settings_switch("Lossless", &gui_ptr->lossless,
+            "HEVC 4:4:4 at QP 0. Very fast link, 1440p or lower, HEVC 4:4:4 viewers")) {
+            gui_ptr->apply_lossless();
+            gui_ptr->save_ui_config();
+          }
+          if (gui_ptr->lossless) {
+            settings_warning("Very high bitrate; 1440p or lower and a very fast link");
+          }
+          else {
+            gui::settings_row("Bitrate", [&] {
+              const char* bitrate_modes[] = { "Automatic", "Manual" };
+              if (gui::combo("##bitrate_mode", &gui_ptr->stream_settings.bitrate_mode, bitrate_modes, 2)) {
+                gui_ptr->stream_settings.use_adaptive_bitrate = gui_ptr->stream_settings.bitrate_mode == 0;
               }
             });
+            if (gui_ptr->stream_settings.bitrate_mode == 1) {
+              gui::settings_row("Mbit/s", [&] {
+                if (gui::slider("##bitrate_compact", &gui_ptr->stream_settings.bitrate_mbps, 0.5f, 50.0f, gui::slider_flags_always_clamp)) {
+                  rt->screen_encoder.config_.bitrate = gui_ptr->stream_settings.bitrate_mbps * 1000000;
+                  std::lock_guard<std::mutex> lock(rt->screen_encoder.mutex);
+                  rt->screen_encoder.update_flags |= codec_update_e::rate_control;
+                }
+              });
+            }
           }
           render_encoder_row(rt);
           render_scaling_row(rt);
@@ -773,6 +783,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
             gui_ptr->stream_settings.bitrate_mbps = 5;
             gui_ptr->stream_settings.input_control = 0;
             gui_ptr->send_input_control_flag();
+            if (gui_ptr->lossless) {
+              gui_ptr->lossless = false;
+              gui_ptr->apply_lossless();
+              gui_ptr->save_ui_config();
+            }
           }
           if (gui::is_item_hovered()) {
             gui::set_tooltip("30 fps, 5 Mbit/s, remote control off");

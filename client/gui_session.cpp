@@ -587,7 +587,7 @@ void render_thread_t::ecps_gui_t::update_stream_settings_persistence() {
         if (saved_stream.bitrate_mode == 0 || saved_stream.bitrate_mode == 1) {
           stream_settings.bitrate_mode = saved_stream.bitrate_mode;
           stream_settings.use_adaptive_bitrate = saved_stream.bitrate_mode == 0;
-          if (saved_stream.bitrate_mode == 1 && saved_stream.bitrate_mbps >= 0.5f && saved_stream.bitrate_mbps <= 50.f) {
+          if (!lossless && saved_stream.bitrate_mode == 1 && saved_stream.bitrate_mbps >= 0.5f && saved_stream.bitrate_mbps <= 50.f) {
             stream_settings.bitrate_mbps = saved_stream.bitrate_mbps;
             encoder.config_.bitrate = (int)(saved_stream.bitrate_mbps * 1000000);
             std::lock_guard<std::mutex> lock(encoder.mutex);
