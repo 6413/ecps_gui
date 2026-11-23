@@ -16,6 +16,17 @@
   // the window is cleared to black while the stream view is up (render_backdrop)
   bool backdrop_black = false;
 
+  // ---- a picture behind the panels ---------------------------------------------------------------------------
+  // A static picture (png, jpg, webp) fills the window under the drifting lights. The path and the dimming are
+  // saved with the theme; the texture is made the first time it is drawn and whenever the path changes
+  std::string background_image;
+  f32_t background_image_dim = 0.35f;
+  fan::graphics::image_t background_image_texture;
+  std::string background_image_loaded;
+  bool background_image_failed = false;
+  void refresh_background_image();
+  void draw_background_image();
+
   // ---- the colours the user picks ---------------------------------------------------------------------------
   // A theme is one accent colour and a few sliders: the dark colour behind the panels, the soft lights of the
   // backdrop and the buttons' blues all follow the accent, so nothing else has to be picked. The accent is in the

@@ -93,6 +93,8 @@ void render_thread_t::ecps_gui_t::save_theme() {
     saved["panel_opacity"] = theme.panel_opacity;
     saved["glow"] = theme.glow;
     saved["contrast"] = theme.contrast;
+    saved["background_image"] = background_image;
+    saved["background_image_dim"] = background_image_dim;
     write_to_config("theme", saved);
   }
 
@@ -139,6 +141,8 @@ void render_thread_t::ecps_gui_t::load_theme(const fan::json& saved) {
     theme.panel_opacity = std::clamp((f32_t)saved.value("panel_opacity", (double)theme.panel_opacity), 0.3f, 1.f);
     theme.glow = std::clamp((f32_t)saved.value("glow", (double)theme.glow), 0.f, 1.5f);
     theme.contrast = std::clamp((f32_t)saved.value("contrast", (double)theme.contrast), 0.f, 1.f);
+    background_image = saved.value("background_image", std::string());
+    background_image_dim = std::clamp((f32_t)saved.value("background_image_dim", 0.35), 0.f, 0.9f);
   }
 
 void render_thread_t::ecps_gui_t::render_theme_tab() {
@@ -221,6 +225,40 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
     gui::settings_row("Background", [&] {
       changed |= gui::color_edit3("##theme_background", &theme.background);
     });
+    gui::settings_row("Image", [&] {
+      bool has_image = !background_image.empty();
+      if (gui::button(has_image ? "Change...##theme_background_image" : "Choose...##theme_background_image")) {
+        fan::graphics::open_file("png,jpg,jpeg,webp,bmp", [this](std::string_view path) {
+          background_image = std::string(path);
+          background_image_loaded.clear();
+          refresh_background_image();
+          save_theme();
+        });
+      }
+      if (has_image) {
+        gui::same_line(0, 6.f);
+        if (gui::button("Remove##theme_background_image")) {
+          background_image.clear();
+          background_image_loaded.clear();
+          refresh_background_image();
+          save_theme();
+        }
+      }
+      if (gui::is_item_hovered()) {
+        gui::set_tooltip(has_image ? background_image : "A picture behind the panels");
+      }
+    });
+    if (!background_image.empty()) {
+      gui::settings_row("Image dim", [&] {
+        gui::slider("##theme_background_dim", &background_image_dim, 0.f, 0.9f, gui::slider_flags_always_clamp);
+        if (gui::is_item_deactivated_after_edit()) {
+          save_theme();
+        }
+      });
+      if (background_image_failed) {
+        settings_warning("That picture could not be loaded");
+      }
+    }
     gui::settings_row("Lightness", [&] {
       changed |= gui::slider("##theme_backdrop", &theme.background_brightness, 0.02f, 0.4f, gui::slider_flags_always_clamp);
     });
@@ -245,6 +283,55 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
     }
     gui::unindent(settings_space(2.f));
     gui::pop_style_var(3);
+  }
+
+void render_thread_t::ecps_gui_t::refresh_background_image() {
+    if (background_image_loaded == background_image) {
+      return;
+    }
+    if (background_image_texture.valid()) {
+      owner->engine.image_unload(background_image_texture);
+      background_image_texture = {};
+    }
+    background_image_loaded = background_image;
+    background_image_failed = false;
+    if (background_image.empty()) {
+      return;
+    }
+    auto loaded = ecps_load_image(background_image);
+    if (!loaded) {
+      background_image_failed = true;
+      fan::print("background image:", loaded.error());
+      return;
+    }
+    fan::image::info_t info;
+    info.data = loaded->data.get();
+    info.size = fan::vec2i((int)loaded->size.x, (int)loaded->size.y);
+    info.channels = loaded->channels;
+    background_image_texture = owner->engine.image_load(info, smooth_image());
+  }
+
+void render_thread_t::ecps_gui_t::draw_background_image() {
+    if (!background_image_texture.valid()) {
+      return;
+    }
+    fan::vec2 display = gui::get_io().DisplaySize;
+    fan::vec2 image_size = background_image_texture.get_size();
+    if (display.x <= 0.f || display.y <= 0.f || image_size.x <= 0.f || image_size.y <= 0.f) {
+      return;
+    }
+    // cover the window: the picture keeps its aspect and the sides that don't fit are cropped
+    f32_t scale = std::max(display.x / image_size.x, display.y / image_size.y);
+    fan::vec2 shown = image_size * scale;
+    fan::vec2 crop = (shown - display) / shown * 0.5f;
+    fan::vec2 origin = gui::get_window_pos();
+    gui::set_cursor_screen_pos(origin);
+    gui::image(background_image_texture, display, fan::vec2(crop.x, crop.y), fan::vec2(1.f - crop.x, 1.f - crop.y));
+    f32_t dim = std::clamp(background_image_dim, 0.f, 0.9f);
+    if (dim > 0.f) {
+      auto* list = gui::get_window_draw_list();
+      list->AddRectFilled(origin, origin + display, (std::uint32_t)std::lround(dim * 255.f) << 24);
+    }
   }
 
 void render_thread_t::ecps_gui_t::setup_backdrop() {
@@ -273,7 +360,8 @@ void render_thread_t::ecps_gui_t::setup_backdrop() {
   }
 
 void render_thread_t::ecps_gui_t::render_backdrop() {
-    if (!glow_image.valid()) {
+    refresh_background_image();
+    if (!glow_image.valid() && !background_image_texture.valid()) {
       return;
     }
     fan::vec2 display = gui::get_io().DisplaySize;
@@ -311,7 +399,10 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
       apply_backdrop_color();
     }
     if (!stream_area_shown) {
-      draw_glows();
+      draw_background_image();
+      if (glow_image.valid()) {
+        draw_glows();
+      }
     }
     gui::set_cursor_screen_pos(origin);
   }
