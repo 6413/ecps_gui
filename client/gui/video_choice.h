@@ -191,8 +191,8 @@
         }
         bool selected = video_codec == i;
         if (selected) {
-          gui::push_style_color(gui::col_button, gui::palette_color(gui::widget_palette.accent_surface_hover));
-          gui::push_style_color(gui::col_button_hovered, gui::palette_color(gui::widget_palette.surface_held));
+          gui::push_style_color(gui::col_button, fan::color(0.06f, 0.13f, 0.38f, 1.f));
+          gui::push_style_color(gui::col_button_hovered, fan::color(0.08f, 0.18f, 0.5f, 1.f));
         }
         gui::push_id(i);
         gui::begin_disabled(lossless);
