@@ -1,5 +1,6 @@
 // Theme implementation, out of line so a theme edit does not recompile the whole client.
 #include "gui_std.h" // precompiled, first
+#include <fan/stb/stb_image.h> // GIF frames, the implementation is in fan.graphics.stb
 #include "ecps_app.h"
 
 
@@ -228,7 +229,7 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
     gui::settings_row("Image", [&] {
       bool has_image = !background_image.empty();
       if (gui::button(has_image ? "Change...##theme_background_image" : "Choose...##theme_background_image")) {
-        fan::graphics::open_file("png,jpg,jpeg,webp,bmp", [this](std::string_view path) {
+        fan::graphics::open_file("png,jpg,jpeg,webp,bmp,gif", [this](std::string_view path) {
           background_image = std::string(path);
           background_image_loaded.clear();
           refresh_background_image();
@@ -285,6 +286,89 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
     gui::pop_style_var(3);
   }
 
+void render_thread_t::ecps_gui_t::show_background_frame(std::size_t index) {
+    if (index >= background_frames.size()) {
+      return;
+    }
+    auto& frame = background_frames[index];
+    fan::image::info_t info;
+    info.data = frame.data.get();
+    info.size = fan::vec2i((int)frame.size.x, (int)frame.size.y);
+    info.channels = frame.channels;
+    if (background_image_texture.valid()) {
+      background_image_texture.reload(info, smooth_image());
+    }
+    else {
+      background_image_texture = owner->engine.image_load(info, smooth_image());
+    }
+  }
+
+void render_thread_t::ecps_gui_t::load_gif_background(const std::string& path) {
+    auto bytes = fan::io::file::read_binary(path);
+    if (bytes.empty()) {
+      background_image_failed = true;
+      fan::print("background image: could not read", path);
+      return;
+    }
+    if (bytes.size() > 64ull * 1024 * 1024) {
+      background_image_failed = true;
+      fan::print("background image: GIF file is too large:", path);
+      return;
+    }
+    int* delays = nullptr;
+    int width = 0, height = 0, frame_count = 0, channels = 0;
+    unsigned char* data = ::stbi_load_gif_from_memory(bytes.data(), (int)bytes.size(), &delays,
+      &width, &height, &frame_count, &channels, 4);
+    if (!data || width <= 0 || height <= 0 || frame_count <= 0) {
+      if (data) {
+        ::stbi_image_free(data);
+      }
+      if (delays) {
+        ::stbi_image_free(delays);
+      }
+      background_image_failed = true;
+      fan::print("background image: could not decode the GIF:", path);
+      return;
+    }
+    std::uint64_t frame_bytes = (std::uint64_t)width * height * 4;
+    // a background is not worth hundreds of megabytes: keep the odd huge GIF from being copied frame by frame
+    constexpr std::uint64_t max_frame_bytes = 64ull * 1024 * 1024;
+    constexpr std::uint64_t max_total_bytes = 256ull * 1024 * 1024;
+    if (width > 8192 || height > 8192 || frame_count > 1000 || frame_bytes > max_frame_bytes ||
+      frame_bytes * (std::uint64_t)frame_count > max_total_bytes) {
+      ::stbi_image_free(data);
+      if (delays) {
+        ::stbi_image_free(delays);
+      }
+      background_image_failed = true;
+      fan::print("background image: GIF is too large:", path);
+      return;
+    }
+    background_frames.clear();
+    background_frame_delays_ms.clear();
+    background_frames.reserve((std::size_t)frame_count);
+    background_frame_delays_ms.reserve((std::size_t)frame_count);
+    for (int i = 0; i < frame_count; ++i) {
+      fan::image::owned_t frame;
+      frame.size = fan::vec2ui((std::uint32_t)width, (std::uint32_t)height);
+      frame.channels = 4;
+      frame.data_size = (std::size_t)frame_bytes;
+      frame.data = std::shared_ptr<std::uint8_t>(new std::uint8_t[frame.data_size], std::default_delete<std::uint8_t[]>());
+      std::memcpy(frame.data.get(), data + (std::size_t)i * frame.data_size, frame.data_size);
+      background_frames.push_back(std::move(frame));
+      int delay = delays ? delays[i] : 100;
+      background_frame_delays_ms.push_back(std::max(20, delay));
+    }
+    ::stbi_image_free(data);
+    if (delays) {
+      ::stbi_image_free(delays);
+    }
+    background_animated = true;
+    background_frame_index = 0;
+    background_frame_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(background_frame_delays_ms.front());
+    show_background_frame(0);
+  }
+
 void render_thread_t::ecps_gui_t::refresh_background_image() {
     if (background_image_loaded == background_image) {
       return;
@@ -293,9 +377,21 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
       owner->engine.image_unload(background_image_texture);
       background_image_texture = {};
     }
+    background_animated = false;
+    background_frames.clear();
+    background_frame_delays_ms.clear();
+    background_frame_index = 0;
+    background_frame_at = {};
     background_image_loaded = background_image;
     background_image_failed = false;
     if (background_image.empty()) {
+      return;
+    }
+    std::string extension = std::filesystem::path(background_image).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+      [](unsigned char c) { return (char)std::tolower(c); });
+    if (extension == ".gif") {
+      load_gif_background(background_image);
       return;
     }
     auto loaded = ecps_load_image(background_image);
@@ -312,6 +408,14 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
   }
 
 void render_thread_t::ecps_gui_t::draw_background_image() {
+    if (background_animated && !background_frames.empty()) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= background_frame_at) {
+        background_frame_index = (background_frame_index + 1) % background_frames.size();
+        background_frame_at = now + std::chrono::milliseconds(background_frame_delays_ms[background_frame_index]);
+        show_background_frame(background_frame_index);
+      }
+    }
     if (!background_image_texture.valid()) {
       return;
     }

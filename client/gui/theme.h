@@ -24,7 +24,15 @@
   fan::graphics::image_t background_image_texture;
   std::string background_image_loaded;
   bool background_image_failed = false;
+  // a GIF plays its frames into the same texture, one at a time
+  bool background_animated = false;
+  std::vector<fan::image::owned_t> background_frames;
+  std::vector<int> background_frame_delays_ms;
+  std::size_t background_frame_index = 0;
+  std::chrono::steady_clock::time_point background_frame_at;
   void refresh_background_image();
+  void load_gif_background(const std::string& path);
+  void show_background_frame(std::size_t index);
   void draw_background_image();
 
   // ---- the colours the user picks ---------------------------------------------------------------------------
