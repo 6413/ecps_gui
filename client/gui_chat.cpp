@@ -1,6 +1,134 @@
 // Chat implementation, out of line so a chat edit does not recompile the whole client.
 #include "gui_std.h" // precompiled, first
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 #include "ecps_app.h"
+
+
+// the address a phone on the same network can open: the first private IPv4 of this computer
+static std::string phone_upload_local_ip() {
+#if defined(_WIN32)
+  WSADATA wsa;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+    return "127.0.0.1";
+  }
+#endif
+  std::string fallback;
+  char host[256] = {};
+  if (gethostname(host, sizeof(host)) == 0) {
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* result = nullptr;
+    if (getaddrinfo(host, nullptr, &hints, &result) == 0) {
+      for (auto* it = result; it; it = it->ai_next) {
+        auto* ipv4 = (sockaddr_in*)it->ai_addr;
+        char text[64] = {};
+        if (!inet_ntop(AF_INET, &ipv4->sin_addr, text, sizeof(text))) {
+          continue;
+        }
+        std::string ip = text;
+        if (ip.rfind("127.", 0) == 0 || ip.rfind("169.254.", 0) == 0) {
+          continue;
+        }
+        if (ip.rfind("192.168.", 0) == 0 || ip.rfind("10.", 0) == 0) {
+          fallback = ip;
+          break;
+        }
+        if (fallback.empty()) {
+          fallback = ip;
+        }
+      }
+      freeaddrinfo(result);
+    }
+  }
+  return fallback.empty() ? "127.0.0.1" : fallback;
+}
+
+void render_thread_t::ecps_gui_t::update_phone_upload() {
+    auto joined = [this](std::uint16_t id) {
+      ecps_backend_t::Protocol_ChannelID_t channel_id;
+      channel_id.i = id;
+      return ecps_backend.is_channel_joined(channel_id);
+    };
+    std::uint16_t selected = selected_channel_id.i;
+    ecps_backend.web_upload_channel.store(joined(selected) ? selected : (std::uint16_t)-1);
+    if (phone_upload_enabled) {
+      ecps_backend.web_upload_enabled.store(true);
+      if (phone_upload_token.empty()) {
+        std::random_device device;
+        std::mt19937 generator(device());
+        std::uniform_int_distribution<int> digit(0, 15);
+        const char* hex = "0123456789abcdef";
+        for (int i = 0; i < 24; ++i) {
+          phone_upload_token += hex[digit(generator)];
+        }
+      }
+      if (phone_upload_url.empty()) {
+        phone_upload_url = "http://" + phone_upload_local_ip() + ":52123/" + phone_upload_token;
+      }
+      if (!phone_upload_started) {
+        phone_upload_started = true;
+        std::string token = phone_upload_token;
+        backend_queue([token]() -> fan::event::task_t {
+          ecps_backend.start_web_upload(52123, token);
+          co_return;
+        });
+      }
+    }
+    else {
+      ecps_backend.stop_web_upload();
+    }
+    for (auto& upload : ecps_backend.take_web_uploads()) {
+      ecps_backend_t::Protocol_ChannelID_t channel_id;
+      channel_id.i = upload.first;
+      if (ecps_backend.is_channel_joined(channel_id)) {
+        chat_send_files(channel_id, { upload.second });
+      }
+    }
+  }
+
+void render_thread_t::ecps_gui_t::render_phone_upload_popup() {
+    if (phone_upload_popup_requested) {
+      phone_upload_popup_requested = false;
+      gui::open_popup("##phone_upload");
+    }
+    if (!gui::begin_popup("##phone_upload")) {
+      return;
+    }
+    gui::text("Send a picture from your phone");
+    if (gui::settings_switch("Phone upload", &phone_upload_enabled,
+      "Pictures taken or picked on the phone go to the channel open in ECPS")) {
+      if (!phone_upload_enabled) {
+        ecps_backend.stop_web_upload();
+      }
+      save_ui_config();
+    }
+    if (phone_upload_enabled) {
+      if (phone_upload_url.empty()) {
+        update_phone_upload();
+      }
+      gui::text_wrapped_disabled("Open this on the phone. Both must be on the same Wi-Fi:");
+      gui::text_wrapped(phone_upload_url);
+      if (gui::button("Copy link##phone_upload_copy")) {
+        owner->engine.window.set_clipboard(phone_upload_url);
+      }
+      if (!ecps_backend.is_channel_joined(selected_channel_id)) {
+        settings_warning("Join a channel first: the pictures go to the open channel.");
+      }
+      settings_hint("If the page does not open, allow ECPS through Windows Firewall.");
+    }
+    gui::end_popup();
+  }
 
 
 void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_ChannelID_t channel_id) {
@@ -212,7 +340,11 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       }
     }
 
-    // ---- the input: attach, text, send
+    // ---- the input: phone upload, attach, text, send
+    if (icon_button("##chat_phone", icon_e::phone, "Send a picture from your phone", 0.f)) {
+      phone_upload_popup_requested = true;
+    }
+    gui::same_line();
     if (icon_button("##chat_attach", icon_e::send_file, "Send a file to everyone here", 0.f)) {
       fan::graphics::open_file("", [this, channel_id](std::string_view path) {
         chat_dropped_files.push_back(std::string(path));
@@ -308,6 +440,7 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       }
       chat_focus_input = true;
     }
+    render_phone_upload_popup();
   }
 
 void render_thread_t::ecps_gui_t::chat_update_mark(const std::vector<ecps_backend_t::chat_message_t>& messages) {

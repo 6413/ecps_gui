@@ -76,8 +76,13 @@ bool Channel_CheckPassword(Protocol_ChannelID_t ChannelID, const char* Password)
   return Difference == 0;
 }
 
+#include <cstdio>
+#include <cstdint>
+
 const char* GetSessionUsername(Protocol_SessionID_t SessionID);
 bool Username_Equal(const char* a, const char* b);
+
+void Channel_Save();
 
 ChannelList_NodeReference_t AddChannel_ScreenShare(Protocol_SessionID_t HostSessionID){
   auto cnr = g_pile->ChannelList.NewNodeLast();
@@ -90,6 +95,7 @@ ChannelList_NodeReference_t AddChannel_ScreenShare(Protocol_SessionID_t HostSess
   data->HostSessionID = HostSessionID;
   snprintf(data->OwnerName, sizeof(data->OwnerName), "%s", g_pile->SessionList[HostSessionID].Username);
 
+  Channel_Save();
   return cnr;
 }
 
@@ -201,7 +207,109 @@ void Channel_Delete(Protocol_ChannelID_t ChannelID){
   Channel->Buffer = nullptr;
   Channel->SessionList.Close();
   g_pile->ChannelList.unlrec(ChannelID);
+  Channel_Save();
   Channel_BroadcastChannelList();
+}
+
+/* ---- channels across restarts ------------------------------------------------------------------------------ */
+/* The server keeps a channel when its host leaves, but a restart would lose them all. Only what makes a channel
+   is kept: its owner, title and password hash. Sessions, streams and chat belong to the run. The hash is keyed with
+   ecps_server.key, which stays next to this file, so the passwords still open their channels after an update. */
+static constexpr const char* ChannelStateFile = "channels.dat";
+static constexpr char ChannelStateMagic[8] = {'E', 'C', 'P', 'S', 'C', 'H', '0', '1'};
+
+void Channel_Save() {
+  std::string temporary = std::string(ChannelStateFile) + ".tmp";
+  std::FILE* file = std::fopen(temporary.c_str(), "wb");
+  if (!file) {
+    fan::print("channels: can't write", ChannelStateFile);
+    return;
+  }
+  uint32_t count = 0;
+  auto nr = g_pile->ChannelList.GetNodeFirst();
+  while (nr != g_pile->ChannelList.dst) {
+    auto node = g_pile->ChannelList.GetNodeByReference(nr);
+    if (node->data.Type == Protocol::ChannelType_ScreenShare_e) {
+      ++count;
+    }
+    nr = node->NextNodeReference;
+  }
+  bool ok = std::fwrite(ChannelStateMagic, 1, sizeof(ChannelStateMagic), file) == sizeof(ChannelStateMagic) &&
+    std::fwrite(&count, sizeof(count), 1, file) == 1;
+  nr = g_pile->ChannelList.GetNodeFirst();
+  while (ok && nr != g_pile->ChannelList.dst) {
+    auto node = g_pile->ChannelList.GetNodeByReference(nr);
+    if (node->data.Type == Protocol::ChannelType_ScreenShare_e) {
+      auto data = (Channel_ScreenShare_Data_t*)node->data.Buffer;
+      uint8_t has_password = data->HasPassword ? 1 : 0;
+      ok = std::fwrite(data->OwnerName, 1, sizeof(data->OwnerName), file) == sizeof(data->OwnerName) &&
+        std::fwrite(data->Title, 1, sizeof(data->Title), file) == sizeof(data->Title) &&
+        std::fwrite(&has_password, 1, sizeof(has_password), file) == sizeof(has_password) &&
+        std::fwrite(data->PasswordHash.data(), 1, data->PasswordHash.size(), file) == data->PasswordHash.size();
+    }
+    nr = node->NextNodeReference;
+  }
+  std::fflush(file);
+  bool closed = std::fclose(file) == 0;
+  if (ok && closed) {
+    std::remove(ChannelStateFile);
+    if (std::rename(temporary.c_str(), ChannelStateFile) != 0) {
+      fan::print("channels: can't replace", ChannelStateFile);
+      std::remove(temporary.c_str());
+    }
+  }
+  else {
+    std::remove(temporary.c_str());
+    fan::print("channels: save failed");
+  }
+}
+
+void Channel_Load() {
+  std::FILE* file = std::fopen(ChannelStateFile, "rb");
+  if (!file) {
+    return;
+  }
+  char magic[sizeof(ChannelStateMagic)] = {};
+  uint32_t count = 0;
+  if (std::fread(magic, 1, sizeof(magic), file) != sizeof(magic) ||
+    std::memcmp(magic, ChannelStateMagic, sizeof(magic)) != 0 ||
+    std::fread(&count, sizeof(count), 1, file) != 1 || count > 4096) {
+    std::fclose(file);
+    fan::print("channels:", ChannelStateFile, "is not a channel file");
+    return;
+  }
+  uint32_t loaded = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    char owner[32] = {};
+    char title[32] = {};
+    uint8_t has_password = 0;
+    uint8_t password_hash[32] = {};
+    if (std::fread(owner, 1, sizeof(owner), file) != sizeof(owner) ||
+      std::fread(title, 1, sizeof(title), file) != sizeof(title) ||
+      std::fread(&has_password, 1, sizeof(has_password), file) != sizeof(has_password) ||
+      std::fread(password_hash, 1, sizeof(password_hash), file) != sizeof(password_hash)) {
+      break;
+    }
+    owner[sizeof(owner) - 1] = 0;
+    title[sizeof(title) - 1] = 0;
+    if (!owner[0]) {
+      continue;
+    }
+    auto cnr = g_pile->ChannelList.NewNodeLast();
+    auto cn = g_pile->ChannelList.GetNodeByReference(cnr);
+    cn->data.Type = Protocol::ChannelType_ScreenShare_e;
+    cn->data.SessionList.Open();
+    cn->data.Buffer = A_resize(0, sizeof(Channel_ScreenShare_Data_t));
+    auto data = new (cn->data.Buffer) Channel_ScreenShare_Data_t;
+    data->HostSessionID = (Protocol_SessionID_t::Type)-1;
+    snprintf(data->OwnerName, sizeof(data->OwnerName), "%s", owner);
+    snprintf(data->Title, sizeof(data->Title), "%s", title);
+    data->HasPassword = has_password != 0;
+    std::memcpy(data->PasswordHash.data(), password_hash, sizeof(password_hash));
+    ++loaded;
+  }
+  std::fclose(file);
+  fan::print("channels: loaded", loaded, "from", ChannelStateFile);
 }
 
 uint32_t GetChannelUserCount(Protocol_ChannelID_t ChannelID) {

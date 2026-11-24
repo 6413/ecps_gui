@@ -966,3 +966,16 @@
 
   void render_chat_tab(ecps_backend_t::Protocol_ChannelID_t channel_id);
 
+
+  // ---- the page a phone on the same network sends pictures from ------------------------------------------------
+  bool phone_upload_enabled = false;
+  bool phone_upload_started = false;
+  bool phone_upload_popup_requested = false;
+  std::string phone_upload_token;
+  std::string phone_upload_url;
+
+  void update_phone_upload();
+
+
+  void render_phone_upload_popup();
+

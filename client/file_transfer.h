@@ -43,6 +43,9 @@ struct file_transfer_t {
   fan::network::crypto::x25519_key_t key{};
   std::ifstream in;
   std::ofstream out;
+  std::array<uint8_t, 64 * 1024> read_buffer{};
+  uint64_t read_buffer_offset = 0;
+  uint64_t read_buffer_size = 0;
   fan::event::task_t send_task;
 };
 
@@ -66,6 +69,38 @@ static constexpr uint64_t file_chunk = Protocol::FileChunkSize;
 static constexpr uint64_t file_window = 64;
 static constexpr uint64_t file_ack_every = 16;
 static constexpr size_t file_max_pending_offers = 8;
+// TCP file traffic would otherwise fill the uplink and the stream and voice packets queue behind it.
+// The limits are for all outgoing files together, not one file, and the sender reads 64 KB at a time
+static constexpr uint64_t file_rate_streaming = 512 * 1024;
+static constexpr uint64_t file_rate_call = 1024 * 1024;
+static constexpr uint64_t file_rate_idle = 8 * 1024 * 1024;
+static constexpr uint64_t file_read_block = 64 * 1024;
+
+uint64_t file_transfer_rate() {
+  if (is_streaming_to_any_channel()) {
+    return file_rate_streaming;
+  }
+  if (voice_joined.load(std::memory_order_relaxed) || is_viewing_any_channel()) {
+    return file_rate_call;
+  }
+  return file_rate_idle;
+}
+
+// shared pacing for every outgoing file: one file can't use more than the whole budget
+fan::event::task_t file_transfer_pace(uint64_t bytes) {
+  uint64_t rate = file_transfer_rate();
+  uint64_t now = fan::event::now();
+  if (file_pace_next_ns < now) {
+    file_pace_next_ns = now;
+  }
+  file_pace_next_ns += (bytes * 1'000'000'000ULL) / rate;
+  if (file_pace_next_ns > now) {
+    uint64_t wait_ns = file_pace_next_ns - now;
+    if (wait_ns >= 1'000'000ULL) {
+      co_await fan::co_sleep((wait_ns + 999'999ULL) / 1'000'000ULL);
+    }
+  }
+}
 
 std::mutex file_mutex;
 std::vector<std::shared_ptr<file_transfer_t>> file_transfers;
@@ -345,6 +380,9 @@ void on_file_response(const Protocol_S2C_t::Channel_File_Response_t& m) {
 
 fan::event::task_t file_send_loop(std::shared_ptr<file_transfer_t> t) {
     Protocol_C2S_t::Channel_File_Chunk_t rest;
+    if (file_transfer_rate() < file_rate_idle) {
+      set_file_state(t, file_transfer_t::state_e::transferring, "sending slowly, so the stream and voice stay smooth");
+    }
     while (t->next_index < t->total_chunks) {
       if (t->state != file_transfer_t::state_e::transferring) {
         co_return;
@@ -357,11 +395,17 @@ fan::event::task_t file_send_loop(std::shared_ptr<file_transfer_t> t) {
       uint16_t n = (uint16_t)std::min<uint64_t>(file_chunk, t->size - offset);
 
       std::memset(&rest, 0, sizeof(rest));
-      t->in.read((char*)rest.Data, n);
-      if ((uint64_t)t->in.gcount() != n) {
-        end_file_transfer(t, file_transfer_t::state_e::failed, "reading the file failed");
-        break;
+      if (offset < t->read_buffer_offset || offset + n > t->read_buffer_offset + t->read_buffer_size) {
+        uint64_t want = std::min<uint64_t>(file_read_block, t->size - offset);
+        t->in.read((char*)t->read_buffer.data(), (std::streamsize)want);
+        if ((uint64_t)t->in.gcount() != want) {
+          end_file_transfer(t, file_transfer_t::state_e::failed, "reading the file failed");
+          break;
+        }
+        t->read_buffer_offset = offset;
+        t->read_buffer_size = want;
       }
+      std::memcpy(rest.Data, t->read_buffer.data() + (offset - t->read_buffer_offset), n);
       rest.ChannelID = t->channel_id;
       rest.Peer = t->peer;
       rest.TransferID = t->id;
@@ -381,6 +425,7 @@ fan::event::task_t file_send_loop(std::shared_ptr<file_transfer_t> t) {
       }
       t->next_index++;
       t->transferred += n;
+      co_await file_transfer_pace(n);
     }
 }
 

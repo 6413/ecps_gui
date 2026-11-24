@@ -599,6 +599,7 @@ static bool udp_read_one() {
       break;
     }
     std::memcpy(ChannelData->Title, Title, sizeof(Title));
+    Channel_Save();
     Channel_BroadcastChannelList();
     break;
   }
@@ -696,6 +697,8 @@ int main(int argc, char** argv) {
     std::exit(1);
   }
   fan::print("server key:", fan::network::crypto::to_hex(g_pile->StaticPublic.data(), g_pile->StaticPublic.size()));
+
+  Channel_Load();
 
   EV_open(&g_pile->listener);
 

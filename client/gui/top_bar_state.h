@@ -16,6 +16,7 @@
     ui["sharp_text"] = sharp_text;
     ui["lossless"] = lossless;
     ui["decode_on_gpu"] = decode_on_gpu;
+  ui["phone_upload"] = phone_upload_enabled;
     ui["stats_mode"] = top_bar_stats_mode;
     ui["auto_update"] = auto_update;
     write_to_config("ui", ui);

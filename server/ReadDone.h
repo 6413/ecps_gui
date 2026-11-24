@@ -287,6 +287,7 @@ case Protocol_C2S_t::SetChannelPassword:{
     ChannelData->HasPassword = true;
   }
   __builtin_memset(Password, 0, sizeof(Password));
+  Channel_Save();
   Channel_BroadcastChannelList();
   /* with a password set the ones outside stop seeing who is in it, removed they see it again */
   Channel_BroadcastSessionList(ChannelID);

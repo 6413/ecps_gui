@@ -103,6 +103,7 @@ struct ecps_gui_t {
         sharp_text = ui.value("sharp_text", false);
         lossless = ui.value("lossless", false);
         decode_on_gpu = ui.value("decode_on_gpu", true);
+  phone_upload_enabled = ui.value("phone_upload", false);
       }
       if (config.contains("stream") && config["stream"].is_object()) {
         fan::json stream = config["stream"];
@@ -300,6 +301,7 @@ struct ecps_gui_t {
     update_voice_keys();
     update_panel_keys();
     update_automatically();
+    update_phone_upload();
     apply_video_choice_once();
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
     voice_chat.update(get_voice_settings());

@@ -11,6 +11,7 @@ inline struct ecps_backend_t {
     task_keep_alive = {};
     task_tcp_read = {};
     task_udp_listen = {};
+    web_upload_task = {};
   }
 
   struct channel_create_awaiter {
@@ -117,6 +118,8 @@ inline struct ecps_backend_t {
     // when the decoder has no picture to build on (watching started, a frame was lost), frames are held back until a
     // keyframe: a frame decoded without what it refers to comes out as blocks and smears. Since when it waits, 0 = not
     uint64_t m_KeyFrameWaitSince = 0;
+    // a decoder reopened once already after a keyframe never came
+    bool m_KeyFrameRetried = false;
 
     // frames back together from their packets, in order; lost packets are asked for again (see frame_assembler.h)
     frame_assembler_t assembler;
@@ -250,6 +253,8 @@ inline struct ecps_backend_t {
   // cleared by the next keyframe. view_keyframe_waits counts the whole frames held back meanwhile
   std::atomic<bool> view_need_keyframe{true};
   std::atomic<uint64_t> view_keyframe_waits{0};
+  // a keyframe wait timed out: the decode thread opens the decoder again on its next frame
+  std::atomic<bool> view_decoder_reopen{false};
 
   fan::event::runv_t<bool> write_stream(
     uint16_t Current,
@@ -503,6 +508,8 @@ inline struct ecps_backend_t {
     session_id = {};
     udp_crypto = {};
     server_new = false;
+    voice_joined.store(false);
+    last_voice_send_ns.store(0);
     {
       std::lock_guard<std::mutex> lock(voice_mutex);
       voice_members.clear();
@@ -871,6 +878,9 @@ inline struct ecps_backend_t {
     return it == voice_members.end() ? std::vector<std::uint32_t>() : it->second;
   }
   fan::event::task_t write_voice(Protocol_ChannelID_t channel_id, const void* data, uintptr_t size) {
+    if (size) {
+      last_voice_send_ns.store(fan::event::now(), std::memory_order_relaxed);
+    }
     if (auto* channel = find_channel(channel_id)) {
       ProtocolUDP::C2S_t::Channel_Voice_Data_t rest;
       rest.ChannelID = channel->channel_id;
@@ -881,6 +891,7 @@ inline struct ecps_backend_t {
   // Joined is bits: 1 in the voice chat, 2 microphone muted, 4 tell me who is muted. Leaving is a plain 0, and an
   // older server takes any other number as joined
   fan::event::task_t send_voice_join(Protocol_ChannelID_t channel_id, bool joined, bool muted = false) {
+    voice_joined.store(joined);
     if (auto* channel = find_channel(channel_id)) {
       Protocol_C2S_t::Channel_Voice_Join_t rest;
       rest.ChannelID = channel->channel_id;
@@ -1125,8 +1136,23 @@ inline struct ecps_backend_t {
   fan::event::task_t task_supervisor;
   fan::event::task_t task_restore;
   fan::event::task_t task_keep_alive;
+  // the page a phone on the same network uploads pictures to
+  fan::network::http::server_t web_upload_server;
+  fan::event::task_t web_upload_task;
+  std::atomic<bool> web_upload_enabled{false};
+  std::string web_upload_token;
+  std::mutex web_upload_mutex;
+  std::vector<std::pair<std::uint16_t, std::string>> web_upload_files;
+  std::atomic<std::uint16_t> web_upload_channel{(std::uint16_t)-1};
+  void start_web_upload(std::uint16_t port, const std::string& token);
+  void stop_web_upload();
+  std::vector<std::pair<std::uint16_t, std::string>> take_web_uploads();
   static constexpr std::uint64_t tcp_timeout_ns = 6'000'000'000;
   std::uint64_t last_rx = 0;
+  // file transfers slow down while the stream or the voice chat is using the same uplink
+  std::atomic<std::uint64_t> last_voice_send_ns{0};
+  std::atomic<bool> voice_joined{false};
+  std::uint64_t file_pace_next_ns = 0;
   bool connected = false;
   bool tcp_secure_ready = false;
 

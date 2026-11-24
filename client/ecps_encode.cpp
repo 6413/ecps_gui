@@ -58,8 +58,11 @@ void run_encode_thread() {
       auto now = std::chrono::steady_clock::now();
       auto time_since_idr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_idr_time);
       // a keyframe now and then repairs what a lost frame broke for a viewer that didn't ask. With intra refresh
-      // the picture is renewed all the time anyway, and an extra keyframe would only be the burst it avoids
-      if (time_since_idr > std::chrono::milliseconds(5000) && !rt->screen_encoder.encoder_.uses_intra_refresh()) {
+      // the picture is renewed all the time anyway, and an extra keyframe would only be the burst it avoids.
+      // AV1 gets one every 2 s even then: its keyframe requests are the ones that stopped coming through
+      bool av1_codec = rt->screen_encoder.encoder_.get_codec_name().find("av1") != std::string::npos;
+      auto keyframe_every = av1_codec ? std::chrono::milliseconds(2000) : std::chrono::milliseconds(5000);
+      if (time_since_idr > keyframe_every && (av1_codec || !rt->screen_encoder.encoder_.uses_intra_refresh())) {
         rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;
         last_idr_time = now;
       }
