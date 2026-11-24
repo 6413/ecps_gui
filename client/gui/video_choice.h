@@ -218,9 +218,6 @@
     if (lossless) {
       settings_hint("Lossless uses HEVC 4:4:4");
     }
-    else if (video_codec == 2) {
-      settings_warning("AV1 can't do sharp text. Pick HEVC.");
-    }
     else {
       settings_hint(tips[video_codec]);
     }
