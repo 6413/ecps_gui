@@ -30,9 +30,30 @@
   std::vector<int> background_frame_delays_ms;
   std::size_t background_frame_index = 0;
   std::chrono::steady_clock::time_point background_frame_at;
+
+  // MP4/WebM/MKV backgrounds: one decoded frame at a time, not a copy of the whole video
+  struct background_video_t {
+    fan::mp4_demuxer_t demuxer;
+    fan::graphics::libav_decoder_t decoder;
+    std::vector<std::uint8_t> packet;
+    std::vector<fan::graphics::libav_decoder_t::decode_result_t> frames;
+    std::string codec_name;
+    fan::vec2ui target_size;
+    f32_t fps = 30.f;
+    std::int64_t packet_pts = 0;
+    std::chrono::steady_clock::time_point next_frame;
+    ~background_video_t() {
+      decoder.close();
+      demuxer.close();
+    }
+  };
+  std::unique_ptr<background_video_t> background_video;
+
   void refresh_background_image();
   void load_gif_background(const std::string& path);
   void show_background_frame(std::size_t index);
+  void load_video_background(const std::string& path);
+  bool decode_video_frame();
   void draw_background_image();
 
   // ---- the colours the user picks ---------------------------------------------------------------------------

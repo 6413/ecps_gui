@@ -229,7 +229,7 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
     gui::settings_row("Image", [&] {
       bool has_image = !background_image.empty();
       if (gui::button(has_image ? "Change...##theme_background_image" : "Choose...##theme_background_image")) {
-        fan::graphics::open_file("png,jpg,jpeg,webp,bmp,gif", [this](std::string_view path) {
+        fan::graphics::open_file("png,jpg,jpeg,webp,bmp,gif,mp4,mov,webm,mkv,m4v", [this](std::string_view path) {
           background_image = std::string(path);
           background_image_loaded.clear();
           refresh_background_image();
@@ -246,7 +246,7 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
         }
       }
       if (gui::is_item_hovered()) {
-        gui::set_tooltip(has_image ? background_image : "A picture behind the panels");
+        gui::set_tooltip(has_image ? background_image : "A picture, GIF or video behind the panels");
       }
     });
     if (!background_image.empty()) {
@@ -369,6 +369,92 @@ void render_thread_t::ecps_gui_t::load_gif_background(const std::string& path) {
     show_background_frame(0);
   }
 
+void render_thread_t::ecps_gui_t::load_video_background(const std::string& path) {
+    auto video = std::make_unique<background_video_t>();
+    if (!video->demuxer.open(path.c_str())) {
+      background_image_failed = true;
+      fan::print("background video: could not open", path);
+      return;
+    }
+    if (!video->decoder.open()) {
+      background_image_failed = true;
+      fan::print("background video: no decoder for", path);
+      return;
+    }
+    video->codec_name = video->demuxer.get_codec_name();
+    fan::vec2ui source = video->demuxer.get_video_size();
+    if (source.x == 0 || source.y == 0) {
+      source = fan::vec2ui(1280, 720);
+    }
+    // a background is behind the panels and dimmed: 720p is enough, and the decoder does not have to make a 4K
+    // frame every tick
+    f32_t scale = std::min({ 1280.f / source.x, 720.f / source.y, 1.f });
+    video->target_size = fan::vec2ui(std::max(1u, (std::uint32_t)std::lround(source.x * scale)),
+      std::max(1u, (std::uint32_t)std::lround(source.y * scale)));
+    video->fps = std::clamp(video->demuxer.get_fps(), 5.f, 30.f);
+    video->next_frame = std::chrono::steady_clock::now();
+    background_video = std::move(video);
+    if (!decode_video_frame()) {
+      background_video.reset();
+      background_image_failed = true;
+      fan::print("background video: could not decode a frame from", path);
+    }
+    else {
+      // the first frame stays up for its own duration, the next one comes on the tick after it
+      background_video->next_frame = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds((int)std::lround(1000.f / background_video->fps));
+    }
+  }
+
+bool render_thread_t::ecps_gui_t::decode_video_frame() {
+    if (!background_video) {
+      return false;
+    }
+    auto& video = *background_video;
+    auto read_packet = [&] {
+      return video.demuxer.needs_annexb()
+        ? video.demuxer.read_annexb_packet(video.packet, video.packet_pts)
+        : video.demuxer.read_raw_packet(video.packet, video.packet_pts);
+    };
+    for (int attempts = 0; attempts < 256 && video.frames.empty(); ++attempts) {
+      if (!read_packet()) {
+        // loop: the background plays until another picture is chosen
+        if (!video.demuxer.seek(0.f)) {
+          return false;
+        }
+        video.decoder.flush();
+        video.frames.clear();
+        video.packet.clear();
+        if (!read_packet()) {
+          return false;
+        }
+      }
+      auto decoded = video.decoder.decode_packet(video.packet.data(), video.packet.size(), video.codec_name,
+        true, video.target_size);
+      if (!decoded.empty()) {
+        video.frames.insert(video.frames.end(), std::make_move_iterator(decoded.begin()), std::make_move_iterator(decoded.end()));
+      }
+    }
+    if (video.frames.empty()) {
+      return false;
+    }
+    auto& frame = video.frames.front();
+    if (frame.success && !frame.plane_data.empty()) {
+      fan::image::info_t info;
+      info.data = frame.plane_data[0].data();
+      info.size = fan::vec2i((int)frame.image_size.x, (int)frame.image_size.y);
+      info.channels = 4;
+      if (background_image_texture.valid()) {
+        background_image_texture.reload(info, smooth_image());
+      }
+      else {
+        background_image_texture = owner->engine.image_load(info, smooth_image());
+      }
+    }
+    video.frames.erase(video.frames.begin());
+    return true;
+  }
+
 void render_thread_t::ecps_gui_t::refresh_background_image() {
     if (background_image_loaded == background_image) {
       return;
@@ -382,6 +468,7 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
     background_frame_delays_ms.clear();
     background_frame_index = 0;
     background_frame_at = {};
+    background_video.reset();
     background_image_loaded = background_image;
     background_image_failed = false;
     if (background_image.empty()) {
@@ -392,6 +479,10 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
       [](unsigned char c) { return (char)std::tolower(c); });
     if (extension == ".gif") {
       load_gif_background(background_image);
+      return;
+    }
+    if (extension == ".mp4" || extension == ".mov" || extension == ".webm" || extension == ".mkv" || extension == ".m4v") {
+      load_video_background(background_image);
       return;
     }
     auto loaded = ecps_load_image(background_image);
@@ -408,7 +499,21 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
   }
 
 void render_thread_t::ecps_gui_t::draw_background_image() {
-    if (background_animated && !background_frames.empty()) {
+    // no decoding while the window is in the background: the picture stays where it is and starts again when the
+    // window comes back
+    bool animate = owner->engine.window.is_focused();
+    if (background_video && animate) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= background_video->next_frame) {
+        if (decode_video_frame()) {
+          background_video->next_frame = now + std::chrono::milliseconds((int)std::lround(1000.f / background_video->fps));
+        }
+        else {
+          background_video->next_frame = now + std::chrono::seconds(1);
+        }
+      }
+    }
+    else if (background_animated && animate && !background_frames.empty()) {
       auto now = std::chrono::steady_clock::now();
       if (now >= background_frame_at) {
         background_frame_index = (background_frame_index + 1) % background_frames.size();
