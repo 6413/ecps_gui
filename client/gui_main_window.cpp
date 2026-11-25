@@ -8,7 +8,6 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
   auto& engine = gui.owner->engine;
 
       if (!p_open) return;
-      gui.handle_font_keys();
 
       auto* viewport = gui::get_main_viewport();
       fan::vec2 window_pos = fan::vec2(viewport->WorkPos.x, viewport->WorkPos.y);
@@ -47,7 +46,6 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
           updater.tick_restart();
           render_stream_view_content();
           gui.top_bar.render_about_popup();
-          gui.render_password_popup();
         }
         else {
         gui.top_bar.render_top_bar();
@@ -77,6 +75,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
           default: current_tab = 1; break;
         }
         }
+        gui.render_password_popup();
       }
       gui::end();
       if (gui.ui_autohide && current_tab == 1) {

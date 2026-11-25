@@ -298,6 +298,8 @@ struct ecps_gui_t {
 #if defined(_WIN32)
     updater.refocus_after_update((std::uintptr_t)engine.window.get_win32_handle());
 #endif
+    // global, not tied to the channel panel being open or to the full-screen stream view
+    handle_font_keys();
     update_voice_keys();
     update_panel_keys();
     update_automatically();

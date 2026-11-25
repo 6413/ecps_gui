@@ -248,7 +248,8 @@ void run_encode_thread() {
           // the portal dialog was cancelled: stay cancelled instead of asking again every 100 ms
           rt->ecps_gui.capture_armed = false;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // screen_read waits for a frame itself; this only keeps a broken capture from spinning
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
         continue;
       }
     #endif

@@ -104,7 +104,15 @@ void render_thread_t::ecps_gui_t::render_new_channel_popup() {
       new_channel_popup_focus = true;
       gui::open_popup("New channel");
     }
+    // the modal can be drawn outside the channel panel's push_theme scope; without this its body came out with the
+    // default white popup background while the title bar was dark
+    fan::color shown_bg = theme_background_display();
+    gui::push_style_color(gui::col_popup_bg, fan::color(
+      std::pow(shown_bg.r, 2.2f) * 2.f, std::pow(shown_bg.g, 2.2f) * 2.f, std::pow(shown_bg.b, 2.2f) * 2.f, 0.98f));
+    gui::push_style_color(gui::col_text, fan::color(0.9f, 0.9f, 0.9f, 1.f));
+    gui::push_style_color(gui::col_text_disabled, fan::color(0.6f, 0.6f, 0.65f, 1.f));
     if (!gui::begin_popup_modal("New channel", gui::window_flags_always_auto_resize | gui::window_flags_no_saved_settings)) {
+      gui::pop_style_color(3);
       return;
     }
     gui::text("Channel name");
@@ -148,6 +156,7 @@ void render_thread_t::ecps_gui_t::render_new_channel_popup() {
       gui::close_current_popup();
     }
     gui::end_popup();
+    gui::pop_style_color(3);
   }
 
 void render_thread_t::ecps_gui_t::render_password_popup() {
