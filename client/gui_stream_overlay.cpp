@@ -704,7 +704,14 @@ void render_thread_t::ecps_gui_t::render_debug_tab() {
       row("Encoded as", size_text(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " @ " +
         std::to_string((long long)rt->screen_encoder.config_.frame_rate) + " fps");
       row("Bitrate", fan::bitrate_text(rt->screen_encoder.config_.bitrate / 1000.0));
-      row("Encoder", rt->screen_encoder.name);
+      std::string used_encoder = rt->screen_encoder.encoder_.get_codec_name();
+      row("Encoder", (used_encoder.empty() ? rt->screen_encoder.name : used_encoder) + " (" +
+        (rt->screen_encoder.encoder_.uses_gpu_frames() ? "GPU frames" : "CPU frames") + ")");
+      row("Scaling", fan::graphics::get_scaling_quality_name(rt->screen_encoder.config_.scaling_quality));
+#if defined(_WIN32)
+      row("Capture source", rt->screen_encoder.mdscr.target_window.load() ? "window" : "screen");
+      row("HDR tone map", rt->screen_encoder.mdscr.hdr_active.load() ? "on" : "off");
+#endif
       row("Capture time", number(stage_times.capture.ms.load(), 2) + " ms");
       row("Encode time", number(stage_times.encode.ms.load(), 2) + " ms");
       row("Sending", number(debug_sample.share_kbps, 0) + " kbit/s, " + number(debug_sample.share_pps, 0) + " packets/s (" +

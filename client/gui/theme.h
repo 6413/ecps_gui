@@ -376,7 +376,9 @@
 
   // a dim line of help under a control: smaller, indented, closer to its row than to the next
   static void settings_hint(const std::string& text) {
-    gui::font_scope_t small(gui::get_font_size() * 0.9f);
+    // get_font_size is already the scaled size, get_font applies the scale again: undo it here or a text scale
+    // above 1 makes every hint bigger than the row it belongs to
+    gui::font_scope_t small(gui::get_font_size() * 0.9f / std::max(gui::get_font_scale(), 0.5f));
     gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
     fan::color dim = gui::palette_color(gui::widget_palette.label);
     dim.a *= 0.55f;
@@ -390,7 +392,7 @@
 
   // an amber line for a choice with a catch, quieter than an error
   static void settings_warning(const std::string& text) {
-    gui::font_scope_t small(gui::get_font_size() * 0.9f);
+    gui::font_scope_t small(gui::get_font_size() * 0.9f / std::max(gui::get_font_scale(), 0.5f));
     gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
     fan::color warm(0.75f, 0.35f, 0.08f, 1.f);
     gui::push_style_color(gui::col_text, warm);
