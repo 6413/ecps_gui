@@ -97,6 +97,15 @@
     std::chrono::steady_clock::time_point since;
     std::chrono::steady_clock::time_point next_try;
   } resume_share;
+  // the window or monitor that was the share's source before the update (Windows: an HWND or HMONITOR, both stay the
+  // same while Windows runs), set again on the capture once the render thread is there
+  struct resume_capture_t {
+    bool pending = false;
+    std::uintptr_t window = 0;
+    std::uintptr_t monitor = 0;
+    std::string title;
+  } resume_capture;
+  void update_resume_capture();
 
   void update_resume_share();
 

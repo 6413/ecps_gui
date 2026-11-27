@@ -141,6 +141,11 @@
   bool capture_picker_requested = false;
   std::chrono::steady_clock::time_point capture_picker_opened_at;
 
+  // a window that is still open (one picked before an update restart may have closed since)
+  static bool capture_window_open(std::uintptr_t handle) {
+    return handle && IsWindow((HWND)handle);
+  }
+
   // thumb_pixels gets the picture as rgba, at most max_width wide. handle 0 is the screen
   bool grab_window_rgba(std::uintptr_t handle, int max_width, fan::vec2i& size) {
     HWND hwnd = (HWND)handle;

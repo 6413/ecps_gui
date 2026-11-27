@@ -496,6 +496,16 @@ std::string render_thread_t::ecps_gui_t::collect_resume_state() {
     midi["volume"] = midi_volume;
     state["midi"] = midi;
     state["show_own_stream"] = show_own_stream;
+#if defined(_WIN32)
+    // what was picked to share (a window or a monitor), also when not sharing right now
+    if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
+      fan::json capture = fan::json::object();
+      capture["window"] = (std::uint64_t)rt->screen_encoder.mdscr.target_window.load();
+      capture["monitor"] = (std::uint64_t)rt->screen_encoder.mdscr.target_monitor.load();
+      capture["title"] = capture_window_title;
+      state["capture"] = capture;
+    }
+#endif
     // sharing goes on after the update: into the same channel, from the camera or from the same screen or window
     // (on Linux the portal's token skips its dialog). Only this file carries it, a normal start never shares by itself
     for (const auto& channel : ecps_backend.channel_info) {
@@ -555,6 +565,13 @@ void render_thread_t::ecps_gui_t::load_resume_state() {
         midi_volume = midi.value("volume", midi_volume);
       }
       show_own_stream = state.value("show_own_stream", show_own_stream);
+      if (state.contains("capture") && state["capture"].is_object()) {
+        fan::json capture = state["capture"];
+        resume_capture.window = (std::uintptr_t)capture.value("window", (std::uint64_t)0);
+        resume_capture.monitor = (std::uintptr_t)capture.value("monitor", (std::uint64_t)0);
+        resume_capture.title = capture.value("title", std::string());
+        resume_capture.pending = resume_capture.window != 0 || resume_capture.monitor != 0;
+      }
       if (state.contains("share") && state["share"].is_object()) {
         fan::json share = state["share"];
         resume_share.channel = share.value("channel", std::string());
@@ -571,7 +588,37 @@ void render_thread_t::ecps_gui_t::load_resume_state() {
       }
   }
 
+void render_thread_t::ecps_gui_t::update_resume_capture() {
+    if (!resume_capture.pending) {
+      return;
+    }
+    auto* rt = render_thread_ptr.load(std::memory_order_acquire);
+    if (!rt) {
+      return;
+    }
+    resume_capture.pending = false;
+#if defined(_WIN32)
+    auto& capture = rt->screen_encoder.mdscr;
+    // only if it is still there: a closed window or an unplugged monitor leaves the main display
+    if (resume_capture.monitor) {
+      refresh_capture_monitors();
+      bool found = std::any_of(capture_monitors.begin(), capture_monitors.end(),
+        [&](const auto& monitor) { return monitor.handle == resume_capture.monitor; });
+      if (found) {
+        capture.target_monitor = resume_capture.monitor;
+      }
+    }
+    if (capture_window_open(resume_capture.window)) {
+      capture_window_title = resume_capture.title;
+      capture.target_window = resume_capture.window;
+    }
+    fan::print("share source after the update: " + std::string(capture.target_window.load() ? "window " + capture_window_title
+      : capture.target_monitor.load() ? "a monitor" : "the main display"));
+#endif
+  }
+
 void render_thread_t::ecps_gui_t::update_resume_share() {
+    update_resume_capture();
     if (!resume_share.active) {
       return;
     }
