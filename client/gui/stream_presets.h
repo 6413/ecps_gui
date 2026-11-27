@@ -24,6 +24,7 @@
     {"Sharp text", "1080p, 60 fps, 20 Mbit/s, HEVC 4:4:4", 1920, 1080, 60, 1, 20.f, 1, true, false, 4},
     {"AV1", "1080p, 60 fps, 12 Mbit/s, AV1", 1920, 1080, 60, 1, 12.f, 2, false, false, 3},
     {"Lossless", "HEVC 4:4:4 at QP 0, very high bitrate", 1920, 1080, 60, 1, 15.f, 1, true, true, 4},
+    {"Performance", "720p, 60 fps, 6 Mbit/s, H.264", 1280, 720, 60, 1, 6.f, 0, false, false, 1},
   };
   inline static constexpr int stream_preset_count = (int)(sizeof(stream_presets) / sizeof(stream_presets[0]));
 

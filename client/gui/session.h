@@ -57,6 +57,12 @@
   std::string password_input;
   std::string channel_password_input;
   std::string channel_rename_input;
+  // the Manage tab's own box: the channel can be renamed from another session, so this follows the channel's current
+  // name unless it is being typed in. Separate from the new-channel popup's input, which shares channel_rename_input
+  std::string channel_manage_rename_input;
+  ecps_backend_t::Protocol_ChannelID_t channel_manage_rename_channel{ (uint16_t)-1 };
+  std::string channel_manage_rename_shown;
+  bool channel_manage_rename_active = false;
   bool new_channel_popup_requested = false;
   bool new_channel_popup_focus = false;
   bool password_prompt_show = false;

@@ -233,13 +233,34 @@ void render_thread_t::ecps_gui_t::render_password_popup() {
   }
 
 void render_thread_t::ecps_gui_t::render_channel_password_controls(ecps_backend_t::Protocol_ChannelID_t channel_id) {
+    std::string current_name = ecps_backend.channel_name_of(channel_id);
+    if (current_name.empty()) {
+      current_name = ecps_backend.own_channel_title;
+    }
+    // the channel's name can change without this box (another session renamed it): show what it is now, except while
+    // it is being typed in
+    bool channel_changed = channel_manage_rename_channel.i != channel_id.i;
+    bool name_changed = !current_name.empty() && current_name != channel_manage_rename_shown;
+    if (!channel_manage_rename_active && (channel_changed || name_changed)) {
+      channel_manage_rename_input = current_name;
+      channel_manage_rename_channel = channel_id;
+      channel_manage_rename_shown = current_name;
+    }
     settings_section_icon(icon_e::users, "NAME");
     gui::push_item_width(-1.f);
-    bool rename_enter = gui::input_text("##channel_rename", &channel_rename_input, gui::input_text_flags_enter_returns_true);
+    bool rename_enter = gui::input_text("##channel_rename", &channel_manage_rename_input, gui::input_text_flags_enter_returns_true);
     gui::pop_item_width();
+    channel_manage_rename_active = gui::is_item_active();
     if (gui::button("Rename") || rename_enter) {
-      std::string name = channel_rename_input;
+      std::string name = channel_manage_rename_input;
       write_to_config("channel_title", name);
+      // the list shows the trimmed, shortened name the backend sends; do not let the old one replace the box while
+      // the rename is on its way
+      std::string sent = ecps_backend_t::trim_password(name);
+      if (sent.size() > 31) {
+        sent.resize(31);
+      }
+      channel_manage_rename_shown = sent;
       backend_queue([channel_id, name]() -> fan::event::task_t {
         ecps_backend.channel_rename(channel_id, name);
         co_return;
