@@ -1047,9 +1047,15 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::process_stream_settings
       f32_t right_width = std::clamp(gui_ptr->stream_settings.settings_panel_width, 250.f, std::max(250.f, area.x * share));
       f32_t left_width = std::clamp(gui_ptr->side_left_width, 250.f, std::max(250.f, area.x * share));
       auto panel = [&](int side, fan::vec2 at, fan::vec2 size) {
+        bool upper = !gui_ptr->panels_on(side, 0).empty();
+        bool lower = side != 1 && !gui_ptr->panels_on(side, 1).empty();
+        if (upper && lower) {
+          gui_ptr->render_side_split(side, at, size);
+          return;
+        }
         gui::set_cursor_screen_pos(at);
         gui::begin_child(("##side_panel_" + std::to_string(side)).c_str(), size, true);
-        gui_ptr->render_side_panel_content(side);
+        gui_ptr->render_side_panel_content(side, upper ? 0 : 1);
         gui::end_child();
       };
       f32_t x = origin.x;

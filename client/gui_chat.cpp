@@ -403,10 +403,45 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       // a picture that came in grows the log: followed down only when the log was near the bottom already
       bool picture_down = chat_scroll_down && gui::get_scroll_y() >= gui::get_scroll_max_y() - 700.f;
       chat_scroll_down = false;
-      if (picture_down || revision != chat_seen_revision || chat_seen_channel != (std::uint32_t)channel_id.i) {
-        chat_seen_revision = revision;
-        chat_seen_channel = (std::uint32_t)channel_id.i;
+      // scrolled up to read, new messages leave the log where it is (one's own still goes down)
+      bool near_bottom = gui::get_scroll_y() >= gui::get_scroll_max_y() - 60.f;
+      bool channel_changed = chat_seen_channel != (std::uint32_t)channel_id.i;
+      bool new_messages = revision != chat_seen_revision;
+      bool mine_last = !messages.empty() && messages.back().from == (std::uint32_t)ecps_backend.session_id.i;
+      if (channel_changed) {
+        chat_new_below = 0;
+        chat_newest_id = 0;
+      }
+      if (picture_down || channel_changed || chat_jump_latest || (new_messages && (near_bottom || mine_last))) {
         gui::set_scroll_here_y();
+        chat_new_below = 0;
+        chat_jump_latest = false;
+      }
+      else if (new_messages) {
+        for (const auto& message : messages) {
+          chat_new_below += message.id > chat_newest_id;
+        }
+      }
+      else if (near_bottom) {
+        chat_new_below = 0;
+      }
+      chat_seen_revision = revision;
+      chat_seen_channel = (std::uint32_t)channel_id.i;
+      if (!messages.empty()) {
+        chat_newest_id = std::max(chat_newest_id, messages.back().id);
+      }
+      if (!near_bottom && !channel_changed) {
+        std::string label = chat_new_below > 0 ? std::to_string(chat_new_below) + (chat_new_below == 1 ? " new message" : " new messages")
+          : std::string("Jump to latest");
+        label += "##chat_jump_latest";
+        f32_t width = gui::calc_text_size(label.substr(0, label.find("##"))).x + gui::get_style().FramePadding.x * 2.f;
+        fan::vec2 window_at = gui::get_window_pos();
+        fan::vec2 window_size = gui::get_window_size();
+        gui::set_cursor_screen_pos(fan::vec2(window_at.x + (window_size.x - width) * 0.5f,
+          window_at.y + window_size.y - gui::get_frame_height() - 10.f));
+        if (gui::button(label.c_str())) {
+          chat_jump_latest = true;
+        }
       }
       // the click came after the message it points to was drawn this frame (a reply points to an earlier one), so it
       // gets one more frame to find it. A message no longer kept here goes nowhere
@@ -1273,13 +1308,47 @@ void render_thread_t::ecps_gui_t::render_chat_pending_files() {
     }
   }
 
-void render_thread_t::ecps_gui_t::render_side_panel_content(int side) {
+void render_thread_t::ecps_gui_t::render_side_split(int side, fan::vec2 at, fan::vec2 size) {
+    f32_t handle = 10.f;
+    f32_t usable = size.y - handle;
+    f32_t top = std::clamp(usable * side_split[side], 120.f, std::max(120.f, usable - 120.f));
+    gui::set_cursor_screen_pos(at);
+    gui::begin_child(("##side_panel_" + std::to_string(side)).c_str(), fan::vec2(size.x, top), true);
+    render_side_panel_content(side, 0);
+    gui::end_child();
+    gui::set_cursor_screen_pos(fan::vec2(at.x, at.y + top));
+    gui::push_id(side);
+    gui::invisible_button("##side_split_handle", fan::vec2(size.x, handle));
+    gui::pop_id();
+    bool active = gui::is_item_active();
+    bool hot = gui::is_item_hovered() || active;
+    if (hot) {
+      gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
+    }
+    if (active && usable > 0.f) {
+      side_split_resizing = true;
+      side_split[side] = std::clamp((gui::get_io().MousePos.y - at.y - handle * 0.5f) / usable, 0.15f, 0.85f);
+    }
+    else if (side_split_resizing && !fan::window::is_mouse_down(0)) {
+      side_split_resizing = false;
+      save_side_panel_layout();
+    }
+    f32_t mid = at.y + top + handle * 0.5f;
+    gui::get_window_draw_list()->AddLine(fan::vec2(at.x + size.x * 0.35f, mid), fan::vec2(at.x + size.x * 0.65f, mid),
+      hot ? accent_hover_u32 : 0x60ffffffu, hot ? 3.f : 2.f);
+    gui::set_cursor_screen_pos(fan::vec2(at.x, at.y + top + handle));
+    gui::begin_child(("##side_panel_" + std::to_string(side) + "_lower").c_str(), fan::vec2(size.x, size.y - top - handle), true);
+    render_side_panel_content(side, 1);
+    gui::end_child();
+  }
+
+void render_thread_t::ecps_gui_t::render_side_panel_content(int side, int group) {
     load_side_panel_layout();
-    auto panels = panels_on(side);
+    auto panels = panels_on(side, side < 0 ? -1 : group);
     if (panels.empty()) {
       return;
     }
-    int shown = side_shown(side);
+    int shown = side_shown(side, group);
     render_side_panel_header(panels, shown);
     if (shown == side_chat) {
       if (ecps_backend.channel_info.empty()) {
@@ -1445,15 +1514,35 @@ void render_thread_t::ecps_gui_t::render_side_panel_drop() {
       return;
     }
     int moving = side_panel_moving;
+    // a side whose upper half went empty: what's below moves up
+    auto normalize = [&](int side) {
+      if (panels_on(side, 0).empty()) {
+        for (int panel = 0; panel < side_panel_count; ++panel) {
+          if (side_of[panel] == side) {
+            side_lower[panel] = false;
+          }
+        }
+        side_front[side] = side_front_lower[side];
+      }
+    };
     if (!fan::window::is_mouse_down(0)) {
-      if (side_panel_drop >= 0 && side_panel_drop != side_of[moving]) {
-        side_of[moving] = side_panel_drop;
-        side_hidden[side_panel_drop] = false;
-        side_front[side_panel_drop] = moving;
+      int to = side_panel_drop;
+      bool lower = to >= 0 && to != 1 && side_panel_drop_lower;
+      if (to >= 0 && (to != side_of[moving] || lower != lower_of(moving))) {
+        int from = side_of[moving];
+        side_of[moving] = to;
+        side_lower[moving] = lower;
+        side_hidden[to] = false;
+        front_of(moving) = moving;
+        if (from != to) {
+          normalize(from);
+        }
+        normalize(to);
         save_side_panel_layout();
       }
       side_panel_moving = -1;
       side_panel_drop = -1;
+      side_panel_drop_lower = 0;
       return;
     }
     fan::vec2 m = gui::get_io().MousePos;
@@ -1464,12 +1553,21 @@ void render_thread_t::ecps_gui_t::render_side_panel_drop() {
     f32_t to_bottom = (max.y - m.y) / size.y;
     f32_t to_left = (m.x - min.x) / size.x;
     side_panel_drop = to_right <= to_bottom && to_right <= to_left ? 0 : to_bottom <= to_left ? 1 : 2;
-    std::string others;
-    for (int panel : panels_on(side_panel_drop)) {
-      if (panel != moving) {
-        others += std::string(others.empty() ? "" : " and ") + side_panel_name(panel);
+    // the names of the other panels on the drop side, in one half or both
+    auto names = [&](int group) {
+      std::string out;
+      for (int panel : panels_on(side_panel_drop, group)) {
+        if (panel != moving) {
+          out += std::string(out.empty() ? "" : " and ") + side_panel_name(panel);
+        }
       }
-    }
+      return out;
+    };
+    // the left and right sides: the lower half of the side puts the panel under the ones there
+    side_panel_drop_lower = side_panel_drop != 1 && !names(-1).empty() && m.y > min.y + size.y * 0.5f;
+    std::string upper_names = side_panel_drop == 1 ? names(-1) : names(0);
+    std::string lower_names = side_panel_drop == 1 ? std::string() : names(1);
+    std::string others = side_panel_drop_lower ? lower_names : upper_names;
     fan::vec2 a, b;
     std::string where;
     switch (side_panel_drop) {
@@ -1477,8 +1575,24 @@ void render_thread_t::ecps_gui_t::render_side_panel_drop() {
       case 1: a = fan::vec2(min.x, max.y - size.y * 0.35f); b = max; where = "at the bottom"; break;
       default: a = min; b = fan::vec2(min.x + size.x * 0.28f, max.y); where = "on the left"; break;
     }
-    where = others.empty() ? std::string(side_panel_name(moving)) + " " + where
-      : "Together with " + others + " " + where;
+    if (side_panel_drop != 1) {
+      if (side_panel_drop_lower) {
+        a.y = min.y + size.y * 0.5f;
+      }
+      else if (!lower_names.empty()) {
+        b.y = min.y + size.y * 0.5f;
+      }
+    }
+    if (side_panel_drop_lower && others.empty()) {
+      where = std::string(side_panel_name(moving)) + " below " + upper_names;
+    }
+    else if (!side_panel_drop_lower && others.empty() && !lower_names.empty()) {
+      where = std::string(side_panel_name(moving)) + " above " + lower_names;
+    }
+    else {
+      where = others.empty() ? std::string(side_panel_name(moving)) + " " + where
+        : "Together with " + others + " " + where;
+    }
     auto* list = gui::get_foreground_draw_list();
     list->AddRectFilled(min, max, 0x40000000u, 8.f);
     list->AddRectFilled(a, b, accent_alpha(accent_hover_u32, 0x50), 8.f);

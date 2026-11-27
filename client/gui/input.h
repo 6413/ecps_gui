@@ -38,6 +38,25 @@
     input_forward = {};
   }
 
+  // double-clicking the stream picture turns full screen on or off. Not while the stream has the mouse, the
+  // double click is the host's then
+  void double_click_fullscreen() {
+    auto rt = get_render_thread();
+    bool stream_shown = is_fullscreen_stream || window_handler.current_tab == 1;
+    if (!rt || !stream_shown || input_forward.captured || !gui::is_mouse_double_clicked(0) ||
+      gui::is_any_item_hovered() || gui::is_any_popup_open() || rt->network_frame.get_image() == engine.default_texture) {
+      return;
+    }
+    fan::vec2 mouse_position = engine.get_mouse_position();
+    fan::vec2 frame_size = rt->network_frame.get_size() * 2;
+    fan::vec2 frame_min = fan::vec2(rt->network_frame.get_position()) - frame_size / 2;
+    fan::vec2 frame_max = frame_min + frame_size;
+    if (mouse_position.x >= frame_min.x && mouse_position.x <= frame_max.x &&
+      mouse_position.y >= frame_min.y && mouse_position.y <= frame_max.y) {
+      set_fullscreen_stream(!is_fullscreen_stream);
+    }
+  }
+
   // clicking the stream gives it the mouse and keyboard, clicking elsewhere takes them back
   void forward_input() {
     auto rt = get_render_thread();
@@ -130,6 +149,7 @@
       stream_settings.input_control = 0;
       send_input_control_flag();
     }
+    double_click_fullscreen();
     forward_input();
     update_channel_flags();
     update_host_cursor();

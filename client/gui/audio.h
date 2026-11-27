@@ -81,12 +81,15 @@
       .echo_cancel = stream_settings.voice_echo_cancel,
       .noise_suppress = stream_settings.voice_noise_suppress,
       .normalize = stream_settings.voice_normalize,
+      .push_to_talk = stream_settings.voice_push_to_talk,
     };
   }
 
   // ---- mute keys, rebindable in fan's settings under Keybinds ---------------------------------------------
   static constexpr const char* action_toggle_mute = "Mute microphone";
   static constexpr const char* action_toggle_deafen = "Mute voice chat";
+  // no key until one is set in Keybinds
+  static constexpr const char* action_push_to_talk = "Push to talk";
   bool voice_keys_added = false;
 
   void add_voice_keybinds();

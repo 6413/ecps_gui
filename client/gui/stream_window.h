@@ -14,6 +14,85 @@
   f32_t fullscreen_drag_width = 0.f;
   f32_t fullscreen_grip_alpha = 0.f;
 
+  // the mini player's window has no title bar: dragged by the picture. A double click or the button goes back
+  bool mini_dragging = false;
+  fan::vec2 mini_grab = 0;
+
+  void render_mini_player() {
+    auto* viewport = gui::get_main_viewport();
+    gui::set_next_window_pos(fan::vec2(viewport->WorkPos.x, viewport->WorkPos.y));
+    gui::set_next_window_size(fan::vec2(viewport->WorkSize.x, viewport->WorkSize.y));
+    gui::push_style_var(gui::style_var_window_padding, fan::vec2(0, 0));
+    gui::push_style_var(gui::style_var_window_border_size, 0.0f);
+    gui::push_style_var(gui::style_var_window_rounding, 0.0f);
+    bool shown = gui::begin("##MiniPlayer", nullptr,
+      gui::window_flags_no_docking |
+      gui::window_flags_no_saved_settings |
+      gui::window_flags_no_move |
+      gui::window_flags_no_collapse |
+      gui::window_flags_no_resize |
+      gui::window_flags_no_title_bar |
+      gui::window_flags_no_scrollbar |
+      gui::window_flags_no_scroll_with_mouse |
+      gui::window_flags_no_background);
+    gui::pop_style_var(3);
+    if (!shown) {
+      gui::end();
+      return;
+    }
+    fan::vec2 area = gui::get_content_region_avail();
+    gui::set_viewport(engine.orthographic_render_view);
+    auto rt = get_render_thread();
+    if (!rt) {
+      gui::end();
+      return;
+    }
+    This->network_frame_helper.setup_network_frame(area, false);
+    bool has_picture = rt->network_frame.get_image() != engine.default_texture;
+    if (!has_picture) {
+      const char* note = "No stream";
+      gui::set_cursor_pos((area - gui::calc_text_size(note)) * 0.5f);
+      gui::text_disabled(note);
+    }
+
+    auto& io = gui::get_io();
+    bool hovered = gui::is_window_hovered();
+    f32_t button_size = 28.f;
+    fan::vec2 button_at(area.x - button_size - 6.f, 6.f);
+    bool over_button = false;
+    if (hovered || mini_dragging) {
+      gui::set_cursor_pos(button_at);
+      if (icon_button("##mini_player_back", icon_e::exit_fullscreen, "Back to the full window (Esc)", button_size, icon_style_e::overlay)) {
+        gui::end();
+        This->set_mini_player(false);
+        return;
+      }
+      over_button = gui::is_item_hovered();
+    }
+    if (hovered && !over_button && gui::is_mouse_double_clicked(0)) {
+      mini_dragging = false;
+      gui::end();
+      This->set_mini_player(false);
+      return;
+    }
+    // the mouse is read in the window: moving the window by the mouse's way from where it was grabbed keeps it there
+    if (hovered && !over_button && io.MouseClicked[0]) {
+      mini_dragging = true;
+      mini_grab = fan::vec2(io.MousePos) - fan::vec2(viewport->Pos.x, viewport->Pos.y);
+    }
+    if (!io.MouseDown[0]) {
+      mini_dragging = false;
+    }
+    if (mini_dragging) {
+      fan::vec2 mouse = fan::vec2(io.MousePos) - fan::vec2(viewport->Pos.x, viewport->Pos.y);
+      fan::vec2 moved = mouse - mini_grab;
+      if (moved.x != 0.f || moved.y != 0.f) {
+        engine.window.set_position(engine.window.get_position() + moved);
+      }
+    }
+    gui::end();
+  }
+
   void render_fullscreen_stream() {
     auto* viewport = gui::get_main_viewport();
     fan::vec2 window_pos = fan::vec2(viewport->WorkPos.x, viewport->WorkPos.y);

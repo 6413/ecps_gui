@@ -63,6 +63,10 @@
     std::uint64_t sum_new_frames = 0, sum_wait_ns = 0;
     std::uint64_t frame_total = 0, frame_drop = 0, packet_total = 0, packet_drop = 0;
     std::uint64_t keyframe_waits = 0, queue_full = 0, decode_failed = 0;
+    // how the watched stream comes in, for the dot in the stream's bar: -1 not watching, 0 good, 1 some loss or
+    // a slow ping, 2 bad. With the last second's loss behind it
+    int quality = -1;
+    f32_t quality_frame_loss = 0.f, quality_packet_loss = 0.f;
     // send_debug summed (or the most) since the last summary
     std::uint64_t queued = 0, sent = 0, flushed = 0, backlog_idrs = 0, lock_misses = 0, passes = 0, chunks = 0,
       cap_stops = 0, bucket_stops = 0, send_us = 0, max_send_us = 0, max_gap_us = 0, max_queue = 0;

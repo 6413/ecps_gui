@@ -10,6 +10,46 @@
   std::vector<capture_window_t> capture_windows;
   std::string capture_window_title;
 
+  // the last few shared, by title: one click in the picker shares one again (a window's handle changes every run)
+  struct recent_source_t {
+    bool window = false;
+    std::string title;
+  };
+  std::vector<recent_source_t> recent_sources;
+  bool recent_sources_loaded = false;
+
+  void load_recent_sources() {
+    if (recent_sources_loaded) {
+      return;
+    }
+    recent_sources_loaded = true;
+    if (!config.contains("recent_sources") || !config["recent_sources"].is_array()) {
+      return;
+    }
+    for (const auto& item : config["recent_sources"]) {
+      if (item.is_object() && item.contains("title") && item["title"].is_string()) {
+        recent_sources.push_back({item.value("window", false), item["title"].get<std::string>()});
+      }
+    }
+  }
+
+  void remember_source(bool window, const std::string& title) {
+    if (title.empty()) {
+      return;
+    }
+    load_recent_sources();
+    std::erase_if(recent_sources, [&](const recent_source_t& r) { return r.window == window && r.title == title; });
+    recent_sources.insert(recent_sources.begin(), {window, title});
+    if (recent_sources.size() > 5) {
+      recent_sources.resize(5);
+    }
+    fan::json list = fan::json::array();
+    for (const auto& r : recent_sources) {
+      list.push_back({{"window", r.window}, {"title", r.title}});
+    }
+    write_to_config("recent_sources", list);
+  }
+
   static BOOL CALLBACK collect_capture_window(HWND hwnd, LPARAM param) {
     auto* list = (std::vector<capture_window_t>*)param;
     if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != nullptr) {
@@ -368,6 +408,64 @@
     gui::same_line();
     gui::text(fan::color(0.5f, 0.5f, 0.55f, 1.f), "  click one, Esc closes");
 
+    // the recent ones still there, one click each
+    bool recent_changed = false;
+    f32_t recent_height = 0.f;
+    {
+      load_recent_sources();
+      bool any = false;
+      auto recent = recent_sources;
+      for (std::size_t i = 0; i < recent.size(); ++i) {
+        const auto& r = recent[i];
+        const capture_window_t* window = nullptr;
+        const capture_monitor_t* monitor = nullptr;
+        if (r.window) {
+          for (const auto& w : capture_windows) {
+            if (w.title == r.title) {
+              window = &w;
+              break;
+            }
+          }
+        }
+        else {
+          for (const auto& m : capture_monitors) {
+            if (m.title == r.title) {
+              monitor = &m;
+              break;
+            }
+          }
+        }
+        if (!window && !monitor) {
+          continue;
+        }
+        if (!any) {
+          any = true;
+          gui::align_text_to_frame_padding();
+          gui::text_disabled("Recent");
+        }
+        gui::same_line();
+        std::string shown = gui::fit_title(r.title, 180.f) + "##recent_source_" + std::to_string(i);
+        if (gui::button(shown.c_str())) {
+          if (window) {
+            capture_window_title = window->title;
+            capture.target_window = window->handle;
+          }
+          else {
+            capture.target_window = 0;
+            capture.target_monitor = monitor->primary ? 0 : monitor->handle;
+          }
+          remember_source(r.window, r.title);
+          recent_changed = true;
+        }
+        if (gui::is_item_hovered()) {
+          gui::set_tooltip(r.title);
+        }
+      }
+      if (any) {
+        recent_height = gui::get_frame_height() + gui::get_style().ItemSpacing.y;
+      }
+    }
+
     // Screens and Applications as tabs, like the share pickers of chat apps
     int open_tab = capture_picker_open_tab;
     capture_picker_open_tab = -1;
@@ -384,7 +482,7 @@
     }
 
     // the cards scroll inside a box of a fixed size, the popup itself never grows past the window
-    fan::vec2 box = capture_picker_size - fan::vec2(28.f, gui::get_frame_height() * 2.f + 40.f);
+    fan::vec2 box = capture_picker_size - fan::vec2(28.f, gui::get_frame_height() * 2.f + 40.f + recent_height);
     gui::push_style_color(gui::col_child_bg, fan::color(0, 0, 0, 0));
     gui::begin_child("##capture_cards", box);
     std::uintptr_t current = capture.target_window.load();
@@ -448,6 +546,7 @@
           capture.target_window = 0;
           // the main display as 0: it stays the main one even if Windows changes which that is
           capture.target_monitor = monitor.primary ? 0 : monitor.handle;
+          remember_source(false, monitor.title);
           changed = true;
         }
       }
@@ -457,6 +556,7 @@
         if (card(window.handle, window.title, window.handle == current)) {
           capture_window_title = window.title;
           capture.target_window = window.handle;
+          remember_source(true, window.title);
           changed = true;
         }
       }
@@ -467,6 +567,7 @@
     gui::end_child();
     gui::pop_style_color();
 
+    changed = changed || recent_changed;
     if (changed) {
       // viewers need a new keyframe, the picture changed size and content
       rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;

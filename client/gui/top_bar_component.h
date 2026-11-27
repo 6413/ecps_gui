@@ -145,7 +145,7 @@ struct top_bar_t {
     fan::color hint_color(1.f, 1.f, 1.f, 1.f);
     switch (updater.state.load()) {
       case state_e::building: hint = "updating..."; hint_color = gui::palette_color(gui::widget_palette.accent_text); break;
-      case state_e::ready: hint = "restarting..."; hint_color = fan::color(0.15f, 1.f, 0.3f, 1.f); break;
+      case state_e::ready: hint = updater.held.load() ? "restart to update" : "restarting..."; hint_color = fan::color(0.15f, 1.f, 0.3f, 1.f); break;
       case state_e::failed:
       case state_e::build_failed: hint = "update failed"; hint_color = fan::color(1.f, 0.25f, 0.2f, 1.f); break;
       default: break;
@@ -326,7 +326,7 @@ struct top_bar_t {
         }
         break;
       case state_e::ready:
-        gui::text("Update " + updater.latest() + " is ready, restarting...");
+        gui::text("Update " + updater.latest() + (updater.held.load() ? " is ready" : " is ready, restarting..."));
         if (gui::button("Restart now")) {
           updater.restart();
         }

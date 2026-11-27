@@ -259,6 +259,13 @@ void render_thread_t::ecps_gui_t::render_voice_settings() {
       stream_settings.voice_normalize = normalize;
       save_voice_settings();
     }
+    bool push_to_talk = stream_settings.voice_push_to_talk;
+    std::string talk_key = voice_key_text(action_push_to_talk);
+    if (gui::settings_switch("Push to talk", &push_to_talk,
+      ("Sends your voice only while the key is held. Key: " + talk_key).c_str())) {
+      stream_settings.voice_push_to_talk = push_to_talk;
+      save_voice_settings();
+    }
 
     gui::unindent(settings_space(2.f));
 
@@ -308,6 +315,9 @@ void render_thread_t::ecps_gui_t::add_voice_keybinds() {
     if (!actions.exists(action_toggle_deafen)) {
       actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_d}, action_toggle_deafen);
     }
+    if (!actions.exists(action_push_to_talk)) {
+      actions.add_empty_keybind(action_push_to_talk);
+    }
   }
 
 std::string render_thread_t::ecps_gui_t::voice_key_text(const char* action) {
@@ -345,6 +355,12 @@ void render_thread_t::ecps_gui_t::update_voice_keys() {
     if (!voice_keys_added) {
       add_voice_keybinds();
       voice_keys_added = true;
+    }
+    {
+      auto* settings = fan_settings_menu();
+      bool capturing = settings && settings->keybind_menu.is_capturing();
+      voice_chat.talk_key_down.store(stream_settings.voice_push_to_talk && !capturing &&
+        owner->engine.get_input_action().is_down(action_push_to_talk));
     }
     if (gui::get_io().WantTextInput) {
       return;
@@ -490,6 +506,7 @@ void render_thread_t::ecps_gui_t::save_voice_settings() {
     voice["echo_cancel"] = stream_settings.voice_echo_cancel;
     voice["noise_suppress"] = stream_settings.voice_noise_suppress;
     voice["normalize"] = stream_settings.voice_normalize;
+    voice["push_to_talk"] = stream_settings.voice_push_to_talk;
     fan::json users = fan::json::object();
     for (const auto& [name, volume] : voice_user_volumes) {
       users[name] = volume;

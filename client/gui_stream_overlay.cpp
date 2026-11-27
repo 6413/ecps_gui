@@ -122,17 +122,41 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
         stream_volume_popup_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
       }
     }
+    // how the stream comes in: green, yellow or red. A click shows the numbers over the picture
+    if (perf_log.quality >= 0) {
+      gui::same_line(0, 10.f);
+      fan::vec2 dot_at = gui::get_cursor_screen_pos();
+      gui::invisible_button("##connection_quality", fan::vec2(frame_height * 0.6f, frame_height));
+      if (gui::is_item_clicked()) {
+        show_stream_stats = !show_stream_stats;
+      }
+      static constexpr std::uint32_t colors[] = {0xff5ad06au, 0xff3cc8f0u, 0xff4a4ae8u};
+      static constexpr const char* words[] = {"good", "some loss", "bad"};
+      bool hot = gui::is_item_hovered();
+      gui::get_window_draw_list()->AddCircleFilled(dot_at + fan::vec2(frame_height * 0.3f, frame_height * 0.5f),
+        hot ? 6.f : 5.f, colors[perf_log.quality]);
+      if (hot) {
+        gui::set_tooltip(std::string("Connection ") + words[perf_log.quality] + ": " +
+          std::to_string((int)ecps_backend.ping_ms) + " ms ping, " + fan::number_text(perf_log.quality_packet_loss, 1) +
+          "% packets and " + fan::number_text(perf_log.quality_frame_loss, 1) + "% frames lost in the last second, " +
+          fan::number_text(debug_sample.decoded_fps, 0) + " fps. Click for the stats");
+      }
+    }
     // as wide as the text needs, a fixed width cut the label off
     f32_t button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
     gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
     stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
 
     gui::same_line();
-    gui::set_cursor_pos_x(area_size.x - (frame_height * 3) - 22.f);
+    gui::set_cursor_pos_x(area_size.x - (frame_height * 4) - 30.f);
     render_side_chat_button("##btn_chat", frame_height);
     gui::same_line(0, 8.f);
     render_side_settings_button("##btn_settings", frame_height);
 
+    gui::same_line(area_size.x - frame_height * 2 - 10.f);
+    if (icon_button("##btn_mini_player", icon_e::pin, "Mini player: the stream alone, on top of other windows", frame_height, icon_style_e::overlay)) {
+      set_mini_player(true);
+    }
     gui::same_line(area_size.x - frame_height - 4.f);
     if (icon_button("##btn_fullscreen", icon_e::fullscreen, "Full screen", frame_height, icon_style_e::overlay)) {
       is_fullscreen_stream = true;
@@ -489,6 +513,13 @@ void render_thread_t::ecps_gui_t::perf_log_tick() {
     perf_log.packet_drop = packet_drops_now;
     f32_t frame_loss = frames ? frames_lost * 100.f / frames : 0.f;
     f32_t packet_loss = packets + packets_lost ? packets_lost * 100.f / (packets + packets_lost) : 0.f;
+    {
+      f32_t ping = (f32_t)ecps_backend.ping_ms;
+      perf_log.quality_frame_loss = frame_loss;
+      perf_log.quality_packet_loss = packet_loss;
+      perf_log.quality = !watching ? -1 : frame_loss > 10.f || packet_loss > 5.f || ping > 250.f ? 2
+        : frame_loss > 2.f || packet_loss > 1.f || ping > 120.f ? 1 : 0;
+    }
 
     std::string encoder_name = rt->screen_encoder.encoder_.get_codec_name();
     auto& decoder = rt->screen_decoder.decoder_;

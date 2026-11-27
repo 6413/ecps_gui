@@ -35,6 +35,7 @@ void voice_chat_t::update(const settings_t& settings) {
     device = settings.device;
     capture.set_gain(settings.gain);
     threshold.store(settings.threshold, std::memory_order_relaxed);
+    push_to_talk.store(settings.push_to_talk, std::memory_order_relaxed);
     if (want_capture && !capture.is_running() && !capture_failed) {
       capture_failed = !encoder.open(voice_bitrate, true) ||
         !capture.start([this](const f32_t* pcm, std::uint32_t) { encode(pcm); }, device);
@@ -125,7 +126,14 @@ void voice_chat_t::encode(const f32_t* input) {
     }
     level.store(peak, std::memory_order_relaxed);
     std::int64_t now = now_ms();
-    if (peak >= threshold.load(std::memory_order_relaxed)) {
+    if (push_to_talk.load(std::memory_order_relaxed)) {
+      if (!talk_key_down.load(std::memory_order_relaxed)) {
+        loud_at_ms.store(0, std::memory_order_relaxed);
+        return;
+      }
+      loud_at_ms.store(now, std::memory_order_relaxed);
+    }
+    else if (peak >= threshold.load(std::memory_order_relaxed)) {
       loud_at_ms.store(now, std::memory_order_relaxed);
     }
     if (now - loud_at_ms.load(std::memory_order_relaxed) > hold_ms) {

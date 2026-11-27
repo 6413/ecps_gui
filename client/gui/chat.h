@@ -5,6 +5,10 @@
 
   std::string chat_input;
   std::uint64_t chat_seen_revision = 0;
+  // scrolled up to read: new messages don't pull the log down, they're counted on a button that does
+  int chat_new_below = 0;
+  std::uint32_t chat_newest_id = 0;
+  bool chat_jump_latest = false;
   std::uint32_t chat_seen_channel = (std::uint32_t)-1;
   bool chat_input_active = false;
   bool chat_focus_input = false;
@@ -670,6 +674,13 @@
   int side_of[side_panel_count] = {0, 0, 2}; // 0 right, 1 bottom, 2 left
   // the tab shown on each side when panels share it, and [3] in full screen, where Settings and Chat share one panel
   int side_front[4] = {-1, -1, -1, -1};
+  // the left and right sides split in two, one above the other: a panel dropped on the lower half of a side goes
+  // under the others there. Each half has its own tabs. side_split is how much of the height the upper half takes
+  bool side_lower[side_panel_count] = {false, false, false};
+  int side_front_lower[3] = {-1, -1, -1};
+  f32_t side_split[3] = {0.5f, 0.5f, 0.5f};
+  int side_panel_drop_lower = 0;
+  bool side_split_resizing = false;
   f32_t side_panel_height = 300.f;
   f32_t side_left_width = 0.f; // 0 until the first frame sets it from the window
   bool side_panel_loaded = false;
@@ -704,31 +715,42 @@
     }
     return out;
   }
-  // the panels shown on a side, -1 for full screen: there only Settings and Chat, the stream keeps the rest
-  std::vector<int> panels_on(int side) {
+  // in the lower half of its side. The bottom side isn't split, everything there is one panel
+  bool lower_of(int panel) const {
+    return side_of[panel] != 1 && side_lower[panel];
+  }
+  // the panels shown on a side, -1 for full screen: there only Settings and Chat, the stream keeps the rest.
+  // group 0 the upper half of the side, 1 the lower one, -1 both
+  std::vector<int> panels_on(int side, int group = -1) {
     if (side >= 0 && side_hidden[side]) {
       return {};
     }
     std::vector<int> out;
     for (int panel = 0; panel < side_panel_count; ++panel) {
-      if (side_open[panel] && (side < 0 ? panel != side_channels : side_of[panel] == side)) {
+      if (side_open[panel] && (side < 0 ? panel != side_channels : side_of[panel] == side &&
+          (group < 0 || (int)lower_of(panel) == group))) {
         out.push_back(panel);
       }
     }
     return out;
   }
-  // the tab shown on a side
-  int side_shown(int side) {
-    auto panels = panels_on(side);
+  // which tab a panel's half shows
+  int& front_of(int panel) {
+    return lower_of(panel) ? side_front_lower[side_of[panel]] : side_front[side_of[panel]];
+  }
+  // the tab shown on a side (or the half of one)
+  int side_shown(int side, int group = 0) {
+    auto panels = panels_on(side, side < 0 ? -1 : group);
     if (panels.empty()) {
       return -1;
     }
-    int front = side_front[side < 0 ? 3 : side];
+    int front = side < 0 ? side_front[3] : group == 1 ? side_front_lower[side] : side_front[side];
     return std::find(panels.begin(), panels.end(), front) != panels.end() ? front : panels.front();
   }
   // open, and the tab shown where it is
   bool panel_shown(int panel) {
-    return side_open[panel] && (side_shown(side_of[panel]) == panel || (panel != side_channels && is_fullscreen_stream && side_shown(-1) == panel));
+    return side_open[panel] && (side_shown(side_of[panel], (int)lower_of(panel)) == panel ||
+      (panel != side_channels && is_fullscreen_stream && side_shown(-1) == panel));
   }
   bool any_side_panel_open() const {
     return side_open[side_settings] || side_open[side_chat] || side_open[side_channels];
@@ -752,6 +774,18 @@
       side_panel_height = layout.value("height", side_panel_height);
       stream_settings.settings_panel_width = layout.value("width", stream_settings.settings_panel_width);
       side_left_width = layout.value("left_width", 0.f);
+      if (layout.contains("lower") && layout["lower"].is_array() && layout["lower"].size() == side_panel_count) {
+        for (int panel = 0; panel < side_panel_count; ++panel) {
+          side_lower[panel] = layout["lower"][panel].is_boolean() && layout["lower"][panel].get<bool>();
+        }
+      }
+      if (layout.contains("split") && layout["split"].is_array() && layout["split"].size() == 3) {
+        for (int side = 0; side < 3; ++side) {
+          if (layout["split"][side].is_number()) {
+            side_split[side] = std::clamp((f32_t)layout["split"][side].get<double>(), 0.15f, 0.85f);
+          }
+        }
+      }
       window_handler.channels_list_height = layout.value("channels_list_height", 0.f);
       if (layout.contains("open") && layout["open"].is_array() && layout["open"].size() == side_panel_count) {
         for (int panel = 0; panel < side_panel_count; ++panel) {
@@ -786,6 +820,16 @@
       hidden.push_back(side_hidden[side]);
     }
     layout["hidden"] = hidden;
+    fan::json lower = fan::json::array();
+    for (int panel = 0; panel < side_panel_count; ++panel) {
+      lower.push_back(side_lower[panel]);
+    }
+    layout["lower"] = lower;
+    fan::json split = fan::json::array();
+    for (int side = 0; side < 3; ++side) {
+      split.push_back(side_split[side]);
+    }
+    layout["split"] = split;
     write_to_config("side_panel", layout);
   }
 
@@ -800,7 +844,7 @@
     load_side_panel_layout();
     side_open[panel] = true;
     side_hidden[side_of[panel]] = false;
-    side_front[side_of[panel]] = panel;
+    front_of(panel) = panel;
     if (panel != side_channels) {
       side_front[3] = panel;
     }
@@ -861,10 +905,15 @@
         side_panel_moving = panel;
       }
       if (hovered && side_panel_moving < 0 && !is_fullscreen_stream) {
-        gui::set_tooltip("Drag to move or dock; drop on another to combine");
+        gui::set_tooltip("Drag to move or dock: the lower half of a side puts it under the panel there, the upper half beside it as a tab");
       }
       if (clicked && side_panel_moving < 0) {
-        side_front[is_fullscreen_stream ? 3 : side_of[panel]] = panel;
+        if (is_fullscreen_stream) {
+          side_front[3] = panel;
+        }
+        else {
+          front_of(panel) = panel;
+        }
         if (panel == side_chat) {
           chat_focus_input = true;
         }
@@ -896,7 +945,10 @@
   }
 
   // a panel: its tabs and the one shown
-  void render_side_panel_content(int side = -1);
+  void render_side_panel_content(int side = -1, int group = 0);
+
+  // a side with panels above and below: both halves and the line between them, which drags the split
+  void render_side_split(int side, fan::vec2 at, fan::vec2 size);
 
 
   // the line between the stream and a panel: dragged, it makes the panel bigger or smaller

@@ -99,6 +99,8 @@
     bool voice_noise_suppress = true;
     // evens out how loud each of the others is, so a quiet one and a loud one come to about the same level
     bool voice_normalize = false;
+    // the voice goes out only while the Push to talk key is held
+    bool voice_push_to_talk = false;
 
     bool share_camera = false;
     std::string camera_device;

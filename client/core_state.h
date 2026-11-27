@@ -275,6 +275,7 @@ struct voice_chat_t {
     bool echo_cancel = false;
     bool noise_suppress = true;
     bool normalize = false;
+    bool push_to_talk = false;
   };
   struct speaker_t {
     fan::audio::opus_decoder_t decoder;
@@ -403,6 +404,9 @@ struct voice_chat_t {
   // what the server was last told about the microphone: 0 or 1, -1 when not in the voice chat
   std::atomic<int> announced_muted{-1};
   std::atomic<bool> deafened = false;
+  // push to talk: the voice goes out only while the key is held, however loud
+  std::atomic<bool> push_to_talk = false;
+  std::atomic<bool> talk_key_down = false;
   std::atomic<f32_t> threshold = 0.02f;
   std::atomic<std::int64_t> loud_at_ms = 0;
   std::string device;

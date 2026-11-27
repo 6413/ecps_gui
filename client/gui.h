@@ -159,6 +159,7 @@ struct ecps_gui_t {
       stream_settings.voice_echo_cancel = voice.value("echo_cancel", stream_settings.voice_echo_cancel);
       stream_settings.voice_noise_suppress = voice.value("noise_suppress", stream_settings.voice_noise_suppress);
       stream_settings.voice_normalize = voice.value("normalize", stream_settings.voice_normalize);
+      stream_settings.voice_push_to_talk = voice.value("push_to_talk", stream_settings.voice_push_to_talk);
       if (voice.contains("user_volumes") && voice["user_volumes"].is_object()) {
         fan::json users = voice["user_volumes"];
         for (auto it = users.begin(); it != users.end(); ++it) {
@@ -259,7 +260,71 @@ struct ecps_gui_t {
   static constexpr const char* action_toggle_settings = "Settings panel";
   static constexpr const char* action_toggle_channels = "Channels panel";
   static constexpr const char* action_toggle_fullscreen = "Full screen stream";
+  static constexpr const char* action_shortcuts = "Shortcuts";
+  static constexpr const char* action_mini_player = "Mini player";
+  bool is_mini_player = false;
   bool panel_keys_added = false;
+  bool show_shortcuts = false;
+  bool title_live = false;
+
+  // a finished update says so before it restarts, with Later to keep going (a stream, a call) and restart later
+  void render_update_toast() {
+    if (updater.state.load() != updater_t::state_e::ready || updater.held.load()) {
+      return;
+    }
+    fan::vec2 display = gui::get_io().DisplaySize;
+    gui::set_next_window_pos(fan::vec2(display.x - 16.f, display.y - 16.f), gui::cond_always, fan::vec2(1.f, 1.f));
+    if (gui::begin("##update_toast", nullptr, gui::window_flags_no_title_bar | gui::window_flags_no_resize |
+      gui::window_flags_no_move | gui::window_flags_no_saved_settings | gui::window_flags_always_auto_resize |
+      gui::window_flags_no_docking | gui::window_flags_no_focus_on_appearing | gui::window_flags_no_collapse)) {
+      gui::text("Update " + updater.latest() + " is ready");
+      gui::text_disabled("Restarting in " + std::to_string(updater.seconds_to_restart()) + " s");
+      if (gui::button("Restart now##update_toast")) {
+        updater.restart();
+      }
+      gui::same_line();
+      if (gui::button("Later##update_toast")) {
+        updater.held.store(true);
+        fan::print("update: ready, restart later from About");
+      }
+    }
+    gui::end();
+  }
+
+  // every key set in Keybinds, in one window: F1
+  void render_shortcuts() {
+    if (!show_shortcuts) {
+      return;
+    }
+    auto& actions = engine.get_input_action();
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (const auto& [name, data] : actions.input_actions) {
+      for (const auto& chord : data.keybinds) {
+        if (!chord.empty() && !chord[0].empty()) {
+          rows.emplace_back(std::string(std::string_view(name)), actions.combo_to_string(chord[0]));
+          break;
+        }
+      }
+    }
+    std::sort(rows.begin(), rows.end());
+    fan::vec2 display = gui::get_io().DisplaySize;
+    gui::set_next_window_pos(fan::vec2(display.x * 0.5f, display.y * 0.5f), gui::cond_appearing, fan::vec2(0.5f, 0.5f));
+    if (gui::begin("Shortcuts##ecps_shortcuts", &show_shortcuts, gui::window_flags_no_collapse |
+      gui::window_flags_no_saved_settings | gui::window_flags_always_auto_resize | gui::window_flags_no_docking)) {
+      f32_t name_width = 0.f;
+      for (const auto& row : rows) {
+        name_width = std::max(name_width, gui::calc_text_size(row.first).x);
+      }
+      for (const auto& row : rows) {
+        gui::text(row.first);
+        gui::same_line(name_width + 30.f);
+        gui::text_disabled(row.second);
+      }
+      gui::spacing();
+      gui::text_disabled("Change them in Settings > Keybinds");
+    }
+    gui::end();
+  }
 
   void set_fullscreen_stream(bool on) {
     if (on == is_fullscreen_stream) {
@@ -280,10 +345,27 @@ struct ecps_gui_t {
     }
   }
 
+  // mini player: the window shrinks to the stream alone, kept above other windows in a corner of the screen
+  void set_mini_player(bool on) {
+    if (on == is_mini_player) {
+      return;
+    }
+    if (on && is_fullscreen_stream) {
+      set_fullscreen_stream(false);
+    }
+    is_mini_player = on;
+    backdrop_black = on;
+    apply_backdrop_color();
+    engine.window.set_compact(on);
+  }
+
   void update_panel_keys() {
     auto& actions = engine.get_input_action();
     if (!panel_keys_added) {
       panel_keys_added = true;
+      // the engine's game keys (movement, attacks, debug) mean nothing here: out of the keybinds menu, and Ctrl+4 or
+      // Ctrl+Shift+R no longer fire
+      engine.input.remove_game_actions();
       // a saved binding, even an emptied one, wins over the default
       if (!actions.exists(action_toggle_chat)) {
         actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_c}, action_toggle_chat);
@@ -300,6 +382,12 @@ struct ecps_gui_t {
       }
       if (!actions.exists(action_audio_mixer)) {
         actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_a}, action_audio_mixer);
+      }
+      if (!actions.exists(action_shortcuts)) {
+        actions.add_keycombo({fan::key_f1}, action_shortcuts);
+      }
+      if (!actions.exists(action_mini_player)) {
+        actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_p}, action_mini_player);
       }
     }
     if (auto* settings = fan_settings_menu(); settings && settings->keybind_menu.is_capturing()) {
@@ -319,7 +407,17 @@ struct ecps_gui_t {
       mixer_requested = true;
     }
     if (engine.is_active(action_toggle_fullscreen)) {
+      set_mini_player(false);
       set_fullscreen_stream(!is_fullscreen_stream);
+    }
+    if (engine.is_active(action_mini_player)) {
+      set_mini_player(!is_mini_player);
+    }
+    if (is_mini_player && !gui::get_io().WantTextInput && engine.window.is_key_clicked(fan::key_escape)) {
+      set_mini_player(false);
+    }
+    if (!gui::get_io().WantTextInput && engine.is_active(action_shortcuts)) {
+      show_shortcuts = !show_shortcuts;
     }
     // Esc leaves full screen, unless it is closing something being typed in
     if (is_fullscreen_stream && !gui::get_io().WantTextInput && engine.window.is_key_clicked(fan::key_escape)) {
@@ -346,6 +444,17 @@ struct ecps_gui_t {
     voice_chat.update(get_voice_settings());
     if (auto* rt = get_render_thread()) {
       rt->screen_encoder.set_camera(stream_settings.share_camera, stream_settings.camera_device);
+    }
+    render_shortcuts();
+    render_update_toast();
+    // sharing shows in the window's title too, so it's seen from the taskbar
+    if (bool live = ecps_backend.is_streaming_to_any_channel(); live != title_live) {
+      title_live = live;
+      engine.set_window_name(std::string(live ? "\xE2\x97\x8F" " LIVE - " : "") + "ECPS - Every Communication Program Sucks");
+    }
+    if (is_mini_player) {
+      render_mini_player();
+      return;
     }
     if (is_fullscreen_stream) {
       render_fullscreen_stream();

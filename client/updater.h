@@ -373,15 +373,26 @@ struct updater_t {
       }
       else {
         built_path = path;
-        restart_at = now + std::chrono::milliseconds(1500);
+        restart_at = now + restart_delay;
         state = state_e::ready;
       }
     }
   }
 
+  // the pause between a finished update and the restart into it: time for the toast's "Later"
+  static constexpr std::chrono::milliseconds restart_delay{8000};
+  // "Later" on the update toast: no restart until Restart now (or the next start, which is the new build anyway)
+  std::atomic<bool> held{false};
+  // seconds until the restart, 0 once due
+  int seconds_to_restart() {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto left = std::chrono::duration_cast<std::chrono::milliseconds>(restart_at - std::chrono::steady_clock::now()).count();
+    return left > 0 ? (int)((left + 999) / 1000) : 0;
+  }
+
   // GUI thread, every frame: a finished build restarts the program into itself after a short pause
   void tick_restart() {
-    if (state.load() == state_e::ready && std::chrono::steady_clock::now() >= restart_at) {
+    if (state.load() == state_e::ready && !held.load() && std::chrono::steady_clock::now() >= restart_at) {
       restart();
     }
   }
@@ -841,10 +852,10 @@ private:
       }
     }
     fs::remove_all(work, ec);
-    fan::print("update: installed, restarting in 1.5 s");
+    fan::print("update: installed, restarting in 8 s");
     std::lock_guard<std::mutex> lock(mutex);
     phase = 0;
-    restart_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    restart_at = std::chrono::steady_clock::now() + restart_delay;
     state = state_e::ready;
   }
 
