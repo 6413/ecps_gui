@@ -117,7 +117,7 @@ struct ecps_gui_t {
         saved_stream.bitrate_mode = stream.value("bitrate_mode", 0);
         saved_stream.bitrate_mbps = stream.value("bitrate_mbps", 10.f);
         saved_stream.scaling_quality = stream.value("scaling_quality", -1);
-        saved_stream.preset = (int)stream.value("preset", 0);
+        saved_stream.preset = stream_preset_from_config(stream);
         saved_stream.valid = true;
       }
     }

@@ -696,6 +696,8 @@ void render_thread_t::ecps_gui_t::save_stream_settings_now() {
     stream["bitrate_mbps"] = current.bitrate_mbps;
     stream["scaling_quality"] = current.scaling_quality;
     stream["preset"] = current.preset;
+    // by name: the list's order can change between versions
+    stream["preset_name"] = stream_presets[std::clamp(current.preset, 0, stream_preset_count - 1)].name;
     write_to_config("stream", stream);
     saved_stream = current;
     seen_stream = current;
@@ -752,6 +754,13 @@ void render_thread_t::ecps_gui_t::update_stream_settings_persistence() {
       saved_stream.sharp_text = sharp_text;
       saved_stream.lossless = lossless;
       seen_stream = current_stream_settings();
+      return;
+    }
+
+    // a preset in use follows the shared source's shape: not a hand change, so it stays the preset
+    if (follow_preset_source()) {
+      seen_stream = current_stream_settings();
+      stream_changed_at = now;
       return;
     }
 
