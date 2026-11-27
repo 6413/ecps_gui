@@ -215,6 +215,10 @@ void render_thread_t::ecps_gui_t::render_phone_upload_popup() {
       fan::print("phone upload: window opened");
       gui::open_popup("##phone_upload");
     }
+    // a set width: an auto sized popup is 0 wide on its first frame, and the wrapped text has nothing to wrap at
+    if (gui::is_popup_open("##phone_upload")) {
+      gui::set_next_window_size(fan::vec2(gui::get_font_size() * 24.f, 0.f));
+    }
     if (!gui::begin_popup("##phone_upload")) {
       return;
     }

@@ -176,7 +176,12 @@ void render_thread_t::ecps_gui_t::render_stream_volume_popup(fan::vec2 icon_at, 
     }
 
     f32_t font = gui::get_font_size();
-    f32_t column_width = std::max(46.f, font * 2.8f);
+    // as wide as the longest name needs ("Stream" was cut to "Strea.."), a long username is still cut at 5 letters' room
+    f32_t widest = 0.f;
+    for (const auto& column : columns) {
+      widest = std::max(widest, gui::calc_text_size(column.label).x);
+    }
+    f32_t column_width = std::clamp(widest + 14.f, std::max(46.f, font * 2.8f), font * 5.f);
     f32_t bar_height = std::clamp(font * 4.6f, 112.f, 150.f);
     f32_t label_height = font + 8.f;
     f32_t width = column_width * columns.size() + 8.f;
@@ -302,11 +307,20 @@ void render_thread_t::ecps_gui_t::render_stream_volume_popup(fan::vec2 icon_at, 
     }
 
     auto now = std::chrono::steady_clock::now();
-    if (any_hovered || any_active || gui::is_window_hovered()) {
+    // the speaker it opened from, and the gap up to the mixer, count as staying: while the mixer is open ImGui reports
+    // the speaker as not hovered (the popup blocks it), so with the mouse resting on it the mixer closed after 300 ms,
+    // the speaker was hovered again and opened it, over and over: the flicker
+    fan::vec2 mouse = gui::get_io().MousePos;
+    fan::vec2 popup_at = gui::get_window_pos();
+    bool over_speaker = mouse.x >= std::min(icon_at.x, popup_at.x) - 4.f && mouse.x <= std::max(icon_at.x + icon_size, popup_at.x + width) + 4.f &&
+      mouse.y >= popup_at.y + height - 2.f && mouse.y <= icon_at.y + icon_size + 4.f &&
+      mouse.x >= icon_at.x - 4.f && mouse.x <= icon_at.x + icon_size + 4.f;
+    bool staying = any_hovered || any_active || over_speaker || gui::is_window_hovered();
+    if (staying) {
       stream_volume_popup_until = std::max(stream_volume_popup_until, now + std::chrono::milliseconds(300));
     }
     stream_volume_dragging = any_active;
-    if (!any_hovered && !any_active && now > stream_volume_popup_until) {
+    if (!staying && now > stream_volume_popup_until) {
       gui::close_current_popup();
     }
     gui::end_popup();
