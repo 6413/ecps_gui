@@ -112,6 +112,9 @@
   std::uint32_t username_seen_seq = 0;
 
   std::string auto_join_host;
+  // our own channel opened by itself on connecting: joined back when the server still has it, made again when not
+  bool auto_host = false;
+  std::chrono::steady_clock::time_point auto_host_next_try;
   std::vector<std::string> resume_join;
   std::string resume_select;
   std::chrono::steady_clock::time_point next_auto_join;

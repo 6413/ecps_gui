@@ -77,6 +77,9 @@ struct ecps_gui_t {
         channel_rename_input = config["channel_title"].get<std::string>();
         ecps_backend.own_channel_title = channel_rename_input;
       }
+      if (config.contains("auto_host")) {
+        auto_host = config.value("auto_host", false);
+      }
       if (config.contains("auto_join") && config["auto_join"].is_string()) {
         auto_join_host = config["auto_join"].get<std::string>();
       }

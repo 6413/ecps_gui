@@ -338,7 +338,7 @@ void render_thread_t::ecps_gui_t::set_auto_join(const std::string& host_name) {
   }
 
 void render_thread_t::ecps_gui_t::update_auto_join() {
-    if (auto_join_host.empty() && resume_join.empty() && resume_select.empty()) {
+    if (auto_join_host.empty() && resume_join.empty() && resume_select.empty() && !auto_host) {
       return;
     }
     // a channel asked for its password: no joins without it meanwhile, their failures would cancel the one with it
@@ -371,6 +371,51 @@ void render_thread_t::ecps_gui_t::update_auto_join() {
       backend_queue([]() -> fan::event::task_t {
         (void)co_await ecps_expected(ecps_backend.request_channel_list());
       });
+    }
+
+    // Our own channel, "Open automatically": once the server's list is here, joined back when it still has it (it
+    // keeps a channel its host left), made again when it doesn't. Not while an update's own resume does the same
+    if (auto_host && ecps_backend.channel_list_received && !(resume_share.active && resume_share.own) && now >= auto_host_next_try) {
+      bool have_own = false;
+      for (const auto& channel : ecps_backend.channel_info) {
+        have_own |= ecps_backend.is_hosting_channel(channel.channel_id);
+      }
+      if (!have_own) {
+        auto_host_next_try = now + std::chrono::seconds(6);
+        std::string own_name = ecps_backend.own_channel_title.empty() ? ecps_backend.get_current_username() : ecps_backend.own_channel_title;
+        const ecps_backend_t::channel_list_info_t* kept = nullptr;
+        for (const auto& channel : ecps_backend.available_channels) {
+          bool someone_hosts = channel.host_session_id.i != decltype(channel.host_session_id.i)(-1);
+          if (channel.name == own_name && !someone_hosts) {
+            kept = &channel;
+          }
+        }
+        if (kept) {
+          backend_queue([this, id = kept->channel_id]() -> fan::event::task_t {
+            if (auto joined = co_await ecps_expected(ecps_backend.channel_join(id, true)); !joined) {
+              co_return;
+            }
+            (void)co_await ecps_expected(ecps_backend.request_channel_list());
+            (void)co_await ecps_expected(ecps_backend.request_channel_session_list(id));
+            selected_channel_id = id;
+          });
+        }
+        else {
+          backend_queue([this]() -> fan::event::task_t {
+            auto created = co_await ecps_expected(ecps_backend.channel_create());
+            if (!created) {
+              fan::print("Could not open your channel: " + created.error());
+              co_return;
+            }
+            if (auto joined = co_await ecps_expected(ecps_backend.channel_join(*created, true)); !joined) {
+              co_return;
+            }
+            (void)co_await ecps_expected(ecps_backend.request_channel_list());
+            (void)co_await ecps_expected(ecps_backend.request_channel_session_list(*created));
+            selected_channel_id = *created;
+          });
+        }
+      }
     }
 
     std::vector<std::string> wanted = resume_join;

@@ -74,13 +74,18 @@ void render_thread_t::ecps_gui_t::update_phone_upload() {
         }
       }
       if (phone_upload_url.empty()) {
+        // each step in the log: a phone upload that stopped the program can be followed to where
+        fan::print("phone upload: looking up this computer's address");
         phone_upload_url = "http://" + phone_upload_local_ip() + ":52123/" + phone_upload_token;
+        fan::print("phone upload: address found");
       }
       if (!phone_upload_started) {
         phone_upload_started = true;
         std::string token = phone_upload_token;
         backend_queue([token]() -> fan::event::task_t {
+          fan::print("phone upload: starting the page on port 52123");
           ecps_backend.start_web_upload(52123, token);
+          fan::print(ecps_backend.web_upload_enabled.load() ? "phone upload: page started" : "phone upload: the page could not start");
           co_return;
         });
       }
@@ -114,18 +119,19 @@ void render_thread_t::ecps_gui_t::render_emoji_picker() {
     }
     struct category_t {
       const char* name;
+      std::uint32_t icon; // its tab: the names cut down to "S..." in a picker this narrow
       std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
     };
     static const std::vector<category_t> categories = {
-      {"Smileys", {{0x1F600, 0x1F64F}, {0x1F910, 0x1F92F}, {0x1F970, 0x1F97A}, {0x1FAE0, 0x1FAE8}}},
-      {"People", {{0x1F446, 0x1F450}, {0x1F466, 0x1F487}, {0x1F90C, 0x1F90F}, {0x1F918, 0x1F91F}, {0x1F930, 0x1F93A},
+      {"Smileys", 0x1F600, {{0x1F600, 0x1F64F}, {0x1F910, 0x1F92F}, {0x1F970, 0x1F97A}, {0x1FAE0, 0x1FAE8}}},
+      {"People", 0x1F44B, {{0x1F446, 0x1F450}, {0x1F466, 0x1F487}, {0x1F90C, 0x1F90F}, {0x1F918, 0x1F91F}, {0x1F930, 0x1F93A},
         {0x1F9B0, 0x1F9B9}, {0x1F9CD, 0x1F9DF}, {0x1FAF0, 0x1FAF8}, {0x1F440, 0x1F445}}},
-      {"Nature", {{0x1F330, 0x1F344}, {0x1F400, 0x1F43F}, {0x1F980, 0x1F9AE}, {0x1FAB0, 0x1FABD}, {0x1F300, 0x1F32C}}},
-      {"Food", {{0x1F345, 0x1F37F}, {0x1F950, 0x1F96F}, {0x1F9C0, 0x1F9CB}, {0x1FAD0, 0x1FADB}, {0x2615, 0x2615}}},
-      {"Activities", {{0x1F380, 0x1F3D3}, {0x1F93C, 0x1F94F}, {0x26BD, 0x26BE}, {0x1FA80, 0x1FA8F}}},
-      {"Travel", {{0x1F680, 0x1F6FF}, {0x1F3D4, 0x1F3F0}, {0x1F5FA, 0x1F5FF}}},
-      {"Objects", {{0x1F4A0, 0x1F4FF}, {0x1F500, 0x1F579}, {0x1F9E0, 0x1F9FF}, {0x1FA70, 0x1FA7C}, {0x1FA90, 0x1FAAF}}},
-      {"Symbols", {{0x2764, 0x2764}, {0x1F493, 0x1F49F}, {0x2600, 0x27BF}, {0x2B00, 0x2BFF}, {0x1F7E0, 0x1F7EB}}},
+      {"Nature", 0x1F33F, {{0x1F330, 0x1F344}, {0x1F400, 0x1F43F}, {0x1F980, 0x1F9AE}, {0x1FAB0, 0x1FABD}, {0x1F300, 0x1F32C}}},
+      {"Food", 0x1F355, {{0x1F345, 0x1F37F}, {0x1F950, 0x1F96F}, {0x1F9C0, 0x1F9CB}, {0x1FAD0, 0x1FADB}, {0x2615, 0x2615}}},
+      {"Activities", 0x26BD, {{0x1F380, 0x1F3D3}, {0x1F93C, 0x1F94F}, {0x26BD, 0x26BE}, {0x1FA80, 0x1FA8F}}},
+      {"Travel", 0x2708, {{0x1F680, 0x1F6FF}, {0x1F3D4, 0x1F3F0}, {0x1F5FA, 0x1F5FF}}},
+      {"Objects", 0x1F4A1, {{0x1F4A0, 0x1F4FF}, {0x1F500, 0x1F579}, {0x1F9E0, 0x1F9FF}, {0x1FA70, 0x1FA7C}, {0x1FA90, 0x1FAAF}}},
+      {"Symbols", 0x2764, {{0x2764, 0x2764}, {0x1F493, 0x1F49F}, {0x2600, 0x27BF}, {0x2B00, 0x2BFF}, {0x1F7E0, 0x1F7EB}}},
     };
     f32_t cell = gui::get_frame_height() * 1.25f;
     auto grid = [&](const std::vector<std::uint32_t>& codes) {
@@ -177,7 +183,12 @@ void render_thread_t::ecps_gui_t::render_emoji_picker() {
     }
     if (gui::begin_tab_bar("##emoji_categories")) {
       for (const auto& category : categories) {
-        if (gui::begin_tab_item(category.name)) {
+        bool open = gui::begin_tab_item(utf8_of_codepoint(category.icon) + "##" + category.name);
+        if (gui::is_item_hovered()) {
+          gui::set_tooltip(category.name);
+        }
+        if (open) {
+          gui::text_disabled(category.name);
           // only what the font has: codes in a range without an emoji, or one this font size doesn't carry, are left out
           std::vector<std::uint32_t> codes;
           for (const auto& [first, last] : category.ranges) {
@@ -201,6 +212,7 @@ void render_thread_t::ecps_gui_t::render_emoji_picker() {
 void render_thread_t::ecps_gui_t::render_phone_upload_popup() {
     if (phone_upload_popup_requested) {
       phone_upload_popup_requested = false;
+      fan::print("phone upload: window opened");
       gui::open_popup("##phone_upload");
     }
     if (!gui::begin_popup("##phone_upload")) {
@@ -442,7 +454,7 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
     }
 
     // ---- the input: phone upload, attach, text, send
-    if (icon_button("##chat_phone", icon_e::phone, "Send a picture from your phone", 0.f)) {
+    if (icon_button("##chat_phone", icon_e::phone, "Phone upload: open a link on your phone (same Wi-Fi) and its pictures come into this chat", 0.f)) {
       phone_upload_popup_requested = true;
     }
     gui::same_line();

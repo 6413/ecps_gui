@@ -273,6 +273,10 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_menu(con
       gui_ptr->set_auto_join(auto_join_on ? std::string() : channel.name);
     }
   }
+  else if (gui::menu_item("Open automatically", {}, gui_ptr->auto_host)) {
+    gui_ptr->auto_host = !gui_ptr->auto_host;
+    gui_ptr->write_to_config("auto_host", gui_ptr->auto_host);
+  }
   gui::end_popup();
 }
 
@@ -469,6 +473,14 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
             if (gui::settings_switch("Join automatically", &auto_join_on,
               "Joins this channel by itself whenever its host is online, also after a restart")) {
               gui_ptr->set_auto_join(auto_join_on ? channel_name : std::string());
+            }
+          }
+          else if (ecps_backend.is_hosting_channel(gui_ptr->selected_channel_id)) {
+            // your own channel: opened by itself whenever you connect
+            if (gui::settings_switch("Open automatically", &gui_ptr->auto_host,
+              "Opens your channel by itself whenever you connect, also after a restart: joined back if the server "
+              "still has it, made again if not")) {
+              gui_ptr->write_to_config("auto_host", gui_ptr->auto_host);
             }
           }
 
