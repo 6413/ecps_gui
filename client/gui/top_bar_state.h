@@ -19,6 +19,8 @@
   ui["phone_upload"] = phone_upload_enabled;
     ui["stats_mode"] = top_bar_stats_mode;
     ui["auto_update"] = auto_update;
+    ui["mini_width"] = mini_player_size.x;
+    ui["mini_height"] = mini_player_size.y;
     write_to_config("ui", ui);
   }
 

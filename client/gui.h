@@ -98,6 +98,8 @@ struct ecps_gui_t {
         ui_autohide = ui.value("autohide", false);
         keep_stream_toolbar = ui.value("keep_toolbar", false);
         auto_update = ui.value("auto_update", false);
+        mini_player_size = fan::vec2i(std::clamp((int)ui.value("mini_width", 480.0), 160, 8192),
+          std::clamp((int)ui.value("mini_height", 270.0), 90, 8192));
         preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
         hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
         preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
@@ -263,6 +265,8 @@ struct ecps_gui_t {
   static constexpr const char* action_shortcuts = "Shortcuts";
   static constexpr const char* action_mini_player = "Mini player";
   bool is_mini_player = false;
+  // the mini player's window size, changed by dragging its edges and kept in the config
+  fan::vec2i mini_player_size = fan::vec2i(480, 270);
   bool panel_keys_added = false;
   bool show_shortcuts = false;
   bool title_live = false;
@@ -358,7 +362,7 @@ struct ecps_gui_t {
     is_mini_player = on;
     backdrop_black = on;
     apply_backdrop_color();
-    engine.window.set_compact(on);
+    engine.window.set_compact(on, mini_player_size);
   }
 
   void update_panel_keys() {

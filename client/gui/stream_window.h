@@ -17,6 +17,11 @@
   // the mini player's window has no title bar: dragged by the picture. A double click or the button goes back
   bool mini_dragging = false;
   fan::vec2 mini_grab = 0;
+  // resizing by an edge: which ones (1 left, 2 right, 4 top, 8 bottom, 0 none), and the mouse and window when it began
+  int mini_resize_edges = 0;
+  fan::vec2 mini_resize_mouse = 0;
+  fan::vec2 mini_resize_pos = 0;
+  fan::vec2 mini_resize_size = 0;
 
   void render_mini_player() {
     auto* viewport = gui::get_main_viewport();
@@ -73,6 +78,66 @@
       mini_dragging = false;
       gui::end();
       This->set_mini_player(false);
+      return;
+    }
+    // resized by its edges and corners: the window has no frame, so Windows gives it none to drag. The mouse is read
+    // in screen pixels (the window's position plus where in it), the window moves under it while the left or top
+    // edge is dragged
+    fan::vec2 window_at = engine.window.get_position();
+    fan::vec2 mouse_in = fan::vec2(io.MousePos) - fan::vec2(viewport->Pos.x, viewport->Pos.y);
+    fan::vec2 window_size = fan::vec2(viewport->Size.x, viewport->Size.y);
+    int edges = mini_resize_edges;
+    if (!edges && hovered && !over_button && !mini_dragging) {
+      constexpr f32_t grip = 7.f;
+      edges = (mouse_in.x < grip ? 1 : 0) | (mouse_in.x > window_size.x - grip ? 2 : 0) |
+        (mouse_in.y < grip ? 4 : 0) | (mouse_in.y > window_size.y - grip ? 8 : 0);
+    }
+    if (edges) {
+      bool horizontal = edges & 3, vertical = edges & 12;
+      bool falling = ((edges & 1) && (edges & 4)) || ((edges & 2) && (edges & 8));
+      gui::set_mouse_cursor(horizontal && vertical ? (falling ? gui::mouse_cursor_resize_nwse : gui::mouse_cursor_resize_nesw) :
+        horizontal ? gui::mouse_cursor_resize_ew : gui::mouse_cursor_resize_ns);
+      if (!mini_resize_edges && io.MouseClicked[0]) {
+        mini_resize_edges = edges;
+        mini_resize_mouse = window_at + mouse_in;
+        mini_resize_pos = window_at;
+        mini_resize_size = window_size;
+      }
+    }
+    if (mini_resize_edges) {
+      if (!io.MouseDown[0]) {
+        mini_resize_edges = 0;
+        mini_player_size = engine.window.get_size();
+        This->save_ui_config();
+      }
+      else {
+        fan::vec2 moved = window_at + mouse_in - mini_resize_mouse;
+        fan::vec2 pos = mini_resize_pos;
+        fan::vec2 size = mini_resize_size;
+        constexpr f32_t min_width = 160.f, min_height = 90.f;
+        if (mini_resize_edges & 2) {
+          size.x = std::max(min_width, mini_resize_size.x + moved.x);
+        }
+        if (mini_resize_edges & 1) {
+          size.x = std::max(min_width, mini_resize_size.x - moved.x);
+          pos.x = mini_resize_pos.x + mini_resize_size.x - size.x;
+        }
+        if (mini_resize_edges & 8) {
+          size.y = std::max(min_height, mini_resize_size.y + moved.y);
+        }
+        if (mini_resize_edges & 4) {
+          size.y = std::max(min_height, mini_resize_size.y - moved.y);
+          pos.y = mini_resize_pos.y + mini_resize_size.y - size.y;
+        }
+        fan::vec2i new_size((int)size.x, (int)size.y);
+        if (new_size != engine.window.get_size()) {
+          if (pos.x != window_at.x || pos.y != window_at.y) {
+            engine.window.set_position(pos);
+          }
+          engine.window.set_size(new_size);
+        }
+      }
+      gui::end();
       return;
     }
     // the mouse is read in the window: moving the window by the mouse's way from where it was grabbed keeps it there

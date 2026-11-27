@@ -254,24 +254,33 @@ struct top_bar_t {
   // the release notes as a list under each version, scrolling past max_height. In the About panel and in the
   // "Changes" window after an update
   static void render_release_notes(const std::vector<updater_t::release_notes_t>& changes, f32_t max_height) {
-    f32_t width = std::max(gui::get_content_region_avail().x, 380.f);
-    f32_t line = gui::get_text_line_height_with_spacing();
-    std::size_t rows = 0;
+    f32_t width = std::max(gui::get_content_region_avail().x, gui::get_font_size() * 26.f);
+    f32_t spacing = gui::get_style().ItemSpacing.y;
+    f32_t indent = gui::get_font_size() * 0.9f;
+    // the height the wrapped lines take, the list scrolls only past max_height
+    f32_t height = 0.f;
     for (const auto& release : changes) {
-      rows += 1 + release.lines.size();
+      height += gui::get_text_line_height_with_spacing();
+      for (const auto& text : release.lines) {
+        height += gui::calc_text_size(text, nullptr, false, width - indent - 16.f).y + spacing;
+      }
     }
-    // a guess of the height (long lines wrap), the list scrolls when it is more
-    f32_t height = std::min(max_height, (f32_t)rows * line * 1.3f + 8.f);
+    height = std::min(max_height, height + 4.f);
     if (gui::begin_child("##release_notes", fan::vec2(width, height), false)) {
-      gui::push_text_wrap_pos(0.f);
+      auto* list = gui::get_window_draw_list();
+      f32_t dot = std::max(2.f, gui::get_font_size() * 0.12f);
       for (const auto& release : changes) {
         gui::text_disabled(release.version);
         for (const auto& text : release.lines) {
-          gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
-          gui::text("\xE2\x80\xA2 " + text);
+          // a drawn dot: the font has no bullet character, it showed as "?"
+          fan::vec2 at = gui::get_cursor_screen_pos();
+          list->AddCircleFilled(ImVec2(at.x + indent * 0.4f, at.y + gui::get_font_size() * 0.55f), dot, gui::get_color_u32(gui::col_text_disabled));
+          gui::set_cursor_pos_x(gui::get_cursor_pos_x() + indent);
+          gui::push_text_wrap_pos(width - 16.f);
+          gui::text(text);
+          gui::pop_text_wrap_pos();
         }
       }
-      gui::pop_text_wrap_pos();
     }
     gui::end_child();
   }
@@ -304,7 +313,7 @@ struct top_bar_t {
         gui::spacing();
         gui::text(from.empty() ? std::string("Recent changes") : "Changes from v" + from + " to v" + ecps_version);
         gui::push_id("current_changes");
-        render_release_notes(changes, 260.f);
+        render_release_notes(changes, gui::get_font_size() * 18.f);
         gui::pop_id();
       }
       else if (!updater.changes_loaded.load()) {
@@ -342,7 +351,7 @@ struct top_bar_t {
           gui::text_wrapped("Update available: " + updater.latest() + (size.empty() ? std::string() : " (" + size + ")"));
           auto changes = updater.upcoming();
           if (!changes.empty()) {
-            render_release_notes(changes, 220.f);
+            render_release_notes(changes, gui::get_font_size() * 14.f);
           }
         }
         if (updater_t::self_updates()) {
