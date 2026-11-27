@@ -8,7 +8,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/0bb2eedc20e4739f29e8045034f2828ad7054f8f";
 
     # fan engine and the header-only repos its install.sh would clone
-    fan = { url = "github:6413/fan/62d064f3352b79de0b69cae8d9e75b4a97bb7730"; flake = false; };
+    fan = { url = "github:6413/fan/117c9441d934a740f7afa443f69fd28bce82a21b"; flake = false; };
     WITCH = { url = "github:7244/WITCH/12fe0f51d52f6196a8db51bb9b6766b239815c49"; flake = false; };
     BCOL = { url = "github:7244/BCOL/48de3320c1de4e34f908b5546330e73e33953fbf"; flake = false; };
     BLL = { url = "github:7244/BLL/06ae42a7d8ec242a0fe5dd28d07bde3c4e52dd3a"; flake = false; };
