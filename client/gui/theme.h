@@ -248,8 +248,28 @@
       keys |= (down(VK_OEM_MINUS) || down(VK_SUBTRACT)) ? 2 : 0;
       keys |= (down('0') || down(VK_NUMPAD0)) ? 4 : 0;
 #else
-      keys |= (window.is_key_down(fan::key_plus) || window.is_key_down(fan::key_numpad_add)) ? 1 : 0;
-      keys |= (window.is_key_down(fan::key_minus) || window.is_key_down(fan::key_numpad_subtract)) ? 2 : 0;
+      // GLFW key codes are physical US-layout positions, so on a Finnish keyboard the key labelled + arrives as
+      // GLFW_KEY_MINUS and the one labelled - as GLFW_KEY_SLASH. Ask GLFW for the symbol under the active layout
+      // instead of assuming the US positions.
+      bool plus = window.is_key_down(fan::key_numpad_add);
+      bool minus = window.is_key_down(fan::key_numpad_subtract);
+      for (int key = fan::key_space; key <= fan::key_grave_accent; ++key) {
+        if (!window.is_key_down(key)) {
+          continue;
+        }
+        const char* symbol = fan::get_key_symbol(key);
+        if (!symbol || symbol[0] == '\0' || symbol[1] != '\0') {
+          continue;
+        }
+        if (symbol[0] == '+' || symbol[0] == '=') {
+          plus = true;
+        }
+        else if (symbol[0] == '-' || symbol[0] == '_') {
+          minus = true;
+        }
+      }
+      keys |= plus ? 1 : 0;
+      keys |= minus ? 2 : 0;
       keys |= (window.is_key_down(fan::key_0) || window.is_key_down(fan::key_numpad_0)) ? 4 : 0;
 #endif
     }
