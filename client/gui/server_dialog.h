@@ -82,6 +82,8 @@
     bool share_audio = false;
     bool play_audio = true;
     f32_t audio_volume = 1.f;
+    // brings the stream's sound to about the level of the voices (a game is often mixed much quieter than speech)
+    bool audio_level = true;
 
     std::string voice_device;
     f32_t voice_gain = 1.f;

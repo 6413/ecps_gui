@@ -89,15 +89,25 @@ void audio_share_t::on_packet(const std::uint8_t* data, std::uintptr_t size) {
       return;
     }
     std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> pcm;
+    bool level = leveling.load(std::memory_order_relaxed);
+    if (!receiving) {
+      leveler.reset();
+    }
     for (std::int16_t i = 0; receiving && i < std::min<std::int16_t>(gap, max_concealed); ++i) {
-      if (decoder.conceal(pcm.data()) > 0) {
-        player.push(pcm.data(), fan::audio::stream_frame_size);
+      if (std::int32_t frames = decoder.conceal(pcm.data()); frames > 0) {
+        if (level) {
+          leveler.apply(pcm.data(), frames);
+        }
+        player.push(pcm.data(), frames);
       }
     }
     receiving = true;
     expected_sequence = sequence + 1;
     std::int32_t frames = decoder.decode(data + sizeof(header_t), (std::int32_t)(size - sizeof(header_t)), pcm.data());
     if (frames > 0) {
+      if (level) {
+        leveler.apply(pcm.data(), frames);
+      }
       player.push(pcm.data(), frames);
     }
   }

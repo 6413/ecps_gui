@@ -79,7 +79,7 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     bool just_changed = (panel_open && !was_panel_open) || (unread && !was_unread);
     was_panel_open = panel_open;
     was_unread = unread;
-    if (mouse_near || !has_picture || just_changed || keep_stream_toolbar || gui::is_popup_open("##stream_volume")) {
+    if (mouse_near || !has_picture || just_changed || keep_stream_toolbar || mixer_requested || gui::is_popup_open("##stream_volume")) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
@@ -107,7 +107,17 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     }
     if (gui::is_item_hovered()) {
       gui::open_popup("##stream_volume");
-      stream_volume_popup_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+      stream_volume_popup_until = std::max(stream_volume_popup_until, std::chrono::steady_clock::now() + std::chrono::milliseconds(300));
+    }
+    if (mixer_requested) {
+      mixer_requested = false;
+      if (gui::is_popup_open("##stream_volume")) {
+        stream_volume_popup_until = {};
+      }
+      else {
+        gui::open_popup("##stream_volume");
+        stream_volume_popup_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+      }
     }
     // as wide as the text needs, a fixed width cut the label off
     f32_t button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
@@ -132,10 +142,44 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
   }
 
 void render_thread_t::ecps_gui_t::render_stream_volume_popup(fan::vec2 icon_at, f32_t icon_size) {
-    // a tall, narrow bar: no label takes the room, the value shows in the tooltip
-    f32_t width = std::max(34.f, gui::get_font_size() * 1.5f);
-    f32_t height = std::clamp(gui::get_font_size() * 4.6f, 112.f, 150.f);
-    fan::vec2 pos(icon_at.x + icon_size * 0.5f - width * 0.5f, icon_at.y - height - 8.f);
+    // the mixer: one tall bar per sound, side by side. Stream, voice chat, alerts, then each person in the voice chat.
+    // A click on a name mutes it, another brings the level back; the value shows in the tooltip
+    struct column_t {
+      std::string label;
+      std::string tip;
+      f32_t value;
+      int kind; // 0 stream, 1 voice, 2 alerts, 3 one person
+      std::uint32_t session = 0;
+    };
+    std::vector<column_t> columns;
+    columns.push_back({"Stream", "Stream sound", stream_settings.audio_volume, 0});
+    columns.push_back({"Voice", "Voice chat", stream_settings.voice_volume, 1});
+    columns.push_back({"Alerts", "Message, join and leave sounds", stream_settings.notify_volume, 2});
+    int voice_channel = voice_chat.wanted_channel.load();
+    if (voice_chat.is_active() && voice_channel >= 0) {
+      ecps_backend_t::Protocol_ChannelID_t channel_id;
+      channel_id.i = (decltype(channel_id.i))voice_channel;
+      auto members = ecps_backend.voice_members_of(channel_id);
+      auto sessions = ecps_backend.channel_sessions.find((std::uint32_t)voice_channel);
+      if (sessions != ecps_backend.channel_sessions.end()) {
+        for (const auto& session : sessions->second) {
+          std::uint32_t id = (std::uint32_t)session.session_id.i;
+          if (id == (std::uint32_t)ecps_backend.session_id.i || std::find(members.begin(), members.end(), id) == members.end()) {
+            continue;
+          }
+          columns.push_back({session.username, session.username, user_volume(session.username), 3, id});
+        }
+      }
+    }
+
+    f32_t font = gui::get_font_size();
+    f32_t column_width = std::max(46.f, font * 2.8f);
+    f32_t bar_height = std::clamp(font * 4.6f, 112.f, 150.f);
+    f32_t label_height = font + 8.f;
+    f32_t width = column_width * columns.size() + 8.f;
+    f32_t height = bar_height + label_height;
+    fan::vec2 pos(icon_at.x + icon_size * 0.5f - column_width * 0.5f - 4.f, icon_at.y - height - 8.f);
+    pos.x = std::max(4.f, std::min(pos.x, gui::get_io().DisplaySize.x - width - 4.f));
     // only while the popup is there: a next-window position set for nothing would move the next window drawn
     if (gui::is_popup_open("##stream_volume")) {
       gui::set_next_window_pos(pos);
@@ -148,53 +192,118 @@ void render_thread_t::ecps_gui_t::render_stream_volume_popup(fan::vec2 icon_at, 
     if (!open) {
       return;
     }
-    fan::vec2 at = gui::get_window_pos();
-    gui::push_id("##volume");
-    gui::invisible_button("##area", fan::vec2(width, height));
-    gui::pop_id();
-    bool hovered = gui::is_item_hovered();
-    bool active = gui::is_item_active();
+    fan::vec2 at = gui::get_window_pos() + fan::vec2(4.f, 0.f);
+    auto* list = gui::get_window_draw_list();
+    std::uint32_t ink = gui::get_color_u32(gui::col_text);
+    std::uint32_t dim_ink = gui::get_color_u32(gui::col_text_disabled);
+    std::uint32_t track = gui::get_color_u32(gui::col_frame_bg);
+    bool any_hovered = false;
+    bool any_active = false;
+    bool released = false;
+    for (std::size_t i = 0; i < columns.size(); ++i) {
+      auto& column = columns[i];
+      f32_t x = at.x + column_width * i;
+      gui::push_id((int)i);
+      gui::set_cursor_screen_pos(fan::vec2(x, at.y));
+      gui::invisible_button("##bar", fan::vec2(column_width, bar_height));
+      bool hovered = gui::is_item_hovered();
+      bool active = gui::is_item_active();
+      f32_t top = at.y + 12.f;
+      f32_t bottom = at.y + bar_height - 4.f;
+      if (active) {
+        f32_t t = 1.f - std::clamp((gui::get_io().MousePos.y - top) / (bottom - top), 0.f, 1.f);
+        column.value = std::round(t * 200.f) / 100.f;
+      }
+      gui::set_cursor_screen_pos(fan::vec2(x, at.y + bar_height));
+      bool label_clicked = gui::invisible_button("##label", fan::vec2(column_width, label_height));
+      bool label_hovered = gui::is_item_hovered();
+      gui::pop_id();
+      if (label_clicked) {
+        // mute, or back to the level it had
+        f32_t* previous = column.kind == 0 ? &premute_audio_volume : column.kind == 1 ? &premute_voice_volume
+          : column.kind == 2 ? &premute_notify_volume : &premute_user_volumes[column.label];
+        if (column.value > 0.f) {
+          *previous = column.value;
+          column.value = 0.f;
+        }
+        else {
+          column.value = *previous > 0.f ? *previous : 1.f;
+        }
+        released = true;
+      }
 
-    f32_t top = at.y + 12.f;
-    f32_t bottom = at.y + height - 12.f;
-    if (active) {
-      f32_t t = 1.f - std::clamp((gui::get_io().MousePos.y - top) / (bottom - top), 0.f, 1.f);
-      f32_t next = std::round(t * 200.f) / 100.f;
-      if (next != stream_settings.audio_volume) {
-        stream_settings.audio_volume = next;
+      f32_t cx = x + column_width * 0.5f;
+      f32_t bar = std::max(7.f, font * 0.32f);
+      fan::vec2 a(cx - bar * 0.5f, top);
+      fan::vec2 b(cx + bar * 0.5f, bottom);
+      list->AddRectFilled(a, b, track, bar * 0.5f);
+      f32_t t = std::clamp(column.value / 2.f, 0.f, 1.f);
+      f32_t fill = b.y - (b.y - a.y) * t;
+      if (t > 0.f) {
+        list->AddRectFilled(fan::vec2(a.x, fill), b, accent_u32, bar * 0.5f);
+      }
+      // 100% marked beside the track
+      f32_t unity = b.y - (b.y - a.y) * 0.5f;
+      list->AddLine(fan::vec2(a.x - 5.f, unity), fan::vec2(a.x - 2.f, unity), dim_ink, 1.f);
+      f32_t knob = bar * (hovered || active ? 1.05f : 0.9f);
+      list->AddCircleFilled(fan::vec2(cx, fill), knob, 0xffffffffu, 20);
+
+      // the name, cut to the column
+      std::string text = column.label;
+      f32_t room = column_width - 6.f;
+      if (gui::calc_text_size(text).x > room) {
+        while (!text.empty() && gui::calc_text_size(text + "..").x > room) {
+          // a whole letter, not one byte of a longer one
+          std::size_t cut = text.size() - 1;
+          while (cut > 0 && ((unsigned char)text[cut] & 0xC0) == 0x80) {
+            --cut;
+          }
+          text.resize(cut);
+        }
+        text += "..";
+      }
+      fan::vec2 text_size = gui::calc_text_size(text);
+      list->AddText(fan::vec2(cx - text_size.x * 0.5f, at.y + bar_height + (label_height - text_size.y) * 0.5f - 2.f),
+        column.value <= 0.f ? dim_ink : label_hovered ? accent_u32 : ink, text.c_str());
+
+      if (active) {
+        gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
+      }
+      if (hovered || active) {
+        gui::set_tooltip(column.tip + ": " + std::to_string((int)std::lround(column.value * 100.f)) + "%");
+      }
+      else if (label_hovered) {
+        gui::set_tooltip((column.value <= 0.f ? "Unmute " : "Mute ") + column.tip);
+      }
+      any_hovered = any_hovered || hovered || label_hovered;
+      any_active = any_active || active;
+
+      // back into the settings
+      switch (column.kind) {
+      case 0: stream_settings.audio_volume = column.value; break;
+      case 1: stream_settings.voice_volume = column.value; break;
+      case 2: stream_settings.notify_volume = column.value; break;
+      default:
+        if (column.value != user_volume(column.label)) {
+          voice_user_volumes[column.label] = column.value;
+          voice_chat.set_user_volume(column.session, column.value);
+        }
+        break;
       }
     }
-
-    auto* list = gui::get_window_draw_list();
-    f32_t cx = at.x + width * 0.5f;
-    f32_t bar = std::max(7.f, gui::get_font_size() * 0.32f);
-    fan::vec2 a(cx - bar * 0.5f, top);
-    fan::vec2 b(cx + bar * 0.5f, bottom);
-    list->AddRectFilled(a, b, 0x30ffffffu, bar * 0.5f);
-    f32_t t = std::clamp(stream_settings.audio_volume / 2.f, 0.f, 1.f);
-    f32_t fill = b.y - (b.y - a.y) * t;
-    if (t > 0.f) {
-      list->AddRectFilled(fan::vec2(a.x, fill), b, accent_u32, bar * 0.5f);
-    }
-    f32_t knob = bar * (hovered || active ? 1.05f : 0.9f);
-    list->AddCircleFilled(fan::vec2(cx, fill), knob, 0xffffffffu, 20);
-    if (active) {
-      gui::set_mouse_cursor(gui::mouse_cursor_resize_ns);
-    }
-    if (hovered || active) {
-      gui::set_tooltip(std::to_string((int)std::lround(stream_settings.audio_volume * 100.f)) + "%");
+    // a drag let go
+    released = released || (stream_volume_dragging && !any_active);
+    if (released) {
+      save_audio_settings();
+      save_voice_settings();
     }
 
     auto now = std::chrono::steady_clock::now();
-    if (hovered || active || gui::is_window_hovered()) {
-      stream_volume_popup_until = now + std::chrono::milliseconds(300);
+    if (any_hovered || any_active || gui::is_window_hovered()) {
+      stream_volume_popup_until = std::max(stream_volume_popup_until, now + std::chrono::milliseconds(300));
     }
-    if (stream_volume_dragging && !active) {
-      save_audio_settings();
-      stream_volume_dragging = false;
-    }
-    stream_volume_dragging = active;
-    if (!hovered && !active && now > stream_volume_popup_until) {
+    stream_volume_dragging = any_active;
+    if (!any_hovered && !any_active && now > stream_volume_popup_until) {
       gui::close_current_popup();
     }
     gui::end_popup();

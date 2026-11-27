@@ -157,6 +157,7 @@ struct ecps_gui_t {
       stream_settings.share_audio = audio.value("share", stream_settings.share_audio);
       stream_settings.play_audio = audio.value("play", stream_settings.play_audio);
       stream_settings.audio_volume = audio.value("volume", stream_settings.audio_volume);
+      stream_settings.audio_level = audio.value("level", stream_settings.audio_level);
       stream_settings.audio_device = audio.value("device", std::string());
       if (audio.contains("devices") && audio["devices"].is_object()) {
         fan::json devices = audio["devices"];
@@ -236,6 +237,7 @@ struct ecps_gui_t {
 
   // ---- keys for the panels and full screen, changeable in Settings > Keybinds ---------------------------------
   static constexpr const char* action_toggle_chat = "Chat panel";
+  static constexpr const char* action_audio_mixer = "Audio mixer";
   static constexpr const char* action_toggle_settings = "Settings panel";
   static constexpr const char* action_toggle_channels = "Channels panel";
   static constexpr const char* action_toggle_fullscreen = "Full screen stream";
@@ -278,6 +280,9 @@ struct ecps_gui_t {
       if (!actions.exists(action_toggle_fullscreen)) {
         actions.add_keycombo({fan::key_f11}, action_toggle_fullscreen);
       }
+      if (!actions.exists(action_audio_mixer)) {
+        actions.add_keycombo({fan::key_left_control, fan::key_left_shift, fan::key_a}, action_audio_mixer);
+      }
     }
     if (auto* settings = fan_settings_menu(); settings && settings->keybind_menu.is_capturing()) {
       return;
@@ -291,6 +296,9 @@ struct ecps_gui_t {
     }
     if (engine.is_active(action_toggle_channels)) {
       toggle_side_panel(side_channels);
+    }
+    if (engine.is_active(action_audio_mixer)) {
+      mixer_requested = true;
     }
     if (engine.is_active(action_toggle_fullscreen)) {
       set_fullscreen_stream(!is_fullscreen_stream);
@@ -312,6 +320,7 @@ struct ecps_gui_t {
     update_automatically();
     update_phone_upload();
     apply_video_choice_once();
+    audio_share.leveling.store(stream_settings.audio_level, std::memory_order_relaxed);
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
     voice_chat.update(get_voice_settings());
     if (auto* rt = get_render_thread()) {
@@ -410,6 +419,8 @@ struct ecps_gui_t {
   // the speaker in the toolbar: its vertical slider stays up while hovered, and goes down when the mouse leaves
   std::chrono::steady_clock::time_point stream_volume_popup_until;
   bool stream_volume_dragging = false;
+  // the mixer key was pressed: the stream toolbar opens the mixer over its speaker for a few seconds
+  bool mixer_requested = false;
   // on: the stream toolbar stays on screen; off: it fades out unless the mouse is near the bottom
   bool keep_stream_toolbar = false;
   f32_t fullscreen_toolbar_alpha = 1.f;

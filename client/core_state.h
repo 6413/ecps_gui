@@ -172,9 +172,64 @@ struct audio_share_t {
   void on_packet(const std::uint8_t* data, std::uintptr_t size);
 
 
+  // Brings the stream's sound up (or down) to about where voices sit. A game or video is often mixed far quieter
+  // than speech, and voices are normalized, so the stream sounded weak next to the voice chat even at 200%. Follows
+  // the loudness over a second or two, not word by word, so the game's own loud and quiet moments stay, and never
+  // lets a peak past full scale
+  struct leveler_t {
+    f32_t level = 0.f;
+    f32_t gain = 1.f;
+
+    void reset() {
+      level = 0.f;
+      gain = 1.f;
+    }
+
+    void apply(f32_t* pcm, std::int32_t frames) {
+      constexpr f32_t silence = 0.003f;  // about -50 dB: below it the level is left as it was
+      constexpr f32_t target = 0.09f;    // about -21 dB, the level voices are normalized to
+      constexpr f32_t min_gain = 0.5f;
+      constexpr f32_t max_gain = 6.f;    // +15 dB
+      std::int32_t samples = frames * (std::int32_t)fan::audio::stream_channels;
+      if (samples <= 0) {
+        return;
+      }
+      f64_t sum = 0.0;
+      for (std::int32_t i = 0; i < samples; ++i) {
+        sum += (f64_t)pcm[i] * pcm[i];
+      }
+      f32_t rms = (f32_t)std::sqrt(sum / samples);
+      f32_t from = gain;
+      if (rms > silence) {
+        // up fast when it gets louder, down slowly when it gets quieter (a quiet scene stays quiet for a while)
+        level = level <= 0.f ? rms : level + (rms - level) * (rms > level ? 0.2f : 0.02f);
+        f32_t wanted = std::clamp(target / level, min_gain, max_gain);
+        gain += (wanted - gain) * (wanted < gain ? 0.25f : 0.025f);
+      }
+      // the gain moves smoothly over the packet, a step would click
+      for (std::int32_t f = 0; f < frames; ++f) {
+        f32_t g = from + (gain - from) * ((f32_t)(f + 1) / frames);
+        for (std::uint32_t c = 0; c < fan::audio::stream_channels; ++c) {
+          f32_t& s = pcm[f * fan::audio::stream_channels + c];
+          s *= g;
+          // a soft knee above 0.8 instead of a hard clip, so boosted peaks don't crackle
+          f32_t a = std::abs(s);
+          if (a > 0.8f) {
+            f32_t over = a - 0.8f;
+            s = std::copysign(0.8f + 0.2f * over / (over + 0.2f), s);
+          }
+        }
+      }
+    }
+  };
+
   static constexpr std::size_t max_outgoing = 25;
   static constexpr std::int16_t max_concealed = 3;
   static constexpr std::int16_t max_late = 50;
+
+  // the receiving side evens out the stream's volume (the "Even out volume" setting)
+  std::atomic<bool> leveling = true;
+  leveler_t leveler;
 
   fan::audio::loopback_capture_t capture;
   fan::audio::opus_encoder_t encoder;

@@ -125,6 +125,10 @@ void render_thread_t::ecps_gui_t::render_play_audio_controls() {
           save_audio_settings();
         }
       });
+      if (gui::settings_switch("Even out volume", &stream_settings.audio_level,
+        "Brings quiet game or video sound up to the level of voices")) {
+        save_audio_settings();
+      }
     }
   }
 
@@ -499,6 +503,7 @@ void render_thread_t::ecps_gui_t::save_audio_settings() {
     audio["share"] = stream_settings.share_audio;
     audio["play"] = stream_settings.play_audio;
     audio["volume"] = stream_settings.audio_volume;
+    audio["level"] = stream_settings.audio_level;
     audio["device"] = stream_settings.audio_device;
     fan::json devices = fan::json::object();
     for (const auto& [id, settings] : stream_settings.audio_devices) {
