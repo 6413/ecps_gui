@@ -96,7 +96,7 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
       }
     }
 
-    // In the background (another program in front, a game for example) the window draws only as often as the
+    // In the background (another program in front, a game for example) or while sharing, the window draws only as often as the
     // stream needs, with room to spare: every decoded frame still shows, and the rest of the monitor's refresh
     // rate (165 draws a second on a 165 Hz screen) is GPU time left to the game. The Target Framerate setting caps
     // it in front too: the engine's own frame timer isn't used, this thread draws the frames
@@ -109,17 +109,22 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
       if (int target = render_thread_instance.engine.target_fps; target > 0) {
         std::this_thread::sleep_until(last_draw + at_fps(target));
       }
-      if (!render_thread_instance.engine.window.is_focused()) {
+      // Sharing paces the window the same way in front too: sharing raises this process's GPU priority (so a game
+      // can't starve the capture and the encoder), and that priority covers these draws as well. Drawn at the
+      // monitor's rate they went ahead of every other program on the card, and the game and the rest of the
+      // desktop froze while ECPS kept running
+      bool background = !render_thread_instance.engine.window.is_focused();
+      if (background || ecps_backend.is_streaming_to_any_channel()) {
         f32_t stream_fps = render_thread_instance.ecps_gui.debug_sample.decoded_fps;
         if (stream_fps > 1.f) {
           // a stream playing: drawn when its next frame arrives, so exactly as often as it has frames (a fixed 1.25x
           // timer drew 80 times a second for 60 and showed each frame up to a tick late), and at least 20 times a
-          // second for the rest of the window. Never more than 240, a burst of frames is shown as they come
+          // second (60 in front) for the rest of the window. Never more than 240, a burst of frames is shown as they come
           std::this_thread::sleep_until(last_draw + at_fps(240.0));
-          render_thread_instance.latest_frame.wait(last_draw + at_fps(20.0));
+          render_thread_instance.latest_frame.wait(last_draw + at_fps(background ? 20.0 : 60.0));
         }
         else {
-          std::this_thread::sleep_until(last_draw + at_fps(30.0));
+          std::this_thread::sleep_until(last_draw + at_fps(background ? 30.0 : 60.0));
         }
       }
       last_draw = std::chrono::steady_clock::now();
