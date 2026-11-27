@@ -394,12 +394,11 @@
   static void settings_warning(const std::string& text) {
     gui::font_scope_t small(gui::get_font_size() * 0.9f / std::max(gui::get_font_scale(), 0.5f));
     gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
-    fan::color warm(0.75f, 0.35f, 0.08f, 1.f);
-    gui::push_style_color(gui::col_text, warm);
+    // the colour goes to text() itself: text(std::string) takes fan's overload that sets white, over a pushed colour
+    fan::color warm(1.f, 0.6f, 0.2f, 1.f);
     gui::push_text_wrap_pos(0.f);
-    gui::text(text);
+    gui::text(warm, text);
     gui::pop_text_wrap_pos();
-    gui::pop_style_color();
     gui::dummy(fan::vec2(0, settings_space(1.f)));
   }
 

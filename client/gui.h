@@ -293,6 +293,30 @@ struct ecps_gui_t {
     gui::end();
   }
 
+  // after an update restart: what changed from the old version to this one, from the GitHub releases' notes
+  void render_update_changes() {
+    if (!updater.show_brought_changes.load()) {
+      return;
+    }
+    std::string from;
+    auto changes = updater.brought(from);
+    fan::vec2 display = gui::get_io().DisplaySize;
+    gui::set_next_window_pos(fan::vec2(display.x * 0.5f, display.y * 0.5f), gui::cond_appearing, fan::vec2(0.5f, 0.5f));
+    bool open = true;
+    if (gui::begin(("Changes from v" + from + " to v" + ecps_version + "##update_changes").c_str(), &open,
+      gui::window_flags_no_collapse | gui::window_flags_no_saved_settings | gui::window_flags_always_auto_resize |
+      gui::window_flags_no_docking | gui::window_flags_no_focus_on_appearing | gui::window_flags_topmost)) {
+      top_bar_t<ecps_gui_t>::render_release_notes(changes, 360.f);
+      if (gui::button("Close##update_changes")) {
+        open = false;
+      }
+    }
+    gui::end();
+    if (!open) {
+      updater.show_brought_changes.store(false);
+    }
+  }
+
   // every key set in Keybinds, in one window: F1
   void render_shortcuts() {
     if (!show_shortcuts) {
@@ -449,6 +473,7 @@ struct ecps_gui_t {
     }
     render_shortcuts();
     render_update_toast();
+    render_update_changes();
     // sharing shows in the window's title too, so it's seen from the taskbar
     if (bool live = ecps_backend.is_streaming_to_any_channel(); live != title_live) {
       title_live = live;

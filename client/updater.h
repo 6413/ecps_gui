@@ -41,6 +41,15 @@ struct updater_t {
   enum class state_e : std::uint8_t { idle, checking, up_to_date, available, failed, building, ready, build_failed };
 
   static constexpr const char* version_url = "https://raw.githubusercontent.com/6413/ecps_gui/main/client/version.h";
+  // the newest releases with their notes: the Windows check reads its download from it, and both the update and the
+  // restart after it list what changed from them. 30, so a few missed updates still show all their notes
+  static constexpr const char* releases_url = "https://api.github.com/repos/6413/ecps_gui/releases?per_page=30";
+
+  // one release's notes, a line each
+  struct release_notes_t {
+    std::string version;
+    std::vector<std::string> lines;
+  };
   static constexpr const char* flake_ref = "github:6413/ecps_gui#ecps";
   static constexpr const char* ready_file = "ecps_update.ready";
   static constexpr const char* failed_file = "ecps_update.failed";
@@ -169,6 +178,18 @@ struct updater_t {
         }
         notice_text += " to " + (now_running.empty() ? std::string("v") + ecps_version : now_running);
         notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        // from a version number (not the commits of a Nix build): what changed, from the releases' notes
+        std::string from = previous.size() > 1 && (previous[0] == 'v' || previous[0] == 'V') ? previous.substr(1) : previous;
+        if (!from.empty() && from.find_first_not_of("0123456789.") == std::string::npos && is_newer(ecps_version, from)) {
+          std::thread([this, from] {
+            std::string body = run_capture(std::string("curl -fsSL --max-time 15 \"") + releases_url + "\"", 8 << 20);
+            auto found = parse_changes(body, from, ecps_version);
+            std::lock_guard<std::mutex> lock(mutex);
+            brought_changes = std::move(found);
+            brought_from = from;
+            show_brought_changes = !brought_changes.empty();
+          }).detach();
+        }
       }
     }
     if (std::chrono::steady_clock::now() < notice_until) {
@@ -232,6 +253,7 @@ struct updater_t {
         latest_version = tag;
         asset_url = url;
         asset_size = size;
+        upcoming_changes = parse_changes(body, ecps_version, tag);
         state = is_newer(tag, ecps_version) ? state_e::available : state_e::up_to_date;
         return;
       }
@@ -512,6 +534,19 @@ struct updater_t {
 #endif
   }
 
+  // what the update found brings, for the About panel
+  std::vector<release_notes_t> upcoming() {
+    std::lock_guard<std::mutex> lock(mutex);
+    return upcoming_changes;
+  }
+  // after an update restart: what it brought and from which version, for the "Changes" dialog until it is closed
+  std::vector<release_notes_t> brought(std::string& from) {
+    std::lock_guard<std::mutex> lock(mutex);
+    from = brought_from;
+    return brought_changes;
+  }
+  std::atomic<bool> show_brought_changes{false};
+
 private:
   // ---- reading nix's JSON log: each activity (a download, copying paths, a build) with how far it is
   struct nix_activity_t {
@@ -668,7 +703,6 @@ private:
   }
 
 #if defined(_WIN32)
-  static constexpr const char* releases_url = "https://api.github.com/repos/6413/ecps_gui/releases?per_page=5";
   // files the user changes, never overwritten by an update (copied only when missing)
   static bool is_user_file(const std::filesystem::path& rel) {
     static const char* names[] = {"config.json", "known_hosts", "fan_settings.json", "imgui.ini", "fan_log.txt", "ecps_log.txt", "ecps_log.prev.txt"};
@@ -1122,7 +1156,124 @@ private:
     return a > b;
   }
 
+  // the JSON string whose opening quote is at body[open], unescaped (\uXXXX to UTF-8)
+  static std::string json_string_at(const std::string& body, std::size_t open) {
+    std::string out;
+    auto append_utf8 = [&out](unsigned code) {
+      if (code < 0x80) {
+        out += (char)code;
+      }
+      else if (code < 0x800) {
+        out += (char)(0xC0 | (code >> 6));
+        out += (char)(0x80 | (code & 0x3F));
+      }
+      else if (code < 0x10000) {
+        out += (char)(0xE0 | (code >> 12));
+        out += (char)(0x80 | ((code >> 6) & 0x3F));
+        out += (char)(0x80 | (code & 0x3F));
+      }
+      else {
+        out += (char)(0xF0 | (code >> 18));
+        out += (char)(0x80 | ((code >> 12) & 0x3F));
+        out += (char)(0x80 | ((code >> 6) & 0x3F));
+        out += (char)(0x80 | (code & 0x3F));
+      }
+    };
+    for (std::size_t i = open + 1; i < body.size(); ++i) {
+      char c = body[i];
+      if (c == '"') {
+        break;
+      }
+      if (c != '\\' || i + 1 >= body.size()) {
+        out += c;
+        continue;
+      }
+      char e = body[++i];
+      switch (e) {
+        case 'n': out += '\n'; break;
+        case 't': out += ' '; break;
+        case 'r': case 'b': case 'f': break;
+        case 'u': {
+          if (i + 4 >= body.size()) {
+            return out;
+          }
+          unsigned code = (unsigned)std::strtoul(body.substr(i + 1, 4).c_str(), nullptr, 16);
+          i += 4;
+          // an emoji comes as two of them
+          if (code >= 0xD800 && code <= 0xDBFF && i + 6 < body.size() && body[i + 1] == '\\' && body[i + 2] == 'u') {
+            unsigned low = (unsigned)std::strtoul(body.substr(i + 3, 4).c_str(), nullptr, 16);
+            if (low >= 0xDC00 && low <= 0xDFFF) {
+              code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+              i += 6;
+            }
+          }
+          append_utf8(code);
+          break;
+        }
+        default: out += e; break;   // \" \\ \/
+      }
+    }
+    return out;
+  }
+
+  // from GitHub's release list: the notes of the releases newer than `from` and up to `to`, newest first. A line
+  // already listed (a release made again with the same notes) is left out, and so are notes that say nothing ("Up")
+  static std::vector<release_notes_t> parse_changes(const std::string& body, const std::string& from, const std::string& to) {
+    std::vector<release_notes_t> result;
+    std::vector<std::string> seen;
+    for (std::size_t at = body.find("\"tag_name\""); at != std::string::npos;) {
+      std::size_t next = body.find("\"tag_name\"", at + 10);
+      std::size_t colon = body.find(':', at + 10);
+      std::size_t open = colon == std::string::npos ? colon : body.find('"', colon + 1);
+      if (open == std::string::npos) {
+        break;
+      }
+      std::string tag = json_string_at(body, open);
+      if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V')) {
+        tag.erase(0, 1);
+      }
+      std::size_t key = body.find("\"body\"", at);
+      if (!tag.empty() && is_newer(tag, from) && !is_newer(tag, to) && key != std::string::npos && key < next) {
+        std::size_t value = body.find_first_not_of(" \t\r\n", body.find(':', key + 6) + 1);
+        if (value != std::string::npos && body[value] == '"') {
+          std::string text = json_string_at(body, value);
+          release_notes_t notes{"v" + tag, {}};
+          std::size_t start = 0;
+          while (start <= text.size()) {
+            std::size_t end = text.find('\n', start);
+            std::string line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            start = end == std::string::npos ? text.size() + 1 : end + 1;
+            std::size_t first = line.find_first_not_of(" \t-*");
+            if (first == std::string::npos) {
+              continue;
+            }
+            line = line.substr(first);
+            while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
+              line.pop_back();
+            }
+            std::string lower = line;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            if (lower == "up" || std::find(seen.begin(), seen.end(), line) != seen.end()) {
+              continue;
+            }
+            seen.push_back(line);
+            notes.lines.push_back(line);
+          }
+          if (!notes.lines.empty()) {
+            result.push_back(std::move(notes));
+          }
+        }
+      }
+      at = next;
+    }
+    return result;
+  }
+
+
   std::mutex mutex;
+  std::vector<release_notes_t> upcoming_changes;
+  std::vector<release_notes_t> brought_changes;
+  std::string brought_from;
   std::string latest_version;
   std::string error_text;
   std::string built_path;

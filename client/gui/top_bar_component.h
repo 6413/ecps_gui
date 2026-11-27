@@ -251,6 +251,31 @@ struct top_bar_t {
     // popup came out twice, with clashing ids)
   }
 
+  // the release notes as a list under each version, scrolling past max_height. In the About panel and in the
+  // "Changes" window after an update
+  static void render_release_notes(const std::vector<updater_t::release_notes_t>& changes, f32_t max_height) {
+    f32_t width = std::max(gui::get_content_region_avail().x, 380.f);
+    f32_t line = gui::get_text_line_height_with_spacing();
+    std::size_t rows = 0;
+    for (const auto& release : changes) {
+      rows += 1 + release.lines.size();
+    }
+    // a guess of the height (long lines wrap), the list scrolls when it is more
+    f32_t height = std::min(max_height, (f32_t)rows * line * 1.3f + 8.f);
+    if (gui::begin_child("##release_notes", fan::vec2(width, height), false)) {
+      gui::push_text_wrap_pos(0.f);
+      for (const auto& release : changes) {
+        gui::text_disabled(release.version);
+        for (const auto& text : release.lines) {
+          gui::set_cursor_pos_x(gui::get_cursor_pos_x() + 10.f);
+          gui::text("\xE2\x80\xA2 " + text);
+        }
+      }
+      gui::pop_text_wrap_pos();
+    }
+    gui::end_child();
+  }
+
   void render_about_popup() {
     if (gui.about_popup_requested) {
       gui.about_popup_requested = false;
@@ -299,6 +324,10 @@ struct top_bar_t {
         {
           std::string size = updater.download_size();
           gui::text_wrapped("Update available: " + updater.latest() + (size.empty() ? std::string() : " (" + size + ")"));
+          auto changes = updater.upcoming();
+          if (!changes.empty()) {
+            render_release_notes(changes, 220.f);
+          }
         }
         if (updater_t::self_updates()) {
           if (gui::button("Update now")) {
