@@ -249,7 +249,8 @@ struct top_bar_t {
     this->render_nav_bar(gui::get_window_pos(), gui::get_window_size().x, bar_height, 0.f, 1.f, false);
     gui::set_cursor_pos(fan::vec2(gui::get_style().WindowPadding.x, bar_height + 10.f));
     this->render_about_popup();
-    gui.render_password_popup();
+    // the password and new channel popups are drawn by the main window once a frame (it ran here too: every
+    // popup came out twice, with clashing ids)
   }
 
   void render_about_popup() {
