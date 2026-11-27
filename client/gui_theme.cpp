@@ -601,17 +601,10 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
         gui::image(glow_image, fan::vec2(radius * 2.f, radius * 2.f), fan::vec2(0, 0), fan::vec2(1, 1), glow.color);
       }
     };
-    // while the stream view is up the whole window is black: no blue strips around the picture or the panels. Done
-    // with the clear colour: the picture is drawn under the gui, and a black rectangle in the gui covered it too
-    if (stream_area_shown != backdrop_black) {
-      backdrop_black = stream_area_shown;
-      apply_backdrop_color();
-    }
-    if (!stream_area_shown) {
-      draw_background_image();
-      if (glow_image.valid()) {
-        draw_glows();
-      }
+    // the stream area draws its own black rectangle; the rest of the window keeps the picture and the lights
+    draw_background_image();
+    if (glow_image.valid()) {
+      draw_glows();
     }
     gui::set_cursor_screen_pos(origin);
   }

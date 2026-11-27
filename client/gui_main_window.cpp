@@ -1102,6 +1102,12 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
 
       gui::set_next_window_bg_alpha(0);
       gui::begin_child(id, size, false);
+      // the picture and its bars stay black; only what is outside the stream area follows the theme backdrop
+      {
+        auto* list = gui::get_window_draw_list();
+        fan::vec2 black_min = gui::get_window_pos();
+        list->AddRectFilled(black_min, black_min + gui::get_window_size(), 0xff000000u);
+      }
       gui::set_viewport(engine.orthographic_render_view);
       gui_ptr->stream_area_min = gui::get_window_pos();
       gui_ptr->stream_area_max = gui_ptr->stream_area_min + size;

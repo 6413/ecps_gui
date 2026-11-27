@@ -243,6 +243,10 @@ struct ecps_gui_t {
       return;
     }
     is_fullscreen_stream = on;
+    // full screen is all stream: black behind the picture and its bars. The normal view keeps the backdrop and
+    // draws black only inside the stream area
+    backdrop_black = on;
+    apply_backdrop_color();
     if (on) {
       fullscreen_toolbar_alpha = 1.f;
       fullscreen_toolbar_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
