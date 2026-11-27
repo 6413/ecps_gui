@@ -667,7 +667,8 @@ void render_thread_t::ecps_gui_t::perf_log_tick() {
       perf_log.summary_at = now;
       if (sharing) {
         fan::print("perf: sending " + fan::size_text(rt->screen_encoder.config_.width, rt->screen_encoder.config_.height) + " " +
-          fan::number_text(debug_sample.share_fps, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
+          // the 30 s average like the rest of the line, not the last second's sample (a short still moment read as 26/60)
+          fan::number_text(perf_log.sent / seconds, 0) + "/" + std::to_string((int)rt->screen_encoder.config_.frame_rate) + " fps " +
           fan::bitrate_text(debug_sample.share_kbps) + ", capture " + fan::number_text(stage_times.capture.ms.load(), 1) +
           " ms, encode " + fan::number_text(stage_times.encode.ms.load(), 1) + " ms (" + encoder_name + "), " +
           std::to_string(queued) + " frames queued, the screen gave " + fan::number_text(perf_log.sum_new_frames / seconds, 1) +
