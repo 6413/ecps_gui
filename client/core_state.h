@@ -39,7 +39,10 @@ std::vector<std::string> find_gpu_encoders(const std::vector<std::string>& compi
 // frames wait here for the decoder thread, decoding on the network thread would
 // leave incoming packets sitting in the socket while a frame is being decoded
 struct decode_queue_t {
-  static constexpr size_t max_size = 4;
+  // about half a second at 60 fps. It was 4: a short stall of the decode thread (the GPU busy with a game, the
+  // window drawing slowly) filled it, every frame in it was thrown away, and the picture froze until a keyframe came,
+  // though decoding takes about a millisecond and would have caught up at once
+  static constexpr size_t max_size = 30;
 
   bool push(std::vector<uint8_t> frame);
   bool pop(std::vector<uint8_t>& frame);
