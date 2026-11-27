@@ -1102,12 +1102,6 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
 
       gui::set_next_window_bg_alpha(0);
       gui::begin_child(id, size, false);
-      // the picture and its bars stay black; only what is outside the stream area follows the theme backdrop
-      {
-        auto* list = gui::get_window_draw_list();
-        fan::vec2 black_min = gui::get_window_pos();
-        list->AddRectFilled(black_min, black_min + gui::get_window_size(), 0xff000000u);
-      }
       gui::set_viewport(engine.orthographic_render_view);
       gui_ptr->stream_area_min = gui::get_window_pos();
       gui_ptr->stream_area_max = gui_ptr->stream_area_min + size;
@@ -1116,6 +1110,31 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
       if (auto rt = get_render_thread(); rt) {
         fan::vec2 stream_area = gui::get_content_region_avail();
         gui_ptr->network_frame_helper.setup_network_frame(stream_area);
+        // Black bars beside the picture, not over it: the picture is drawn by the engine under the whole gui, a
+        // black rectangle over the stream area hid it. With no picture the whole area is black
+        {
+          auto* list = gui::get_window_draw_list();
+          fan::vec2 area_min = gui::get_window_pos();
+          fan::vec2 area_max = area_min + size;
+          if (rt->network_frame.get_image() == engine.default_texture) {
+            list->AddRectFilled(area_min, area_max, 0xff000000u);
+          }
+          else {
+            fan::vec2 center = area_min + gui_ptr->network_frame_helper.shown_position;
+            fan::vec2 half = gui_ptr->network_frame_helper.shown_half;
+            fan::vec2 p_min(std::clamp(center.x - half.x, area_min.x, area_max.x), std::clamp(center.y - half.y, area_min.y, area_max.y));
+            fan::vec2 p_max(std::clamp(center.x + half.x, area_min.x, area_max.x), std::clamp(center.y + half.y, area_min.y, area_max.y));
+            auto bar = [&](fan::vec2 a, fan::vec2 b) {
+              if (b.x > a.x && b.y > a.y) {
+                list->AddRectFilled(a, b, 0xff000000u);
+              }
+            };
+            bar(area_min, fan::vec2(area_max.x, p_min.y));
+            bar(fan::vec2(area_min.x, p_max.y), area_max);
+            bar(fan::vec2(area_min.x, p_min.y), fan::vec2(p_min.x, p_max.y));
+            bar(fan::vec2(p_max.x, p_min.y), fan::vec2(area_max.x, p_max.y));
+          }
+        }
         gui_ptr->render_fps_counter(size.x);
         gui_ptr->draw_host_cursor();
 

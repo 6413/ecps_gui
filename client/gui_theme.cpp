@@ -601,10 +601,35 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
         gui::image(glow_image, fan::vec2(radius * 2.f, radius * 2.f), fan::vec2(0, 0), fan::vec2(1, 1), glow.color);
       }
     };
-    // the stream area draws its own black rectangle; the rest of the window keeps the picture and the lights
-    draw_background_image();
-    if (glow_image.valid()) {
-      draw_glows();
+    auto draw_all = [&] {
+      draw_background_image();
+      if (glow_image.valid()) {
+        draw_glows();
+      }
+    };
+    // The background and the lights everywhere except the stream area (last frame's): drawn over it, they covered
+    // the picture, which the engine draws under the whole gui. The stream area draws its own black bars beside it
+    if (stream_area_shown) {
+      fan::vec2 w0 = origin;
+      fan::vec2 w1 = origin + display;
+      fan::vec2 a = stream_area_min;
+      fan::vec2 b = stream_area_max;
+      const fan::vec2 parts[4][2] = {
+        {w0, fan::vec2(w1.x, a.y)},
+        {fan::vec2(w0.x, b.y), w1},
+        {fan::vec2(w0.x, a.y), fan::vec2(a.x, b.y)},
+        {fan::vec2(b.x, a.y), fan::vec2(w1.x, b.y)},
+      };
+      for (const auto& part : parts) {
+        if (part[1].x > part[0].x && part[1].y > part[0].y) {
+          gui::push_clip_rect(part[0], part[1], true);
+          draw_all();
+          gui::pop_clip_rect();
+        }
+      }
+    }
+    else {
+      draw_all();
     }
     gui::set_cursor_screen_pos(origin);
   }
