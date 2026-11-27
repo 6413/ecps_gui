@@ -504,12 +504,25 @@ void render_thread_t::ecps_gui_t::perf_log_tick() {
       perf_log.share_slow_seconds = debug_sample.share_fps < target * 0.8f ? perf_log.share_slow_seconds + 1 : 0;
       if (perf_log.share_slow_seconds == 5) {
         std::string why;
-        if (encode_ms > budget * 0.8f) {
+        // one frame is captured, then encoded, before the next is asked for: the two together are what has to fit
+        // (capture 7 + encode 15 ms came out as 42 fps, though neither alone was over the 16.7 ms)
+        if (capture_ms + encode_ms > budget * 0.9f && capture_ms > 2.f && encode_ms > 2.f) {
+          bool cpu_frames = encoder_name.find("nvenc") != std::string::npos && !rt->screen_encoder.encoder_.uses_gpu_frames();
+          why = "capturing (" + fan::number_text(capture_ms, 1) + " ms) and encoding (" + fan::number_text(encode_ms, 1) +
+            " ms) take " + fan::number_text(capture_ms + encode_ms, 1) + " ms together, more than the " + fan::number_text(budget, 1) +
+            " ms a frame has" + (cpu_frames ? ": the frames go through the CPU, GPU input could not start (see the gpu input line)" :
+            ": the GPU is busy (a game)");
+        }
+        else if (encode_ms > budget * 0.8f) {
           why = "encoding takes " + fan::number_text(encode_ms, 1) + " ms of the " + fan::number_text(budget, 1) + " ms a frame has (" +
             encoder_name + (encoder_name.rfind("lib", 0) == 0 ? ", the CPU encoder: try Encode on GPU" : "") + ")";
         }
         else if (capture_ms > budget * 0.8f) {
-          why = "capturing takes " + fan::number_text(capture_ms, 1) + " ms of the " + fan::number_text(budget, 1) + " ms a frame has";
+          // the capture's time includes waiting for the screen to have a new picture: on Linux the compositor sends
+          // one only when something changed, a still screen read as "capturing takes 384 ms"
+          why = "getting a frame takes " + fan::number_text(capture_ms, 1) + " ms of the " + fan::number_text(budget, 1) +
+            " ms a frame has, waiting for a new picture included (" + fan::number_text(perf_log.screen_fps, 0) +
+            " new ones came: a still screen sends few, a busy compositor or GPU sends them late)";
         }
         else if (queued > 2) {
           why = std::to_string(queued) + " frames wait to be sent: the bitrate is too high for the upload";
@@ -534,7 +547,17 @@ void render_thread_t::ecps_gui_t::perf_log_tick() {
     if (watching) {
       bool behind = debug_sample.assembled_fps > debug_sample.decoded_fps + 3.f;
       perf_log.decode_behind_seconds = behind ? perf_log.decode_behind_seconds + 1 : 0;
-      if (perf_log.decode_behind_seconds == 5) {
+      // decoding itself fast but frames still fall behind: the decode thread waits on something else (the window
+      // drawing slowly, the GPU busy), "decodes too slowly" with 0.7 ms a frame read as nonsense
+      f32_t decode_ms = stage_times.decode.ms.load();
+      f32_t frame_ms = debug_sample.assembled_fps > 0.f ? 1000.f / debug_sample.assembled_fps : 0.f;
+      if (perf_log.decode_behind_seconds == 5 && decode_ms < frame_ms * 0.5f) {
+        perf_warn("decode", "frames fall behind though decoding takes only " + fan::number_text(decode_ms, 1) + " ms: " +
+          fan::number_text(debug_sample.assembled_fps, 0) + " frames/s come in, " + fan::number_text(debug_sample.decoded_fps, 0) +
+          " decoded. The decoder waits on this computer (the window drew " + fan::number_text(draw_rate.fps.load(std::memory_order_relaxed), 0) +
+          " times a second, slowest " + fan::number_text(draw_rate.slowest_ms.load(std::memory_order_relaxed), 0) + " ms; a busy GPU or CPU)");
+      }
+      else if (perf_log.decode_behind_seconds == 5) {
         perf_warn("decode", "this computer decodes too slowly: " + fan::number_text(debug_sample.assembled_fps, 0) + " frames/s come in, " +
           fan::number_text(debug_sample.decoded_fps, 0) + " decoded, decode takes " + fan::number_text(stage_times.decode.ms.load(), 1) +
           " ms (" + decoder_name + (decoder.using_hardware_ ? "" : ": try Decode on GPU") + ")");
@@ -567,8 +590,10 @@ void render_thread_t::ecps_gui_t::perf_log_tick() {
       }
       // held back while waiting for a keyframe: normal for a moment after watching starts or a frame is lost
       if (keyframe_waits >= 30) {
-        perf_warn("keyframe_wait", "waited for a keyframe for " + std::to_string(keyframe_waits) +
-          " frames in the last second: the sharer is slow to send one (an older version, or its upload is full)");
+        // after frames lost here, the wait is for the keyframe asked for because of them, the sharer isn't slow
+        perf_warn("keyframe_wait", "waited for a keyframe for " + std::to_string(keyframe_waits) + " frames in the last second" +
+          (queue_full + decode_failed > 0 ? ": frames were dropped on this computer, the picture holds until the sharer's next keyframe"
+            : ": the sharer is slow to send one (an older version, or its upload is full)"));
       }
     }
     else {
