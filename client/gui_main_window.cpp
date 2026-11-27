@@ -703,6 +703,9 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
       settings_section_icon(icon_e::monitor, "SHARING");
       gui::indent(settings_space(2.f));
       gui_ptr->render_capture_source();
+      if (rt) {
+        gui_ptr->render_stream_preset_row();
+      }
       if (streaming && rt) {
         gui_ptr->resolution_controls.render_resolution_controls(false);
 
@@ -797,6 +800,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_settings_
         }
         if (streaming) {
           if (gui::button("Reset quality settings")) {
+            gui_ptr->stream_settings.preset = 0;
             gui_ptr->stream_settings.selected_resolution = 0;
             gui_ptr->stream_settings.framerate = 30;
             gui_ptr->stream_settings.bitrate_mbps = 5;

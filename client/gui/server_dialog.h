@@ -78,6 +78,9 @@
     int selected_encoder = 0;
     int selected_decoder = 0;
     int input_control = 0;
+    // 0 is Custom, otherwise an entry of stream_presets (gui/stream_presets.h). Picking one sets resolution, frame
+    // rate, bitrate, codec, sharp text, lossless and scaling together; changing any of them by hand goes back to Custom
+    int preset = 0;
     bool show_in_stream_view = false;
     bool share_audio = false;
     bool play_audio = true;

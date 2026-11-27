@@ -140,11 +140,17 @@
     int bitrate_mode = 0;
     f32_t bitrate_mbps = 0;
     int scaling_quality = -1;
+    // the preset picked, 0 Custom. These follow it and are compared too: changing one by hand makes it Custom
+    int preset = 0;
+    int codec = 0;
+    bool sharp_text = false;
+    bool lossless = false;
     bool valid = false;
 
     bool same(const stream_snapshot_t& other) const {
       return width == other.width && height == other.height && fps == other.fps &&
-        bitrate_mode == other.bitrate_mode && bitrate_mbps == other.bitrate_mbps && scaling_quality == other.scaling_quality;
+        bitrate_mode == other.bitrate_mode && bitrate_mbps == other.bitrate_mbps && scaling_quality == other.scaling_quality &&
+        preset == other.preset && codec == other.codec && sharp_text == other.sharp_text && lossless == other.lossless;
     }
   };
 
@@ -159,6 +165,10 @@
     now.bitrate_mode = stream_settings.bitrate_mode;
     now.bitrate_mbps = stream_settings.bitrate_mbps;
     now.scaling_quality = stream_settings.selected_scaling_quality;
+    now.preset = stream_settings.preset;
+    now.codec = video_codec;
+    now.sharp_text = sharp_text;
+    now.lossless = lossless;
     now.valid = true;
     return now;
   }
@@ -166,6 +176,10 @@
   // Resolution, frame rate, bitrate and scaling belong to this program, not to a channel. What was used last is
   // applied at the start, and a change is written to the config a second after the last touch
   void update_stream_settings_persistence();
+
+  // writes the stream choices now, also used when a preset is picked so the choice is kept even if the program closes
+  // in the next second
+  void save_stream_settings_now();
 
 
   stream_snapshot_t saved_stream;

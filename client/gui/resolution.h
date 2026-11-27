@@ -71,6 +71,16 @@
       render_aspect_row();
     }
 
+    // a stream preset sets a fixed size: the same path the Resolution row takes, so the dropdown follows it
+    void apply_preset_resolution(int width, int height) {
+      resolution_system_t::resolution_t resolution;
+      resolution.width = (std::uint32_t)width;
+      resolution.height = (std::uint32_t)height;
+      resolution.name = std::to_string(width) + "x" + std::to_string(height);
+      resolution.category = "Preset";
+      apply_resolution(resolution);
+    }
+
   private:
     void render_aspect_row() {
       auto* rt = render_thread_ptr.load(std::memory_order_acquire);

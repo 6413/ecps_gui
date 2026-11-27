@@ -665,6 +665,22 @@ void render_thread_t::ecps_gui_t::update_resume_share() {
     }
   }
 
+void render_thread_t::ecps_gui_t::save_stream_settings_now() {
+    stream_snapshot_t current = current_stream_settings();
+    fan::json stream = fan::json::object();
+    stream["width"] = current.width;
+    stream["height"] = current.height;
+    stream["fps"] = current.fps;
+    stream["bitrate_mode"] = current.bitrate_mode;
+    stream["bitrate_mbps"] = current.bitrate_mbps;
+    stream["scaling_quality"] = current.scaling_quality;
+    stream["preset"] = current.preset;
+    write_to_config("stream", stream);
+    saved_stream = current;
+    seen_stream = current;
+    stream_changed_at = std::chrono::steady_clock::time_point{};
+  }
+
 void render_thread_t::ecps_gui_t::update_stream_settings_persistence() {
     auto* rt = get_render_thread();
     if (!rt || !rt->screen_encoder.is_initialized()) {
@@ -675,6 +691,14 @@ void render_thread_t::ecps_gui_t::update_stream_settings_persistence() {
 
     if (!stream_applied) {
       stream_applied = true;
+      stream_settings.preset = std::clamp(saved_stream.preset, 0, stream_preset_count - 1);
+      // the codec side comes from ui, stream keeps the rest: a saved preset only stays if the two still agree
+      if (stream_settings.preset > 0) {
+        const auto& preset = stream_presets[stream_settings.preset];
+        if (video_codec != preset.codec || sharp_text != preset.sharp_text || lossless != preset.lossless) {
+          stream_settings.preset = 0;
+        }
+      }
       if (saved_stream.valid) {
         if (saved_stream.width >= 160 && saved_stream.height >= 120 && saved_stream.width <= 7680 && saved_stream.height <= 4320) {
           encoder.set_user_resolution((std::uint32_t)saved_stream.width, (std::uint32_t)saved_stream.height);
@@ -700,28 +724,31 @@ void render_thread_t::ecps_gui_t::update_stream_settings_persistence() {
           encoder.update_scaling_quality(static_cast<codec_config_t::scaling_quality_e>(saved_stream.scaling_quality));
         }
       }
+      // the codec side is kept in the ui settings, not in stream: load it from there, and compare the hand changes
+      // against what is actually on screen
+      saved_stream.preset = stream_settings.preset;
+      saved_stream.codec = video_codec;
+      saved_stream.sharp_text = sharp_text;
+      saved_stream.lossless = lossless;
       seen_stream = current_stream_settings();
       return;
     }
 
     stream_snapshot_t current = current_stream_settings();
     if (!current.same(seen_stream)) {
+      // a row was changed by hand: no preset describes the result any more. The choice goes back to Custom at once,
+      // the values themselves are written after the usual second of quiet
+      if (stream_settings.preset != 0) {
+        stream_settings.preset = 0;
+        current.preset = 0;
+      }
       seen_stream = current;
       stream_changed_at = now;
       return;
     }
     if (stream_changed_at != std::chrono::steady_clock::time_point{} && now - stream_changed_at > std::chrono::seconds(1) &&
       (!saved_stream.valid || !current.same(saved_stream))) {
-      fan::json stream = fan::json::object();
-      stream["width"] = current.width;
-      stream["height"] = current.height;
-      stream["fps"] = current.fps;
-      stream["bitrate_mode"] = current.bitrate_mode;
-      stream["bitrate_mbps"] = current.bitrate_mbps;
-      stream["scaling_quality"] = current.scaling_quality;
-      write_to_config("stream", stream);
-      saved_stream = current;
-      stream_changed_at = std::chrono::steady_clock::time_point{};
+      save_stream_settings_now();
     }
   }
 
