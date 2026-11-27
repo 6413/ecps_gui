@@ -126,7 +126,7 @@ void render_thread_t::ecps_gui_t::render_play_audio_controls() {
         }
       });
       if (gui::settings_switch("Even out volume", &stream_settings.audio_level,
-        "Brings quiet game or video sound up to the level of voices")) {
+        "Brings quiet game or video sound up to the level of voices, in what you hear and what you share")) {
         save_audio_settings();
       }
     }

@@ -230,6 +230,10 @@ struct audio_share_t {
   // the receiving side evens out the stream's volume (the "Even out volume" setting)
   std::atomic<bool> leveling = true;
   leveler_t leveler;
+  // and the sending side too, before encoding: a viewer on an older version hears it evened out as well. A game's
+  // own output (what capturing just its window records) is often far quieter than what Sonar or the volume mixer
+  // make of it on the speakers
+  leveler_t send_leveler;
 
   fan::audio::loopback_capture_t capture;
   fan::audio::opus_encoder_t encoder;

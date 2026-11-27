@@ -57,6 +57,12 @@ bool audio_share_t::discord_changed(const capture_options_t& options) {
 void audio_share_t::encode(const f32_t* pcm) {
     std::vector<std::uint8_t> packet(sizeof(header_t) + fan::audio::stream_max_packet);
     ((header_t*)packet.data())->Sequence = send_sequence++;
+    std::array<f32_t, fan::audio::stream_frame_size * fan::audio::stream_channels> leveled;
+    if (leveling.load(std::memory_order_relaxed)) {
+      std::copy(pcm, pcm + leveled.size(), leveled.begin());
+      send_leveler.apply(leveled.data(), fan::audio::stream_frame_size);
+      pcm = leveled.data();
+    }
     std::int32_t size = encoder.encode(pcm, packet.data() + sizeof(header_t), fan::audio::stream_max_packet);
     if (size <= 0) {
       return;

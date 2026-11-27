@@ -243,8 +243,6 @@ struct top_bar_t {
 
   void render_top_bar() {
     gui.report_display_sizes();
-    updater.tick();
-    updater.tick_restart();
     f32_t bar_height = gui::get_frame_height() + 18.f;
     this->render_nav_bar(gui::get_window_pos(), gui::get_window_size().x, bar_height, 0.f, 1.f, false);
     gui::set_cursor_pos(fan::vec2(gui::get_style().WindowPadding.x, bar_height + 10.f));

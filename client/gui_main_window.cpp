@@ -42,8 +42,6 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render() {
         }
         if (gui.ui_autohide && current_tab == 1) {
           gui.report_display_sizes();
-          updater.tick();
-          updater.tick_restart();
           render_stream_view_content();
           gui.top_bar.render_about_popup();
         }

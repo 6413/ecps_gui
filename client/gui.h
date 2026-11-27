@@ -317,6 +317,10 @@ struct ecps_gui_t {
     handle_font_keys();
     update_voice_keys();
     update_panel_keys();
+    // the update check, the build and the restart into it: every frame, not only while the top bar is drawn. The
+    // full-screen stream view and the auto-hidden bar skipped them, so an update never came while watching
+    updater.tick();
+    updater.tick_restart();
     update_automatically();
     update_phone_upload();
     apply_video_choice_once();
