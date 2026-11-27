@@ -102,19 +102,24 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
     // it in front too: the engine's own frame timer isn't used, this thread draws the frames
     {
       static auto last_draw = std::chrono::steady_clock::now();
-      f64_t wanted = 0.0;
+      auto at_fps = [](f64_t fps) {
+        return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<f64_t>(1.0 / fps));
+      };
+      // the Target Framerate setting: never sooner than this
+      if (int target = render_thread_instance.engine.target_fps; target > 0) {
+        std::this_thread::sleep_until(last_draw + at_fps(target));
+      }
       if (!render_thread_instance.engine.window.is_focused()) {
         f32_t stream_fps = render_thread_instance.ecps_gui.debug_sample.decoded_fps;
-        wanted = std::max(30.0, stream_fps * 1.25 + 5.0);
-      }
-      if (int target = render_thread_instance.engine.target_fps; target > 0) {
-        wanted = wanted > 0.0 ? std::min(wanted, (f64_t)target) : (f64_t)target;
-      }
-      if (wanted > 0.0) {
-        auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<f64_t>(1.0 / wanted));
-        auto since = std::chrono::steady_clock::now() - last_draw;
-        if (since < interval) {
-          std::this_thread::sleep_for(interval - since);
+        if (stream_fps > 1.f) {
+          // a stream playing: drawn when its next frame arrives, so exactly as often as it has frames (a fixed 1.25x
+          // timer drew 80 times a second for 60 and showed each frame up to a tick late), and at least 20 times a
+          // second for the rest of the window. Never more than 240, a burst of frames is shown as they come
+          std::this_thread::sleep_until(last_draw + at_fps(240.0));
+          render_thread_instance.latest_frame.wait(last_draw + at_fps(20.0));
+        }
+        else {
+          std::this_thread::sleep_until(last_draw + at_fps(30.0));
         }
       }
       last_draw = std::chrono::steady_clock::now();

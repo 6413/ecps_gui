@@ -79,10 +79,12 @@ void latest_frame_t::publish(frame_t& frame) {
       std::swap(slots[head], frame);
       head = (head + 1) % slot_count;
       ++dropped;
+      arrived.notify_one();
       return;
     }
     std::swap(slots[(head + count) % slot_count], frame);
     ++count;
+    arrived.notify_one();
   }
 
 

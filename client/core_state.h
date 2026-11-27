@@ -75,6 +75,12 @@ struct latest_frame_t {
 
   void publish(frame_t& frame);
   bool take(frame_t& frame);
+  // until a frame is waiting or the time comes, whichever is first: the window draws when a frame arrives
+  void wait(std::chrono::steady_clock::time_point until) {
+    std::unique_lock<std::mutex> lock(mutex);
+    arrived.wait_until(lock, until, [this] { return count > 0; });
+  }
+  std::condition_variable arrived;
 
   std::mutex mutex;
   std::array<frame_t, slot_count> slots;
