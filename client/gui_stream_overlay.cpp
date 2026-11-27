@@ -106,7 +106,10 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
       toggle_audio_volume();
     }
     if (gui::is_item_hovered()) {
-      gui::open_popup("##stream_volume");
+      // while it is already up, opening it again every frame restarted the popup and made the mixer flash
+      if (!gui::is_popup_open("##stream_volume")) {
+        gui::open_popup("##stream_volume");
+      }
       stream_volume_popup_until = std::max(stream_volume_popup_until, std::chrono::steady_clock::now() + std::chrono::milliseconds(300));
     }
     if (mixer_requested) {
