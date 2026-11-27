@@ -276,7 +276,9 @@ struct ecps_gui_t {
     gui::set_next_window_pos(fan::vec2(display.x - 16.f, display.y - 16.f), gui::cond_always, fan::vec2(1.f, 1.f));
     if (gui::begin("##update_toast", nullptr, gui::window_flags_no_title_bar | gui::window_flags_no_resize |
       gui::window_flags_no_move | gui::window_flags_no_saved_settings | gui::window_flags_always_auto_resize |
-      gui::window_flags_no_docking | gui::window_flags_no_focus_on_appearing | gui::window_flags_no_collapse)) {
+      gui::window_flags_no_docking | gui::window_flags_no_focus_on_appearing | gui::window_flags_no_collapse |
+      // above the panels and the stream, it ended up behind them and the restart came unannounced
+      gui::window_flags_topmost)) {
       gui::text("Update " + updater.latest() + " is ready");
       gui::text_disabled("Restarting in " + std::to_string(updater.seconds_to_restart()) + " s");
       if (gui::button("Restart now##update_toast")) {

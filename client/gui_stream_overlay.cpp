@@ -869,10 +869,14 @@ void render_thread_t::ecps_gui_t::draw_host_cursor() {
     const fan::vec2 shape[] = {
       point(0, 0), point(0, 17), point(4, 13), point(7.5f, 20.5f), point(10.5f, 19.f), point(7.f, 12.f), point(12, 12),
     };
-    for (const auto& p : shape) {
-      list->PathLineTo(p);
-    }
-    list->PathFillConcave(white);
+    // filled as convex pieces: the concave fill split the notches wrongly and spilled white outside the arrow.
+    // Head: the left edge to the notch, the notch to where the tail meets the head, and the right wing
+    list->AddTriangleFilled(shape[0], shape[1], shape[2], white);
+    list->AddTriangleFilled(shape[0], shape[2], shape[5], white);
+    list->AddTriangleFilled(shape[0], shape[5], shape[6], white);
+    // the tail
+    const ImVec2 tail[] = {shape[2], shape[3], shape[4], shape[5]};
+    list->AddConvexPolyFilled(tail, 4, white);
     for (const auto& p : shape) {
       list->PathLineTo(p);
     }

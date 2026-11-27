@@ -179,6 +179,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
         if (after_name + mic + 10.f <= at.x + width - right_width - 12.f) {
           draw_icon(list, muted ? icon_e::mic_muted : icon_e::mic, fan::vec2(after_name + mic * 0.5f, at.y + row_height * 0.5f),
             mic, muted ? 0xff8080ffu : 0xff90ff90u);
+          after_name += mic + 10.f;
+        }
+        // Mute others on: a crossed speaker beside the mic, else the quiet looks like nobody talking
+        if (voice_chat.deafened.load() && after_name + mic + 10.f <= at.x + width - right_width - 12.f) {
+          draw_icon(list, icon_e::speaker_muted, fan::vec2(after_name + mic * 0.5f, at.y + row_height * 0.5f), mic, 0xff8080ffu);
         }
       }
       list->AddText(fan::vec2(at.x + width - right_width - 10.f, text_y), 0xff909090u, right.c_str());
@@ -578,9 +583,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                       // "mic off": they muted their own microphone, the server says so. "muted": you muted them
                       bool self_muted = is_me ? voice_chat.muted.load() : ecps_backend.voice_muted_by_self(gui_ptr->selected_channel_id, speaker);
                       bool locally_muted = !is_me && gui_ptr->user_volume(session.username) <= 0.f;
-                      bool badge_muted = self_muted || locally_muted;
+                      // Mute others drops everyone's voice before it is even measured: their meters would just stay grey
+                      bool all_muted = !is_me && voice_chat.deafened.load();
+                      bool badge_muted = self_muted || locally_muted || all_muted;
                       if (badge_muted) {
-                        gui::badge(locally_muted ? "muted" : "mic off", 0x600a0affu, 0xff8080ffu);
+                        gui::badge(all_muted || locally_muted ? "muted" : "mic off", 0x600a0affu, 0xff8080ffu);
                       }
                       else {
                         gui::level_badge("voice", shown, 0x40909090u, 0xa030c040u, shown > 0.01f ? 0xffb0ffb0u : 0xffb0b0b0u);
@@ -589,6 +596,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                         gui::set_mouse_cursor(gui::mouse_cursor_hand);
                         gui::set_tooltip(is_me
                           ? (badge_muted ? "Your microphone is muted. Click to unmute it" : "Click to mute your microphone")
+                          : all_muted ? "Mute others is on: you hear no one. Click to hear everyone again"
                           : (locally_muted ? "Click to hear " + session.username + " again"
                             : self_muted ? session.username + " muted their microphone. Click to mute them for you too"
                             : "Click to mute " + session.username + " for you"));
@@ -596,6 +604,9 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                       if (gui::is_item_clicked()) {
                         if (is_me) {
                           gui_ptr->toggle_mic_mute();
+                        }
+                        else if (all_muted) {
+                          gui_ptr->toggle_deafen();
                         }
                         else {
                           gui_ptr->toggle_user_mute(speaker, session.username);

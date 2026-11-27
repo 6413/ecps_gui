@@ -153,6 +153,14 @@ bool render_thread_t::ecps_gui_t::render_voice_switch(ecps_backend_t::Protocol_C
         voice_chat.deafened.store(deafened);
         save_server_voice(true);
       }
+      // both kept per server (and the mic starts muted), so they can still be on from last time with nothing else
+      // saying why it's quiet
+      if (voice_chat.muted.load()) {
+        settings_warning("Your microphone is muted: no one hears you. Key: " + voice_key_text(action_toggle_mute));
+      }
+      if (voice_chat.deafened.load()) {
+        settings_warning("You hear no one in the voice chat. Key: " + voice_key_text(action_toggle_deafen));
+      }
     }
     return in_voice;
   }
@@ -237,6 +245,10 @@ void render_thread_t::ecps_gui_t::render_voice_settings() {
     list->AddRectFilled(at, at + fan::vec2(width * level, 4.f), sending ? 0xff60d060u : 0xff909090u, 2.f);
     list->AddRectFilled(at + fan::vec2(mark - 1.f, -2.f), at + fan::vec2(mark + 1.f, 6.f), 0xffffffffu);
     gui::dummy(fan::vec2(width, 6.f));
+    // muted, the microphone isn't even opened: the meter stays empty, which looks like a broken mic
+    if (voice_chat.muted.load()) {
+      settings_warning("Your microphone is muted: no one hears you and the meter stays empty");
+    }
     if (voice_chat.capture_failed) {
       settings_hint("Could not open the microphone");
     }
