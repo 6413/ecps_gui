@@ -457,11 +457,7 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       }
     }
 
-    // ---- the input: phone upload, attach, text, send
-    if (icon_button("##chat_phone", icon_e::phone, "Phone upload: open a link on your phone (same Wi-Fi) and its pictures come into this chat", 0.f)) {
-      phone_upload_popup_requested = true;
-    }
-    gui::same_line();
+    // ---- the input: attach, text, send (phone upload was taken out of the window)
     if (icon_button("##chat_attach", icon_e::send_file, "Send a file to everyone here", 0.f)) {
       fan::graphics::open_file("", [this, channel_id](std::string_view path) {
         chat_dropped_files.push_back(std::string(path));
@@ -579,7 +575,6 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       }
       chat_focus_input = true;
     }
-    render_phone_upload_popup();
   }
 
 void render_thread_t::ecps_gui_t::chat_update_mark(const std::vector<ecps_backend_t::chat_message_t>& messages) {

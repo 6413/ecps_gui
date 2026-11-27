@@ -106,7 +106,8 @@ struct ecps_gui_t {
         sharp_text = ui.value("sharp_text", false);
         lossless = ui.value("lossless", false);
         decode_on_gpu = ui.value("decode_on_gpu", true);
-  phone_upload_enabled = ui.value("phone_upload", false);
+  // phone upload is out of the window: a saved "on" no longer starts its page
+  phone_upload_enabled = false;
       }
       if (config.contains("stream") && config["stream"].is_object()) {
         fan::json stream = config["stream"];
@@ -339,7 +340,6 @@ struct ecps_gui_t {
     updater.tick();
     updater.tick_restart();
     update_automatically();
-    update_phone_upload();
     apply_video_choice_once();
     audio_share.leveling.store(stream_settings.audio_level, std::memory_order_relaxed);
     audio_share.update(stream_settings.share_audio, stream_settings.play_audio, stream_settings.audio_volume, get_capture_options());
