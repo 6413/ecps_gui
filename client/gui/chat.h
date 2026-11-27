@@ -8,6 +8,91 @@
   std::uint32_t chat_seen_channel = (std::uint32_t)-1;
   bool chat_input_active = false;
   bool chat_focus_input = false;
+
+  // ---- emojis: a picker beside the input, and :shortcodes: turned into emojis when a message is sent ------------
+  std::vector<std::uint32_t> recent_emojis;   // newest first, kept in config.json
+  bool recent_emojis_loaded = false;
+  static std::string utf8_of_codepoint(std::uint32_t c) {
+    std::string out;
+    if (c < 0x80) {
+      out += (char)c;
+    }
+    else if (c < 0x800) {
+      out += (char)(0xC0 | (c >> 6));
+      out += (char)(0x80 | (c & 0x3F));
+    }
+    else if (c < 0x10000) {
+      out += (char)(0xE0 | (c >> 12));
+      out += (char)(0x80 | ((c >> 6) & 0x3F));
+      out += (char)(0x80 | (c & 0x3F));
+    }
+    else {
+      out += (char)(0xF0 | (c >> 18));
+      out += (char)(0x80 | ((c >> 12) & 0x3F));
+      out += (char)(0x80 | ((c >> 6) & 0x3F));
+      out += (char)(0x80 | (c & 0x3F));
+    }
+    return out;
+  }
+  // the names that work as :name:
+  static const std::vector<std::pair<const char*, std::uint32_t>>& emoji_shortcodes() {
+    static const std::vector<std::pair<const char*, std::uint32_t>> list = {
+      {"smile", 0x1F604}, {"grin", 0x1F601}, {"laughing", 0x1F606}, {"joy", 0x1F602}, {"rofl", 0x1F923},
+      {"sweat_smile", 0x1F605}, {"wink", 0x1F609}, {"blush", 0x1F60A}, {"upside_down", 0x1F643}, {"heart_eyes", 0x1F60D},
+      {"kiss", 0x1F618}, {"yum", 0x1F60B}, {"sunglasses", 0x1F60E}, {"nerd", 0x1F913}, {"monocle", 0x1F9D0},
+      {"thinking", 0x1F914}, {"hugging", 0x1F917}, {"neutral", 0x1F610}, {"eyeroll", 0x1F644}, {"smirk", 0x1F60F},
+      {"sleeping", 0x1F634}, {"sob", 0x1F62D}, {"cry", 0x1F622}, {"angry", 0x1F620}, {"rage", 0x1F621},
+      {"scream", 0x1F631}, {"flushed", 0x1F633}, {"party", 0x1F973}, {"melting", 0x1FAE0}, {"salute", 0x1FAE1},
+      {"skull", 0x1F480}, {"clown", 0x1F921}, {"poop", 0x1F4A9}, {"ghost", 0x1F47B}, {"alien", 0x1F47D},
+      {"robot", 0x1F916}, {"thumbsup", 0x1F44D}, {"+1", 0x1F44D}, {"thumbsdown", 0x1F44E}, {"-1", 0x1F44E},
+      {"ok_hand", 0x1F44C}, {"clap", 0x1F44F}, {"wave", 0x1F44B}, {"pray", 0x1F64F}, {"muscle", 0x1F4AA},
+      {"fist", 0x1F44A}, {"v", 0x270C}, {"eyes", 0x1F440}, {"facepalm", 0x1F926}, {"shrug", 0x1F937},
+      {"heart", 0x2764}, {"broken_heart", 0x1F494}, {"fire", 0x1F525}, {"100", 0x1F4AF}, {"sparkles", 0x2728},
+      {"star", 0x2B50}, {"tada", 0x1F389}, {"check", 0x2705}, {"x", 0x274C}, {"warning", 0x26A0},
+      {"question", 0x2753}, {"exclamation", 0x2757}, {"zzz", 0x1F4A4}, {"money", 0x1F4B0}, {"gift", 0x1F381},
+      {"trophy", 0x1F3C6}, {"bomb", 0x1F4A3}, {"rocket", 0x1F680}, {"beer", 0x1F37A}, {"coffee", 0x2615},
+      {"pizza", 0x1F355}, {"cat", 0x1F431}, {"dog", 0x1F436}, {"sun", 0x2600}, {"moon", 0x1F319},
+      {"rainbow", 0x1F308}, {"game", 0x1F3AE}, {"headphones", 0x1F3A7}, {"gun", 0x1F52B}, {"crown", 0x1F451},
+    };
+    return list;
+  }
+  // :fire: becomes the emoji, a name that isn't known stays as it was typed
+  static std::string chat_expand_shortcodes(const std::string& text) {
+    std::string out;
+    std::size_t at = 0;
+    while (at < text.size()) {
+      std::size_t open = text.find(':', at);
+      if (open == std::string::npos) {
+        break;
+      }
+      std::size_t close = text.find(':', open + 1);
+      if (close == std::string::npos) {
+        break;
+      }
+      std::string name = text.substr(open + 1, close - open - 1);
+      bool plain = !name.empty() && name.size() <= 20 && name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_+-") == std::string::npos;
+      const std::uint32_t* found = nullptr;
+      if (plain) {
+        for (const auto& [code_name, code] : emoji_shortcodes()) {
+          if (name == code_name) {
+            found = &code;
+          }
+        }
+      }
+      if (found) {
+        out += text.substr(at, open - at) + utf8_of_codepoint(*found);
+        at = close + 1;
+      }
+      else {
+        // the second : can start the next code (12:30 :fire:)
+        out += text.substr(at, close - at);
+        at = close;
+      }
+    }
+    out += text.substr(at);
+    return out;
+  }
+  void render_emoji_picker();
   std::chrono::steady_clock::time_point chat_tab_seen_at{};
   // files dropped on the window while the chat was showing, sent by the next frame of the chat
   std::vector<std::string> chat_dropped_files;

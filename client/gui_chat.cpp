@@ -97,6 +97,107 @@ void render_thread_t::ecps_gui_t::update_phone_upload() {
     }
   }
 
+void render_thread_t::ecps_gui_t::render_emoji_picker() {
+    if (!recent_emojis_loaded) {
+      recent_emojis_loaded = true;
+      if (config.contains("recent_emojis") && config["recent_emojis"].is_array()) {
+        for (const auto& value : config["recent_emojis"]) {
+          if (value.is_number()) {
+            recent_emojis.push_back(value.get<std::uint32_t>());
+          }
+        }
+      }
+    }
+    gui::set_next_window_size(fan::vec2(gui::get_frame_height() * 13.f, gui::get_frame_height() * 12.f));
+    if (!gui::begin_popup("##emoji_picker")) {
+      return;
+    }
+    struct category_t {
+      const char* name;
+      std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
+    };
+    static const std::vector<category_t> categories = {
+      {"Smileys", {{0x1F600, 0x1F64F}, {0x1F910, 0x1F92F}, {0x1F970, 0x1F97A}, {0x1FAE0, 0x1FAE8}}},
+      {"People", {{0x1F446, 0x1F450}, {0x1F466, 0x1F487}, {0x1F90C, 0x1F90F}, {0x1F918, 0x1F91F}, {0x1F930, 0x1F93A},
+        {0x1F9B0, 0x1F9B9}, {0x1F9CD, 0x1F9DF}, {0x1FAF0, 0x1FAF8}, {0x1F440, 0x1F445}}},
+      {"Nature", {{0x1F330, 0x1F344}, {0x1F400, 0x1F43F}, {0x1F980, 0x1F9AE}, {0x1FAB0, 0x1FABD}, {0x1F300, 0x1F32C}}},
+      {"Food", {{0x1F345, 0x1F37F}, {0x1F950, 0x1F96F}, {0x1F9C0, 0x1F9CB}, {0x1FAD0, 0x1FADB}, {0x2615, 0x2615}}},
+      {"Activities", {{0x1F380, 0x1F3D3}, {0x1F93C, 0x1F94F}, {0x26BD, 0x26BE}, {0x1FA80, 0x1FA8F}}},
+      {"Travel", {{0x1F680, 0x1F6FF}, {0x1F3D4, 0x1F3F0}, {0x1F5FA, 0x1F5FF}}},
+      {"Objects", {{0x1F4A0, 0x1F4FF}, {0x1F500, 0x1F579}, {0x1F9E0, 0x1F9FF}, {0x1FA70, 0x1FA7C}, {0x1FA90, 0x1FAAF}}},
+      {"Symbols", {{0x2764, 0x2764}, {0x1F493, 0x1F49F}, {0x2600, 0x27BF}, {0x2B00, 0x2BFF}, {0x1F7E0, 0x1F7EB}}},
+    };
+    f32_t cell = gui::get_frame_height() * 1.25f;
+    auto grid = [&](const std::vector<std::uint32_t>& codes) {
+      f32_t width = gui::get_content_region_avail().x;
+      int columns = std::max(1, (int)(width / cell));
+      int index = 0;
+      auto* list = gui::get_window_draw_list();
+      for (std::uint32_t code : codes) {
+        if (index % columns != 0) {
+          gui::same_line(0, 0);
+        }
+        ++index;
+        std::string emoji = utf8_of_codepoint(code);
+        fan::vec2 at = gui::get_cursor_screen_pos();
+        gui::push_id((int)code);
+        bool clicked = gui::invisible_button("##emoji", fan::vec2(cell, cell));
+        gui::pop_id();
+        if (gui::is_item_hovered()) {
+          list->AddRectFilled(at, at + fan::vec2(cell, cell), gui::widget_palette.surface_hover, 6.f);
+          for (const auto& [name, value] : emoji_shortcodes()) {
+            if (value == code) {
+              gui::set_tooltip(std::string(":") + name + ":");
+              break;
+            }
+          }
+        }
+        fan::vec2 text = gui::calc_text_size(emoji);
+        list->AddText(at + (fan::vec2(cell, cell) - text) * 0.5f, 0xffffffffu, emoji.c_str());
+        if (clicked) {
+          chat_input += emoji;
+          // the newest first, each once, the last 24
+          recent_emojis.erase(std::remove(recent_emojis.begin(), recent_emojis.end(), code), recent_emojis.end());
+          recent_emojis.insert(recent_emojis.begin(), code);
+          if (recent_emojis.size() > 24) {
+            recent_emojis.resize(24);
+          }
+          fan::json saved = fan::json::array();
+          for (std::uint32_t value : recent_emojis) {
+            saved.push_back(value);
+          }
+          write_to_config("recent_emojis", saved);
+        }
+      }
+    };
+    if (!recent_emojis.empty()) {
+      gui::text_disabled("Recent");
+      grid(recent_emojis);
+      gui::separator();
+    }
+    if (gui::begin_tab_bar("##emoji_categories")) {
+      for (const auto& category : categories) {
+        if (gui::begin_tab_item(category.name)) {
+          // only what the font has: codes in a range without an emoji, or one this font size doesn't carry, are left out
+          std::vector<std::uint32_t> codes;
+          for (const auto& [first, last] : category.ranges) {
+            for (std::uint32_t code = first; code <= last; ++code) {
+              if (gui::has_glyph(code)) {
+                codes.push_back(code);
+              }
+            }
+          }
+          gui::begin_child("##emoji_grid", fan::vec2(0, 0), false);
+          grid(codes);
+          gui::end_child();
+          gui::end_tab_item();
+        }
+      }
+      gui::end_tab_bar();
+    }
+    gui::end_popup();
+  }
+
 void render_thread_t::ecps_gui_t::render_phone_upload_popup() {
     if (phone_upload_popup_requested) {
       phone_upload_popup_requested = false;
@@ -351,6 +452,25 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
       });
     }
     gui::same_line();
+    // the emoji picker: a face in the button, a grid of emojis in the popup, a click adds one to the message
+    {
+      f32_t size = gui::get_frame_height();
+      fan::vec2 at = gui::get_cursor_screen_pos();
+      if (gui::invisible_button("##chat_emoji", fan::vec2(size, size))) {
+        gui::open_popup("##emoji_picker");
+      }
+      bool hovered = gui::is_item_hovered();
+      if (hovered) {
+        gui::set_tooltip("Emojis (or type :fire:, :thumbsup:, :joy: ...)");
+      }
+      auto* list = gui::get_window_draw_list();
+      list->AddRectFilled(at, at + fan::vec2(size, size), hovered ? gui::widget_palette.surface_hover : gui::widget_palette.surface, size * 0.28f);
+      std::string face = utf8_of_codepoint(0x1F600);
+      fan::vec2 text = gui::calc_text_size(face);
+      list->AddText(at + (fan::vec2(size, size) - text) * 0.5f, 0xffffffffu, face.c_str());
+      render_emoji_picker();
+    }
+    gui::same_line();
     f32_t send_width = gui::calc_text_size("Send").x + gui::get_style().FramePadding.x * 2;
     gui::push_item_width(gui::get_content_region_avail().x - send_width - gui::get_style().ItemSpacing.x);
 
@@ -412,6 +532,9 @@ void render_thread_t::ecps_gui_t::render_chat_tab(ecps_backend_t::Protocol_Chann
 
     gui::same_line();
     bool send = gui::button("Send##chat_send");
+    if (enter || send) {
+      chat_input = chat_expand_shortcodes(chat_input);
+    }
     bool has_text = chat_has_text_content(chat_input);
     if (editing && (enter || send) && has_text) {
       // new words for the message that was picked. Nothing left in it is the Delete button's job
