@@ -178,17 +178,11 @@ struct updater_t {
         }
         notice_text += " to " + (now_running.empty() ? std::string("v") + ecps_version : now_running);
         notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-        // from a version number (not the commits of a Nix build): what changed, from the releases' notes
+        // from a version number (not the commits of a Nix build): About lists what changed since it
         std::string from = previous.size() > 1 && (previous[0] == 'v' || previous[0] == 'V') ? previous.substr(1) : previous;
         if (!from.empty() && from.find_first_not_of("0123456789.") == std::string::npos && is_newer(ecps_version, from)) {
-          std::thread([this, from] {
-            std::string body = run_capture(std::string("curl -fsSL --max-time 15 \"") + releases_url + "\"", 8 << 20);
-            auto found = parse_changes(body, from, ecps_version);
-            std::lock_guard<std::mutex> lock(mutex);
-            brought_changes = std::move(found);
-            brought_from = from;
-            show_brought_changes = !brought_changes.empty();
-          }).detach();
+          std::lock_guard<std::mutex> lock(mutex);
+          brought_from = from;
         }
       }
     }
@@ -545,7 +539,30 @@ struct updater_t {
     from = brought_from;
     return brought_changes;
   }
-  std::atomic<bool> show_brought_changes{false};
+  // the About panel, when it opens: reads the releases' notes once. After an update restart the changes since the old
+  // version, else the newest few up to this one
+  void load_changes() {
+    if (changes_requested.exchange(true)) {
+      return;
+    }
+    std::thread([this] {
+      std::string from;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        from = brought_from;
+      }
+      std::string body = run_capture(std::string("curl -fsSL --max-time 15 \"") + releases_url + "\"", 8 << 20);
+      auto found = parse_changes(body, from.empty() ? std::string("0") : from, ecps_version);
+      if (from.empty() && found.size() > 5) {
+        found.resize(5);
+      }
+      std::lock_guard<std::mutex> lock(mutex);
+      brought_changes = std::move(found);
+      changes_loaded = true;
+    }).detach();
+  }
+  std::atomic<bool> changes_requested{false};
+  std::atomic<bool> changes_loaded{false};
 
 private:
   // ---- reading nix's JSON log: each activity (a download, copying paths, a build) with how far it is

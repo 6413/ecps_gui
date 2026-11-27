@@ -295,6 +295,22 @@ struct top_bar_t {
     gui::text(std::string("ECPS v") + ecps_version + (ecps_update_marker[0] ? std::string(" [") + ecps_update_marker + "]" : std::string()));
     std::string build = updater.build_short();
     gui::text_wrapped_disabled(build.empty() ? updater.build_label() : build);
+    // what this version changed, from the GitHub releases' notes: since the old version after an update
+    updater.load_changes();
+    {
+      std::string from;
+      auto changes = updater.brought(from);
+      if (!changes.empty()) {
+        gui::spacing();
+        gui::text(from.empty() ? std::string("Recent changes") : "Changes from v" + from + " to v" + ecps_version);
+        gui::push_id("current_changes");
+        render_release_notes(changes, 260.f);
+        gui::pop_id();
+      }
+      else if (!updater.changes_loaded.load()) {
+        gui::text_disabled("Loading changes...");
+      }
+    }
     gui::separator();
 
     switch (updater.state.load()) {
