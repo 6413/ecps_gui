@@ -55,6 +55,11 @@ struct updater_t {
 
   // set by the UI: JSON of what the new process should pick up again (channels, tab, switches)
   std::function<std::string()> collect_state;
+  // set by the app: lets go of the GPU (the video encoder and decoder) and the audio devices before the old process
+  // ends. Killed with them open, the NVIDIA driver had to tear them down itself and reset its video engine, which can
+  // freeze or crash a game running on the same GPU. Windows calls it once the new version is started, Linux just
+  // before it replaces itself
+  std::function<void()> before_restart;
 
   static constexpr bool can_install = true;
   static constexpr bool windows =
@@ -403,6 +408,9 @@ struct updater_t {
         out << state;
       }
     }
+    if (before_restart) {
+      before_restart();
+    }
     // the new process must not inherit our capture pipes, nobody would read them
     log_capture().restore();
     execl(binary.c_str(), binary.c_str(), (char*)nullptr);
@@ -436,6 +444,9 @@ struct updater_t {
     if (CreateProcessW(exe.wstring().c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
       CloseHandle(pi.hThread);
       CloseHandle(pi.hProcess);
+      if (before_restart) {
+        before_restart();
+      }
       log_capture().restore();
       TerminateProcess(GetCurrentProcess(), 0);
     }

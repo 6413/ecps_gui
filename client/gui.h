@@ -128,6 +128,20 @@ struct ecps_gui_t {
       }
       return collect_resume_state();
     };
+    updater.before_restart = []() {
+      // the encode and decode threads stop first, nothing may be in the middle of using what is closed below
+      stop_worker_threads();
+      audio_share.capture.stop();
+      audio_share.player.stop();
+      voice_chat.capture.stop();
+      voice_chat.mixer.stop();
+      if (auto* rt = render_thread_ptr.load(std::memory_order_acquire)) {
+        close_capture(rt->screen_encoder);
+        rt->screen_encoder.encoder_.close();
+        rt->screen_decoder.close();
+      }
+      fan::print("update: closed the video encoder, decoder and audio before restarting");
+    };
     load_resume_state();
 
     if (config.contains("camera")) {
