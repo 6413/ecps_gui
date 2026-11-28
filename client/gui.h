@@ -451,8 +451,10 @@ struct ecps_gui_t {
     if (auto* rt = get_render_thread()) {
       rt->screen_encoder.set_camera(stream_settings.share_camera, stream_settings.camera_device);
     }
+    push_theme();
     render_shortcuts();
     render_update_toast();
+    pop_theme();
     // sharing shows in the window's title too, so it's seen from the taskbar
     if (bool live = ecps_backend.is_streaming_to_any_channel(); live != title_live) {
       title_live = live;
@@ -469,10 +471,13 @@ struct ecps_gui_t {
       return;
     }
 
+    // these popups are drawn outside the panels' theme scope: without it they came out in the plain grey default
+    push_theme();
     drop_down_server.render();
     render_file_offers();
     render_file_drop();
     render_username_popup();
+    pop_theme();
 
     gui::set_next_window_pos(0);
     gui::set_next_window_size(gui::get_io().DisplaySize);
