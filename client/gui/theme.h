@@ -397,7 +397,8 @@
   f32_t preview_fraction = 1.f;
   bool preview_resizing = false;
 
-  void draw_resizable_preview(fan::graphics::image_t image, fan::vec2 image_size);
+  // with_drawings: the lines viewers draw on this client's own shared screen go over it
+  void draw_resizable_preview(fan::graphics::image_t image, fan::vec2 image_size, bool with_drawings = false);
 
 
   // ---- building blocks of the settings panel ---------------------------------------------------------------

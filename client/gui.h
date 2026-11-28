@@ -108,6 +108,7 @@ struct ecps_gui_t {
         encode_on_gpu = ui.value("encode_on_gpu", true);
         video_codec = std::clamp(ui.value("video_codec", 2), 0, 2);
         sharp_text = ui.value("sharp_text", false);
+        draw_overlay = ui.value("draw_overlay", false);
         lossless = ui.value("lossless", false);
         decode_on_gpu = ui.value("decode_on_gpu", true);
   // phone upload is out of the window: a saved "on" no longer starts its page
@@ -239,6 +240,7 @@ struct ecps_gui_t {
   #include "gui/remote.h"
 
   #include "gui/stream_overlay.h"
+  #include "gui/pen.h"
 
   #include "gui/capture_preview.h"
   #include "gui/capture.h"

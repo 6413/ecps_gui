@@ -194,6 +194,8 @@ struct Channel_ScreenShare_Data_t{
   };
   std::vector<ChatPinned_t> ChatPinned;
   std::vector<uint32_t> ChatAware;
+  /* the sessions that asked for the drawings (Channel_Draw with a Hello) */
+  std::vector<uint32_t> DrawAware;
   uint32_t ChatNextId = 1;
   /* the channel's password is not kept, only a keyed hash of it */
   bool HasPassword = false;

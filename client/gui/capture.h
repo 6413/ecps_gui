@@ -612,6 +612,24 @@
     // an HDR screen is tone mapped for sharing, how bright that comes out is up to taste and differs per game
     capture.hdr_exposure = hdr_exposure;
     gui::settings_switch("Preview", &preview_own_share, "See what you share");
+#if defined(_WIN32)
+    if (gui::settings_switch("Drawings on my screen", &draw_overlay,
+      "Lines the viewers draw show on your screen too, over everything, and fade after a few seconds. "
+      "They are not in what you share")) {
+      save_ui_config();
+    }
+#endif
+    // the one sharing may wipe what was drawn on its screen
+    if (!ecps_backend.draw_strokes_of((std::uint32_t)ecps_backend.session_id.i).empty()) {
+      for (const auto& channel : ecps_backend.channel_info) {
+        if (channel.is_streaming && ecps_backend.draw_known(channel.channel_id)) {
+          if (gui::button("Clear drawings##own_drawings")) {
+            pen_clear(channel.channel_id, (std::uint32_t)ecps_backend.session_id.i);
+          }
+          break;
+        }
+      }
+    }
     capture_preview_wanted = preview_own_share;
     if (preview_own_share) {
       render_preview_fps();

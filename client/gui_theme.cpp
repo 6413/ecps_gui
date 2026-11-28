@@ -668,7 +668,10 @@ void render_thread_t::ecps_gui_t::draw_background_image() {
       if (window.x <= 0.f || window.y <= 0.f || image.x <= 0.f || image.y <= 0.f) {
         return;
       }
-      background_view.set(fan::vec2(0, window.x), fan::vec2(0, window.y), fan::vec2(0, 0), window, window);
+      // its own viewport by number: render_view_t::set moves the engine's current one, this one kept the window
+      // size it had when the video was loaded
+      fan::graphics::camera_set_ortho(background_view.camera, fan::vec2(0, window.x), fan::vec2(0, window.y));
+      fan::graphics::viewport_set(background_view.viewport, fan::vec2(0, 0), window);
       // cover the window: the sides that don't fit are cropped. The planes are as wide as their rows in memory
       // (stride), the picture is the left part of that
       f32_t scale = std::max(window.x / image.x, window.y / image.y);
@@ -933,7 +936,7 @@ void render_thread_t::ecps_gui_t::pop_theme() {
     gui::pop_style_var(theme_vars_pushed);
   }
 
-void render_thread_t::ecps_gui_t::draw_resizable_preview(fan::graphics::image_t image, fan::vec2 image_size) {
+void render_thread_t::ecps_gui_t::draw_resizable_preview(fan::graphics::image_t image, fan::vec2 image_size, bool with_drawings) {
     if (image_size.x <= 0 || image_size.y <= 0) {
       return;
     }
@@ -942,6 +945,9 @@ void render_thread_t::ecps_gui_t::draw_resizable_preview(fan::graphics::image_t 
     fan::vec2 size(width, width * image_size.y / image_size.x);
     fan::vec2 at = gui::get_cursor_screen_pos();
     gui::image(image, size);
+    if (with_drawings) {
+      draw_strokes(gui::get_window_draw_list(), at, size, (std::uint32_t)ecps_backend.session_id.i);
+    }
 
     f32_t grip = 16.f;
     gui::set_cursor_screen_pos(at + size - fan::vec2(grip, grip));

@@ -353,6 +353,12 @@ inline struct ecps_backend_t {
     channel_sessions.clear();
     channel_list_received = false;
     session_id = {};
+    {
+      // the new connection has to ask for the drawings again
+      std::lock_guard<std::mutex> lock(draw_mutex);
+      draw_channels.clear();
+      draw_strokes.clear();
+    }
     udp_crypto = {};
 
     if (!task_supervisor.valid()) {
@@ -723,6 +729,8 @@ inline struct ecps_backend_t {
     voice_probes.set((std::uint32_t)channel_id.i, 0, 5);
     chat_probes.set((std::uint32_t)channel_id.i, 0,
       Protocol_MessageTraits::retries<ProtocolUDP::C2S_t::Channel_Chat_Probe_t>());
+    draw_probes.set((std::uint32_t)channel_id.i, 0,
+      Protocol_MessageTraits::retries<ProtocolUDP::C2S_t::Channel_Draw_t>());
     view_need_keyframe = true;
     co_await send_idr_request(channel_id);
     did_just_join = !is_own_channel;
@@ -743,6 +751,7 @@ inline struct ecps_backend_t {
   // voice and chat are optional too: a server that ignores the probe is left alone after a few tries
   fan::retry_until_known_t<std::uint32_t, std::uint8_t> voice_probes;
   fan::retry_until_known_t<std::uint32_t, std::uint8_t> chat_probes;
+  fan::retry_until_known_t<std::uint32_t, std::uint8_t> draw_probes;
   void channel_rename(Protocol_ChannelID_t channel_id, std::string name) {
     name = trim_password(name);
     if (name.size() > 31) {
@@ -870,6 +879,10 @@ inline struct ecps_backend_t {
       chat_live.erase((std::uint32_t)channel_id.i);
     }
     {
+      std::lock_guard<std::mutex> lock(draw_mutex);
+      draw_channels.erase((std::uint32_t)channel_id.i);
+    }
+    {
       std::lock_guard<std::mutex> lock(voice_mutex);
       voice_members.erase((std::uint32_t)channel_id.i);
       voice_muted.erase((std::uint32_t)channel_id.i);
@@ -971,6 +984,20 @@ inline struct ecps_backend_t {
       rest.ChannelSessionID = channel->session_id;
       co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Chat_Probe, rest, nullptr, 0);
     }
+    for (auto id : draw_probes.due(
+      [&](std::uint32_t id, auto&) { return draw_known(channel_id_of(id)); },
+      [&](std::uint32_t id, auto&) { return channel_confirmed(channel_id_of(id)); })) {
+      auto* channel = find_channel(channel_id_of(id));
+      if (!channel) {
+        continue;
+      }
+      ProtocolUDP::C2S_t::Channel_Draw_t rest;
+      std::memset(&rest, 0, sizeof(rest));
+      rest.ChannelID = channel->channel_id;
+      rest.ChannelSessionID = channel->session_id;
+      rest.Flags = Protocol::DrawFlag_Hello;
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Draw, rest, nullptr, 0);
+    }
   }
 
   // ---- chat -----------------------------------------------------------------------------------------------------
@@ -1049,6 +1076,117 @@ inline struct ecps_backend_t {
     chat_history_revision.store(chat_revision.load());
   }
   std::atomic<std::uint64_t> chat_history_revision{0};
+
+  // ---- drawing on a shared screen ---------------------------------------------------------------------------------
+  // Lines viewers draw on the screen they watch, seen by everyone watching it and by the one sharing it. They fade
+  // a few seconds after the last piece came. Written by the network thread and the gui, read by the gui
+  struct draw_stroke_t {
+    std::uint32_t from = 0;
+    std::uint32_t source = 0;
+    std::uint32_t id = 0;
+    std::uint32_t color = 0; // RGBA, red in the lowest byte
+    f32_t width = 4;         // pixels on a screen 1080 high
+    // one piece each, 0..1 across the screen; each starts where the one before ended
+    std::vector<std::vector<fan::vec2>> parts;
+    std::int64_t last_ms = 0;
+  };
+  static constexpr std::int64_t draw_keep_ms = 6000;
+  static constexpr std::int64_t draw_fade_ms = 1500;
+  mutable std::mutex draw_mutex;
+  // channels whose server answered the Hello
+  std::unordered_set<std::uint32_t> draw_channels;
+  std::vector<draw_stroke_t> draw_strokes;
+  // goes up with every change, the overlay window redraws when it moved
+  std::atomic<std::uint64_t> draw_revision{0};
+
+  static std::int64_t draw_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+  bool draw_known(Protocol_ChannelID_t channel_id) const {
+    std::lock_guard<std::mutex> lock(draw_mutex);
+    return draw_channels.contains((std::uint32_t)channel_id.i);
+  }
+  void on_draw_known(Protocol_ChannelID_t channel_id) {
+    std::lock_guard<std::mutex> lock(draw_mutex);
+    draw_channels.insert((std::uint32_t)channel_id.i);
+  }
+  // a piece of a line, or a Clear that wipes everything on Source's screen
+  void on_draw_piece(std::uint32_t from, std::uint32_t source, std::uint32_t id, std::uint32_t color, f32_t width,
+    std::uint8_t flags, std::vector<fan::vec2> points) {
+    std::lock_guard<std::mutex> lock(draw_mutex);
+    draw_revision.fetch_add(1);
+    if (flags & Protocol::DrawFlag_Clear) {
+      std::erase_if(draw_strokes, [&](const auto& stroke) { return stroke.source == source; });
+      return;
+    }
+    if (points.empty()) {
+      return;
+    }
+    std::int64_t now = draw_now_ms();
+    for (auto& stroke : draw_strokes) {
+      if (stroke.from == from && stroke.source == source && stroke.id == id) {
+        stroke.parts.push_back(std::move(points));
+        stroke.last_ms = now;
+        return;
+      }
+    }
+    draw_stroke_t stroke;
+    stroke.from = from;
+    stroke.source = source;
+    stroke.id = id;
+    stroke.color = color;
+    stroke.width = std::clamp(width, 1.f, 40.f);
+    stroke.parts.push_back(std::move(points));
+    stroke.last_ms = now;
+    draw_strokes.push_back(std::move(stroke));
+    if (draw_strokes.size() > 300) {
+      draw_strokes.erase(draw_strokes.begin());
+    }
+  }
+  // the lines on Source's screen, the faded ones dropped
+  std::vector<draw_stroke_t> draw_strokes_of(std::uint32_t source) {
+    std::lock_guard<std::mutex> lock(draw_mutex);
+    std::int64_t now = draw_now_ms();
+    std::erase_if(draw_strokes, [&](const auto& stroke) { return now - stroke.last_ms > draw_keep_ms + draw_fade_ms; });
+    std::vector<draw_stroke_t> out;
+    for (const auto& stroke : draw_strokes) {
+      if (stroke.source == source) {
+        out.push_back(stroke);
+      }
+    }
+    return out;
+  }
+  // how strongly a line still shows, 1 until it starts to fade
+  static f32_t draw_alpha(const draw_stroke_t& stroke, std::int64_t now) {
+    std::int64_t age = now - stroke.last_ms - draw_keep_ms;
+    return age <= 0 ? 1.f : std::max(0.f, 1.f - (f32_t)age / draw_fade_ms);
+  }
+  // over udp: a lost piece leaves a gap in the line. A Clear goes three times
+  fan::event::task_t send_draw(Protocol_ChannelID_t channel_id, std::uint32_t source, std::uint32_t id,
+    std::uint32_t color, std::uint8_t width, std::uint8_t flags, std::vector<fan::vec2> points) {
+    auto* channel = find_channel(channel_id);
+    if (!channel || !draw_known(channel_id)) {
+      co_return;
+    }
+    ProtocolUDP::C2S_t::Channel_Draw_t rest;
+    std::memset(&rest, 0, sizeof(rest));
+    rest.ChannelID = channel->channel_id;
+    rest.ChannelSessionID = channel->session_id;
+    rest.Source = Protocol_SessionID_t((Protocol_SessionID_t::Type)source);
+    rest.StrokeID = id;
+    rest.Color = color;
+    rest.Width = width;
+    rest.Flags = flags;
+    std::size_t count = std::min(points.size(), Protocol::DrawPointsMax);
+    rest.Count = (std::uint8_t)count;
+    for (std::size_t i = 0; i < count; ++i) {
+      rest.Points[i * 2] = (std::uint16_t)std::lround(std::clamp(points[i].x, 0.f, 1.f) * 65535.f);
+      rest.Points[i * 2 + 1] = (std::uint16_t)std::lround(std::clamp(points[i].y, 0.f, 1.f) * 65535.f);
+    }
+    for (int i = 0, copies = (flags & Protocol::DrawFlag_Clear) ? 3 : 1; i < copies; ++i) {
+      co_await udp_write(0, ProtocolUDP::C2S_t::Channel_Draw, rest, nullptr, 0);
+    }
+  }
   // only into a channel whose server answered the probe, an older one would close the connection
   fan::event::task_t send_chat(Protocol_ChannelID_t channel_id, std::string text) {
     auto* channel = find_channel(channel_id);

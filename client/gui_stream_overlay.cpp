@@ -157,6 +157,7 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
           fan::number_text(debug_sample.decoded_fps, 0) + " fps. Click for the stats");
       }
     }
+    render_pen_button(frame_height);
     // as wide as the text needs, a fixed width cut the label off. It sits between the left and right icons: centred
     // when there is room, else moved aside, shortened to "Share", or only its icon, so it never covers them
     f32_t left_end = gui::get_item_rect_max().x - area_pos.x + 8.f;

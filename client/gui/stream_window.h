@@ -204,6 +204,7 @@
       This->network_frame_helper.setup_network_frame(stream_area, true);
       This->render_fps_counter(stream_area.x);
       This->draw_host_cursor();
+      This->draw_pen();
 
       gui::pop_style_var(5);
 

@@ -635,6 +635,18 @@ static bool udp_read_one() {
     ScreenShare_ChatChange(RestPacket->ChannelID, SessionID, RestPacket->MessageId, RestPacket->Text, RestPacket->Length);
     break;
   }
+  case ProtocolUDP::C2S_t::Channel_Draw: {
+    auto RestPacket = (ProtocolUDP::C2S_t::Channel_Draw_t*)&BasePacket[1];
+    IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);
+    if (RestPacketSize < sizeof(*RestPacket)) {
+      break;
+    }
+    if (IsAnythingInvalid(SessionID, RestPacket->ChannelID, RestPacket->ChannelSessionID) == true) {
+      break;
+    }
+    ScreenShare_Draw(RestPacket->ChannelID, SessionID, *RestPacket);
+    break;
+  }
   case ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest: {
     auto RestPacket = (ProtocolUDP::C2S_t::Channel_ScreenShare_RecoveryRequest_t*)&BasePacket[1];
     IO_size_t RestPacketSize = size - sizeof(ProtocolUDP::BasePacket_t);

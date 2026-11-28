@@ -365,6 +365,24 @@ ecps_backend_t::ecps_backend_t() {
     co_return;
   };
 
+  s2c(Channel_Draw) {
+    s2c_read(Channel_Draw);
+    if (!backend.is_channel_joined(msg->ChannelID)) {
+      co_return;
+    }
+    if (msg->Flags & Protocol::DrawFlag_Hello) {
+      backend.on_draw_known(msg->ChannelID);
+      co_return;
+    }
+    std::vector<fan::vec2> points;
+    for (std::size_t i = 0; i < std::min<std::size_t>(msg->Count, Protocol::DrawPointsMax); ++i) {
+      points.push_back(fan::vec2(msg->Points[i * 2] / 65535.f, msg->Points[i * 2 + 1] / 65535.f));
+    }
+    backend.on_draw_piece((std::uint32_t)msg->From.i, (std::uint32_t)msg->Source.i, msg->StrokeID, msg->Color,
+      (f32_t)msg->Width, msg->Flags, std::move(points));
+    co_return;
+  };
+
   s2c(Channel_Chat_History_End) {
     s2c_read(Channel_Chat_History_End);
     if (backend.is_channel_joined(msg->ChannelID)) {

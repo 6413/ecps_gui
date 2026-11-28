@@ -1177,6 +1177,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
         }
         gui_ptr->render_fps_counter(size.x);
         gui_ptr->draw_host_cursor();
+        gui_ptr->draw_pen();
 
         if (rt->network_frame.get_image() == engine.default_texture) {
           gui_ptr->render_stream_empty_hint(stream_area);

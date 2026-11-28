@@ -137,6 +137,6 @@
     if (!capture_preview_image.valid() || capture_preview_shown_size.x <= 0) {
       return false;
     }
-    draw_resizable_preview(capture_preview_image, capture_preview_shown_size);
+    draw_resizable_preview(capture_preview_image, capture_preview_shown_size, true);
     return true;
   }

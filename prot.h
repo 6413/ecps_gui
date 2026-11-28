@@ -156,6 +156,11 @@ struct Protocol {
   static constexpr std::size_t ChatTextMax = 1024;
   // the messages a channel keeps for those who join later
   static constexpr std::size_t ChatHistoryMax = 100;
+  // drawing on a shared screen: the points in one Channel_Draw, and what its Flags mean
+  static constexpr std::size_t DrawPointsMax = 32;
+  static constexpr uint8_t DrawFlag_End = 1;   /* the line ends with this piece */
+  static constexpr uint8_t DrawFlag_Clear = 2; /* wipes every drawing on the screen */
+  static constexpr uint8_t DrawFlag_Hello = 4; /* asks for the drawings, and the server's answer to that */
   enum class LoginType_t : uint8_t {
     Anonymous
   };
@@ -222,6 +227,21 @@ struct ProtocolUDP {
       uint16_t Length;
       char Text[Protocol::ChatTextMax];
     );
+    /* a piece of a line drawn on the screen of Source (the one this client watches, or its own), or a Clear. Points
+       are X, Y pairs that run 0..65535 across the screen, each piece starts where the one before ended so a lost
+       one leaves only a gap. Count 0 with DrawFlag_Hello asks to get the drawings: the server answers with a Hello
+       and sends them from then on. An older server ignores it, the client then shows no pen */
+    __dme(Channel_Draw,
+      Protocol_ChannelID_t ChannelID;
+      Protocol_ChannelSessionID_t ChannelSessionID;
+      Protocol_SessionID_t Source;
+      uint32_t StrokeID;
+      uint32_t Color; /* RGBA, red in the lowest byte */
+      uint8_t Width;  /* pixels on a screen 1080 high */
+      uint8_t Flags;
+      uint8_t Count;
+      uint16_t Points[Protocol::DrawPointsMax * 2];
+    );
   }C2S;
   struct S2C_t : __dme_inherit(S2C_t) {
     __dme(KeepAlive);
@@ -250,6 +270,7 @@ struct Protocol_MessageTraits {
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Rename_t>) return 10;
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Delete_t>) return 10;
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Change_t>) return 10;
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Draw_t>) return 5;
     else return 0;
   }
   template <typename Message>
@@ -262,6 +283,7 @@ struct Protocol_MessageTraits {
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Rename_t>) return "Channel_Rename";
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Delete_t>) return "Channel_Delete";
     else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Chat_Change_t>) return "Channel_Chat_Change";
+    else if constexpr (std::is_same_v<Message, ProtocolUDP::C2S_t::Channel_Draw_t>) return "Channel_Draw";
     else return "";
   }
 };
@@ -717,6 +739,19 @@ struct Protocol_S2C_t : __dme_inherit(Protocol_S2C_t, S2C_callback_t) {
     Protocol_ChannelID_t ChannelID;
     uint8_t Count;
     Protocol_SessionID_t Members[16];
+  );
+  /* a piece of a line From drew on the screen of Source (see ProtocolUDP's Channel_Draw), to those watching that
+     screen and to Source itself. Only to sessions that sent a Hello, the answer to which is a Hello too */
+  __dme(Channel_Draw,
+    Protocol_ChannelID_t ChannelID;
+    Protocol_SessionID_t From;
+    Protocol_SessionID_t Source;
+    uint32_t StrokeID;
+    uint32_t Color;
+    uint8_t Width;
+    uint8_t Flags;
+    uint8_t Count;
+    uint16_t Points[Protocol::DrawPointsMax * 2];
   );
 };
 

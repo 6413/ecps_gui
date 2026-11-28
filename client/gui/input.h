@@ -43,7 +43,7 @@
   void double_click_fullscreen() {
     auto rt = get_render_thread();
     bool stream_shown = is_fullscreen_stream || window_handler.current_tab == 1;
-    if (!rt || !stream_shown || input_forward.captured || !gui::is_mouse_double_clicked(0) ||
+    if (!rt || !stream_shown || input_forward.captured || pen_on || !gui::is_mouse_double_clicked(0) ||
       gui::is_any_item_hovered() || gui::is_any_popup_open() || rt->network_frame.get_image() == engine.default_texture) {
       return;
     }
@@ -61,7 +61,8 @@
   void forward_input() {
     auto rt = get_render_thread();
     bool stream_shown = is_fullscreen_stream || window_handler.current_tab == 1;
-    if (!rt || !stream_shown || !can_control_host() || rt->network_frame.get_image() == engine.default_texture) {
+    // while the pen is on the mouse draws, the host gets nothing
+    if (!rt || !stream_shown || pen_on || !can_control_host() || rt->network_frame.get_image() == engine.default_texture) {
       release_host_input();
       return;
     }
@@ -151,6 +152,7 @@
     }
     double_click_fullscreen();
     forward_input();
+    update_pen_overlay();
     update_channel_flags();
     update_host_cursor();
     update_username();

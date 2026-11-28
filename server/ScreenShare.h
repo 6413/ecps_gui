@@ -216,6 +216,7 @@ void ScreenShare_VoiceQuit(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t 
   uint32_t Id = (uint32_t)SessionID.i;
   /* leaving the channel ends its chat for this session too */
   std::erase(ChannelData->ChatAware, Id);
+  std::erase(ChannelData->DrawAware, Id);
   std::erase(ChannelData->VoiceAware, Id);
   std::erase(ChannelData->VoiceMutedAware, Id);
   if(std::erase(ChannelData->VoiceMuted, Id) != 0){
@@ -613,6 +614,60 @@ static void ScreenShare_ChatTrackPin(Channel_ScreenShare_Data_t *ChannelData, co
     std::erase_if(ChannelData->ChatPinned, [Id](const Channel_ScreenShare_Data_t::ChatPinned_t &Pinned){
       return Pinned.Id == Id;
     });
+  }
+}
+
+/* a piece of a line drawn on a screen, or a Clear: to everyone that asked for drawings and watches that screen, and
+   to the one whose screen it is. A Hello only puts the session on the list and is answered */
+void ScreenShare_Draw(Protocol_ChannelID_t ChannelID, Protocol_SessionID_t SessionID, const ProtocolUDP::C2S_t::Channel_Draw_t &Request){
+  auto Channel = &g_pile->ChannelList[ChannelID];
+  if(Channel->Type != Protocol::ChannelType_ScreenShare_e){
+    return;
+  }
+  auto ChannelData = (Channel_ScreenShare_Data_t *)Channel->Buffer;
+  uint32_t Id = (uint32_t)SessionID.i;
+  if(std::find(ChannelData->DrawAware.begin(), ChannelData->DrawAware.end(), Id) == ChannelData->DrawAware.end()){
+    ChannelData->DrawAware.push_back(Id);
+  }
+
+  Protocol_S2C_t::Channel_Draw_t Message;
+  __builtin_memset(&Message, 0, sizeof(Message));
+  Message.ChannelID = ChannelID;
+  Message.From = SessionID;
+  if(Request.Flags & Protocol::DrawFlag_Hello){
+    Message.Source = SessionID;
+    Message.Flags = Protocol::DrawFlag_Hello;
+    Session::WriteCommand(SessionID, 0, Protocol_S2C_t::Channel_Draw, Message);
+    return;
+  }
+  /* only on the screen it watches, or on its own */
+  Protocol_SessionID_t Source = Request.Source;
+  if(Session::IsInvalid(Source) == true || !ScreenShare_IsMember(Source, ChannelID)){
+    return;
+  }
+  if(Source != SessionID && ScreenShare_WatchedSource(SessionID, ChannelID) != Source){
+    return;
+  }
+  if(Request.Count > Protocol::DrawPointsMax){
+    return;
+  }
+  Message.Source = Source;
+  Message.StrokeID = Request.StrokeID;
+  Message.Color = Request.Color;
+  Message.Width = Request.Width;
+  Message.Flags = Request.Flags & (Protocol::DrawFlag_End | Protocol::DrawFlag_Clear);
+  Message.Count = Request.Count;
+  __builtin_memcpy(Message.Points, Request.Points, sizeof(Message.Points));
+
+  for(uint32_t Member : ChannelData->DrawAware){
+    Protocol_SessionID_t Target((Protocol_SessionID_t::Type)Member);
+    if(Target == SessionID || Session::IsInvalid(Target) || !ScreenShare_IsMember(Target, ChannelID)){
+      continue;
+    }
+    if(Target != Source && ScreenShare_WatchedSource(Target, ChannelID) != Source){
+      continue;
+    }
+    Session::WriteCommand(Target, 0, Protocol_S2C_t::Channel_Draw, Message);
   }
 }
 

@@ -14,6 +14,7 @@
     ui["encode_on_gpu"] = encode_on_gpu;
     ui["video_codec"] = video_codec;
     ui["sharp_text"] = sharp_text;
+    ui["draw_overlay"] = draw_overlay;
     ui["lossless"] = lossless;
     ui["decode_on_gpu"] = decode_on_gpu;
   ui["phone_upload"] = phone_upload_enabled;
