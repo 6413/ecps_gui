@@ -879,8 +879,8 @@ void render_thread_t::ecps_gui_t::draw_host_cursor() {
     list->AddTriangleFilled(shape[0], shape[2], shape[5], white);
     list->AddTriangleFilled(shape[0], shape[5], shape[6], white);
     // the tail
-    const ImVec2 tail[] = {shape[2], shape[3], shape[4], shape[5]};
-    list->AddConvexPolyFilled(tail, 4, white);
+    list->AddTriangleFilled(shape[2], shape[3], shape[4], white);
+    list->AddTriangleFilled(shape[2], shape[4], shape[5], white);
     for (const auto& p : shape) {
       list->PathLineTo(p);
     }
