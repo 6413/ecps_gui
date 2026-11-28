@@ -65,11 +65,16 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     f32_t frame_height = gui::get_frame_height();
     f32_t zone = frame_height * 3.f;
 
-    bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
-      io.MousePos.y >= area_pos.y + area_size.y - zone && io.MousePos.y <= area_pos.y + area_size.y;
+    // Moving the mouse anywhere over the stream view shows the bar, and it goes away when the mouse rests a moment.
+    // Resting on the bar itself keeps it, so it doesn't vanish under a button. Moving over the side panels does nothing
+    bool mouse_inside = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
+      io.MousePos.y >= area_pos.y && io.MousePos.y <= area_pos.y + area_size.y;
+    bool mouse_moved = io.MouseDelta.x != 0.f || io.MouseDelta.y != 0.f;
+    bool mouse_on_bar = mouse_inside && io.MousePos.y >= area_pos.y + area_size.y - zone;
+    bool mouse_near = mouse_inside && (mouse_moved || mouse_on_bar);
     auto now = std::chrono::steady_clock::now();
     // opening the side panel or a new unread message shows the bar for a moment, so its icons and the dot are seen,
-    // but doesn't pin it: it goes away again after a while, and comes back when the mouse goes to the bottom
+    // but doesn't pin it: it goes away again after a while, and comes back when the mouse moves over the stream
     bool panel_open = stream_settings.show_in_stream_view;
     bool unread = chat_unread();
     static bool was_panel_open = false;
@@ -370,8 +375,8 @@ void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     }
     else if (!ecps_backend.channel_info.empty()) {
       title = "Nobody is sharing yet";
-      // the toolbar at the bottom has the Share button; it hides until the mouse goes there
-      detail = "Point at the bottom and press Share, or wait for someone else";
+      // the toolbar at the bottom has the Share button; it shows when the mouse moves over this area
+      detail = "Press Share below, or wait for someone else";
     }
     else if (!ecps_backend.connected) {
       title = "Not connected";

@@ -239,8 +239,8 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       if (has_image) {
         gui::same_line(0, 6.f);
         if (gui::button("Remove##theme_background_image")) {
+          // background_image_loaded keeps the old path: emptied too, the two matched and the picture stayed up
           background_image.clear();
-          background_image_loaded.clear();
           refresh_background_image();
           save_theme();
         }
