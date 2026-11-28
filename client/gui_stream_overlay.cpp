@@ -146,13 +146,40 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
           fan::number_text(debug_sample.decoded_fps, 0) + " fps. Click for the stats");
       }
     }
-    // as wide as the text needs, a fixed width cut the label off
+    // as wide as the text needs, a fixed width cut the label off. It sits between the left and right icons: centred
+    // when there is room, else moved aside, shortened to "Share", or only its icon, so it never covers them
+    f32_t left_end = gui::get_item_rect_max().x - area_pos.x + 8.f;
+    f32_t right_start = area_size.x - (frame_height * 4) - 30.f - 8.f;
+    bool compact = false;
     f32_t button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(false));
-    gui::set_cursor_pos(fan::vec2((area_size.x - button_width) / 2, y));
-    stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0));
+    if (button_width > right_start - left_end) {
+      compact = true;
+      button_width = gui::pill_button_width(stream_button_renderer_t::share_button_text(true));
+    }
+    bool icon_only = button_width > right_start - left_end;
+    if (icon_only) {
+      button_width = gui::pill_button_width("");
+    }
+    f32_t button_x = std::clamp((area_size.x - button_width) / 2, left_end, std::max(left_end, right_start - button_width));
+    gui::set_cursor_pos(fan::vec2(button_x, y));
+    if (icon_only) {
+      bool sharing = ecps_backend.is_streaming_to_any_channel();
+      auto target = stream_button_renderer_t::share_target();
+      bool can_share = sharing || target.i != (uint16_t)-1;
+      if (pill_button("##share_toggle", sharing ? icon_e::stop : icon_e::monitor, "",
+        sharing ? 0xff0d0d99u : 0xff1a720du, sharing ? 0xff1212c9u : 0xff269c12u, can_share, button_width, 0.f) && can_share) {
+        stream_button_renderer_t::set_sharing(!sharing);
+      }
+      if (gui::is_item_hovered(gui::hovered_flags_allow_when_disabled)) {
+        gui::set_tooltip(!can_share ? "Join a channel first" : sharing ? "Stop sharing" : "Share screen");
+      }
+    }
+    else {
+      stream_button_renderer_t::render_stream_toggle_button(selected_channel_id, fan::vec2(button_width, 0), compact);
+    }
 
     gui::same_line();
-    gui::set_cursor_pos_x(area_size.x - (frame_height * 4) - 30.f);
+    gui::set_cursor_pos_x(right_start + 8.f);
     render_side_chat_button("##btn_chat", frame_height);
     gui::same_line(0, 8.f);
     render_side_settings_button("##btn_settings", frame_height);

@@ -413,7 +413,8 @@ void render_thread_t::ecps_gui_t::update_auto_join() {
         }
         if (kept) {
           backend_queue([this, id = kept->channel_id]() -> fan::event::task_t {
-            if (auto joined = co_await ecps_expected(ecps_backend.channel_join(id, true)); !joined) {
+            // the server keeps the channel's password too: the one we saved for it, or it asks for it
+            if (auto joined = co_await ecps_expected(ecps_backend.channel_join(id, true, ecps_backend.saved_password(id))); !joined) {
               co_return;
             }
             (void)co_await ecps_expected(ecps_backend.request_channel_list());

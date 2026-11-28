@@ -683,7 +683,8 @@ inline struct ecps_backend_t {
     if (password.empty() && !is_own_channel) {
       password = saved_password(channel_id);
     }
-    if (!password.empty() && !is_own_channel) {
+    // our own channel takes one only when given (the kept one we join back after a restart): a new one has none
+    if (!password.empty()) {
       Protocol_C2S_t::JoinChannelPassword_t rest;
       std::memset(&rest, 0, sizeof(rest));
       rest.ChannelID = channel_id;
