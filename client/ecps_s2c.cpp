@@ -211,7 +211,15 @@ ecps_backend_t::ecps_backend_t() {
   s2c(Channel_ScreenShare_ViewToShare) {
     s2c_read(Channel_ScreenShare_ViewToShare);
     if (backend.is_channel_streaming(msg->ChannelID) && (msg->Flag & ProtocolChannel::ScreenShare::ChannelFlag::ResetIDR)) {
-      encoder_force_keyframe();
+      // A viewer on a lossy link asks up to 4 times a second, and every keyframe is big: sent each time, they lose
+      // more packets, ask again, and the picture pulses for them while the sharer's own preview looks fine. One a
+      // second at most; a viewer still waiting keeps asking, so it gets the next one
+      static auto last_forced = std::chrono::steady_clock::time_point {};
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_forced >= std::chrono::seconds(1)) {
+        last_forced = now;
+        encoder_force_keyframe();
+      }
     }
     co_return;
   };
