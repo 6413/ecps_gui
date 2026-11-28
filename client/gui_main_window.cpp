@@ -1148,7 +1148,10 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_stream_area(cons
           fan::vec2 area_min = gui::get_window_pos();
           fan::vec2 area_max = area_min + size;
           if (rt->network_frame.get_image() == engine.default_texture) {
-            list->AddRectFilled(area_min, area_max, 0xff000000u);
+            // nothing to show: no black box, the background shows through under a panel's tint like the rest of the
+            // window. The theme then draws its background over this area too (it leaves out only a shown picture)
+            gui_ptr->stream_area_shown = false;
+            list->AddRectFilled(area_min, area_max, gui::get_color_u32(gui::col_child_bg));
           }
           else {
             fan::vec2 center = area_min + gui_ptr->network_frame_helper.shown_position;
