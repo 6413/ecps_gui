@@ -101,7 +101,9 @@ struct ecps_gui_t {
         mini_player_size = fan::vec2i(std::clamp((int)ui.value("mini_width", 480.0), 160, 8192),
           std::clamp((int)ui.value("mini_height", 270.0), 90, 8192));
         preview_fraction = std::clamp((f32_t)ui.value("preview_size", 1.0), 0.25f, 1.f);
-        hdr_exposure = std::clamp((f32_t)ui.value("hdr_brightness", 0.8), 0.2f, 2.f);
+        // a new name: the old one was saved by everyone at 0.8, the old default that made a shared HDR screen dark.
+        // 1.0 is the screen as it looks
+        hdr_exposure = std::clamp((f32_t)ui.value("hdr_light", 1.0), 0.2f, 2.f);
         preview_fps = std::clamp((int)ui.value("preview_fps", 5.0), 1, 60);
         encode_on_gpu = ui.value("encode_on_gpu", true);
         video_codec = std::clamp(ui.value("video_codec", 2), 0, 2);

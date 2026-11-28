@@ -9,7 +9,7 @@
     ui["autohide"] = ui_autohide;
     ui["keep_toolbar"] = keep_stream_toolbar;
     ui["preview_size"] = preview_fraction;
-    ui["hdr_brightness"] = hdr_exposure;
+    ui["hdr_light"] = hdr_exposure;
     ui["preview_fps"] = preview_fps;
     ui["encode_on_gpu"] = encode_on_gpu;
     ui["video_codec"] = video_codec;

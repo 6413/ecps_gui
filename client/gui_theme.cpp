@@ -450,7 +450,7 @@ bool render_thread_t::ecps_gui_t::background_video_t::decode_next(rgba_frame_t& 
           break;
         }
         auto decoded = video.decoder.decode_packet(video.packet.data(), video.packet.size(), video.codec_name,
-          true, video.target_size);
+          !video.yuv, video.yuv ? fan::vec2ui(0, 0) : video.target_size);
         video.frames.insert(video.frames.end(), std::make_move_iterator(decoded.begin()), std::make_move_iterator(decoded.end()));
       }
       if (!video.frames.empty()) {
@@ -471,7 +471,7 @@ bool render_thread_t::ecps_gui_t::background_video_t::decode_next(rgba_frame_t& 
         }
       }
       auto decoded = video.decoder.decode_packet(video.packet.data(), video.packet.size(), video.codec_name,
-        true, video.target_size);
+        !video.yuv, video.yuv ? fan::vec2ui(0, 0) : video.target_size);
       if (!decoded.empty()) {
         video.frames.insert(video.frames.end(), std::make_move_iterator(decoded.begin()), std::make_move_iterator(decoded.end()));
       }
@@ -481,7 +481,28 @@ bool render_thread_t::ecps_gui_t::background_video_t::decode_next(rgba_frame_t& 
     }
     auto& frame = video.frames.front();
     out.pixels.clear();
-    if (frame.success && !frame.plane_data.empty()) {
+    out.format = fan::graphics::image_format_e::undefined;
+    if (frame.success && !frame.plane_data.empty() && video.yuv) {
+      std::uint8_t format = fan::graphics::convert_pixel_format(frame.pixel_format);
+      std::size_t planes_needed = format == fan::graphics::image_format_e::nv12 ? 2 : 3;
+      bool usable = (format == fan::graphics::image_format_e::nv12 || format == fan::graphics::image_format_e::yuv420p ||
+        format == fan::graphics::image_format_e::yuv444p) && frame.plane_data.size() >= planes_needed &&
+        !frame.linesize.empty() && frame.linesize[0] > 0;
+      if (!usable) {
+        // a format the shader doesn't take (10 bit video): RGBA from the CPU from here on, as before
+        fan::print("background video: frames in a format the graphics card path can't show, converted on the CPU");
+        video.yuv = false;
+        video.frames.clear();
+        return decode_next(out);
+      }
+      out.format = format;
+      out.size = frame.image_size;
+      out.stride = (std::uint32_t)frame.linesize[0];
+      for (std::size_t i = 0; i < planes_needed; ++i) {
+        out.planes[i] = std::move(frame.plane_data[i]);
+      }
+    }
+    else if (frame.success && !frame.plane_data.empty()) {
       out.pixels = std::move(frame.plane_data[0]);
       out.size = frame.image_size;
     }
@@ -507,7 +528,7 @@ void render_thread_t::ecps_gui_t::background_video_t::start_worker() {
           failed = true;
           return;
         }
-        if (!frame.pixels.empty()) {
+        if (!frame.pixels.empty() || !frame.planes[0].empty()) {
           ready.push_back(std::move(frame));
         }
       }
@@ -515,9 +536,36 @@ void render_thread_t::ecps_gui_t::background_video_t::start_worker() {
   }
 
 void render_thread_t::ecps_gui_t::upload_background_frame(const background_video_t::rgba_frame_t& frame) {
+    if (frame.format != fan::graphics::image_format_e::undefined && !frame.planes[0].empty() && frame.size.x && frame.size.y) {
+      if (!background_view_made) {
+        background_view.create_default(owner->engine.window.get_size());
+        background_view_made = true;
+      }
+      if (!background_shape_made) {
+        // under the stream's picture (depth 1), under the whole gui
+        background_shape = fan::graphics::universal_image_renderer_t{{
+          .render_view = &background_view,
+          .position = fan::vec3(0, 0, 0),
+          .size = fan::vec2(0, 0),
+        }};
+        background_shape_made = true;
+      }
+      std::array<void*, 4> planes {};
+      for (std::size_t i = 0; i < frame.planes.size(); ++i) {
+        planes[i] = frame.planes[i].empty() ? nullptr : (void*)frame.planes[i].data();
+      }
+      background_shape.reload(frame.format, planes.data(), fan::vec2(frame.stride, frame.size.y));
+      background_shape_size = frame.size;
+      background_shape_stride = frame.stride;
+      background_shape_has_frame = true;
+      return;
+    }
     if (frame.pixels.empty() || frame.size.x == 0 || frame.size.y == 0) {
       return;
     }
+    // RGBA after YUV (a 10 bit part): the picture is the texture again
+    background_shape_has_frame = false;
+    hide_background_shape();
     fan::image::info_t info;
     info.data = (void*)frame.pixels.data();
     info.size = fan::vec2i((int)frame.size.x, (int)frame.size.y);
@@ -544,6 +592,8 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
     background_frame_index = 0;
     background_frame_at = {};
     background_video.reset();
+    background_shape_has_frame = false;
+    hide_background_shape();
     background_image_loaded = background_image;
     background_image_failed = false;
     if (background_image.empty()) {
@@ -612,6 +662,32 @@ void render_thread_t::ecps_gui_t::draw_background_image() {
         show_background_frame(background_frame_index);
       }
     }
+    if (background_shape_has_frame && background_shape_made) {
+      fan::vec2 window = owner->engine.window.get_size();
+      fan::vec2 image(background_shape_size);
+      if (window.x <= 0.f || window.y <= 0.f || image.x <= 0.f || image.y <= 0.f) {
+        return;
+      }
+      background_view.set(fan::vec2(0, window.x), fan::vec2(0, window.y), fan::vec2(0, 0), window, window);
+      // cover the window: the sides that don't fit are cropped. The planes are as wide as their rows in memory
+      // (stride), the picture is the left part of that
+      f32_t scale = std::max(window.x / image.x, window.y / image.y);
+      fan::vec2 shown = image * scale;
+      fan::vec2 crop = (shown - window) / shown * 0.5f;
+      fan::vec2 used(image.x / std::max<f32_t>((f32_t)background_shape_stride, image.x), 1.f);
+      background_shape.set_position(fan::vec3(window.x * 0.5f, window.y * 0.5f, 0.f));
+      background_shape.set_size(window * 0.5f);
+      background_shape.set_tc_position(fan::vec2(crop.x * used.x, crop.y));
+      background_shape.set_tc_size(fan::vec2((1.f - 2.f * crop.x) * used.x, 1.f - 2.f * crop.y));
+      background_shape_frame = theme_frame;
+      fan::vec2 origin = gui::get_window_pos();
+      fan::vec2 display = gui::get_io().DisplaySize;
+      f32_t dim = std::clamp(background_image_dim, 0.f, 0.9f);
+      if (dim > 0.f) {
+        gui::get_window_draw_list()->AddRectFilled(origin, origin + display, (std::uint32_t)std::lround(dim * 255.f) << 24);
+      }
+      return;
+    }
     if (!background_image_texture.valid()) {
       return;
     }
@@ -677,7 +753,7 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
       }
     }
     refresh_background_image();
-    if (!glow_image.valid() && !background_image_texture.valid()) {
+    if (!glow_image.valid() && !has_background_picture()) {
       return;
     }
     fan::vec2 display = gui::get_io().DisplaySize;
@@ -711,7 +787,7 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
     auto draw_all = [&] {
       draw_background_image();
       // the lights are for the plain backdrop: over a picture they lightened it, it looked whitish next to the file
-      if (glow_image.valid() && !background_image_texture.valid()) {
+      if (glow_image.valid() && !has_background_picture()) {
         draw_glows();
       }
     };
@@ -745,6 +821,11 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
 void render_thread_t::ecps_gui_t::push_theme() {
     theme_colors_pushed = 0;
     theme_vars_pushed = 0;
+    // the video background is placed while the backdrop is drawn: a frame without it (a full screen stream) hides it
+    if (background_shape_made && background_shape_frame + 1 < theme_frame) {
+      hide_background_shape();
+    }
+    ++theme_frame;
     gui::set_text_outline(text_outline ? 1.f : 0.f, fan::color(0.f, 0.f, 0.f, 0.85f));
     auto color = [this](gui::col_t index, fan::color value) {
       gui::push_style_color(index, value);

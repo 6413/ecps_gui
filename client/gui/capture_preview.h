@@ -5,7 +5,7 @@
   // size the preview is drawn at, each pixel the average of the frame pixels it covers so text stays readable
 
   bool preview_own_share = false;
-  f32_t hdr_exposure = 0.8f;                         // how bright a tone mapped HDR screen comes out (Windows)
+  f32_t hdr_exposure = 1.f;                          // how bright a tone mapped HDR screen comes out (Windows)
   int preview_fps = 5;                               // how often the preview is updated
   std::atomic<bool> capture_preview_wanted {false};
   // set by the encode thread when the shared window closed; the gui stops the share on the next frame

@@ -58,10 +58,17 @@
     std::int64_t packet_pts = 0;
     std::chrono::steady_clock::time_point next_frame;
 
+    // A frame as the decoder gives it (NV12, yuv420p, yuv444p: planes, turned into colours by the GPU when drawn), or
+    // as RGBA for the formats the shader doesn't take (10 bit): format undefined, the pixels in pixels
     struct rgba_frame_t {
       std::vector<std::uint8_t> pixels;
       fan::vec2ui size;
+      std::array<std::vector<std::uint8_t>, 3> planes;
+      std::uint32_t stride = 0;
+      std::uint8_t format = fan::graphics::image_format_e::undefined;
     };
+    // frames come as YUV planes until one comes in a format the shader can't show, RGBA from then on
+    bool yuv = true;
     std::thread worker;
     std::mutex mutex;
     std::condition_variable wake;
@@ -86,6 +93,26 @@
     }
   };
   std::unique_ptr<background_video_t> background_video;
+  // The video background as a picture the engine draws under the whole gui, from the decoder's YUV planes (the
+  // stream's own way): no RGBA conversion on the CPU and a third of the upload. Its own view covers the window
+  fan::graphics::render_view_t background_view;
+  bool background_view_made = false;
+  fan::graphics::universal_image_renderer_t background_shape;
+  bool background_shape_made = false;
+  bool background_shape_has_frame = false;
+  fan::vec2ui background_shape_size;
+  std::uint32_t background_shape_stride = 0;
+  // the gui frame it was last placed in; not placed in a frame (full screen stream, no backdrop drawn): hidden
+  std::uint64_t background_shape_frame = 0;
+  std::uint64_t theme_frame = 0;
+  bool has_background_picture() const {
+    return background_image_texture.valid() || background_shape_has_frame;
+  }
+  void hide_background_shape() {
+    if (background_shape_made) {
+      background_shape.set_size(fan::vec2(0, 0));
+    }
+  }
   // The file picker answers on the main thread, the background lives on the render thread: loading it there freed
   // the playing video's decoder while this thread was decoding with it (a crash on picking an MP4). The path waits
   // here and the render thread takes it on its next frame
