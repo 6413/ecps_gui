@@ -74,6 +74,31 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
         ecps_backend.did_just_join = false;
       }
 
+    #if ecps_flicker_debug
+      {
+        // what the picture is made of changing between frames (size, pixel format, GPU or CPU frame) is a flicker
+        static fan::vec2ui last_size {};
+        static int last_format = -1;
+        static bool last_gpu = false;
+        static auto last_shown = std::chrono::steady_clock::now();
+        auto shown_now = std::chrono::steady_clock::now();
+        bool gpu = shown_frame.gpu_slot >= 0;
+        fan::vec2ui size((uint32_t)shown_frame.image_size.x, (uint32_t)shown_frame.image_size.y);
+        if (size != last_size || (int)shown_frame.pixel_format != last_format || gpu != last_gpu) {
+          ecps_flick("picture now {}x{}, format {}, {} (was {}x{}, format {}, {})", size.x, size.y,
+            (int)shown_frame.pixel_format, gpu ? "GPU frame" : "CPU frame", last_size.x, last_size.y, last_format,
+            last_gpu ? "GPU frame" : "CPU frame");
+          last_size = size;
+          last_format = (int)shown_frame.pixel_format;
+          last_gpu = gpu;
+        }
+        double gap = std::chrono::duration<double, std::milli>(shown_now - last_shown).count();
+        if (gap > 150.0 && gap < 30000.0) {
+          ecps_flick("{:.0f} ms between two shown frames", gap);
+        }
+        last_shown = shown_now;
+      }
+    #endif
       std::array<void*, 4> planes;
       for (size_t i = 0; i < planes.size(); ++i) {
         planes[i] = shown_frame.data[i].empty() ? nullptr : shown_frame.data[i].data();
@@ -116,7 +141,12 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
       static int frames = 0;
       static f32_t slowest_ms = 0.f;
       auto now = std::chrono::steady_clock::now();
-      slowest_ms = std::max(slowest_ms, std::chrono::duration<f32_t, std::milli>(now - last_frame).count());
+      f32_t frame_ms = std::chrono::duration<f32_t, std::milli>(now - last_frame).count();
+      if (frame_ms > 60.f && frame_ms < 30000.f) {
+        ecps_flick("window draw took {:.0f} ms (upload {:.1f} ms, decode {:.1f} ms, smoothed)", frame_ms,
+          stage_times.upload.ms.load(), stage_times.decode.ms.load());
+      }
+      slowest_ms = std::max(slowest_ms, frame_ms);
       last_frame = now;
       ++frames;
       f32_t seconds = std::chrono::duration<f32_t>(now - second_start).count();

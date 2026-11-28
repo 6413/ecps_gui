@@ -156,6 +156,9 @@ void run_encode_thread() {
         ++stats.frames;
         ecps_backend.share_frames_encoded.fetch_add(1, std::memory_order_relaxed);
         stats.bytes += encoded_size;
+        if (rt->ecps_gui.show_own_stream) {
+          ecps_backend.own_preview_pushed_at.store(fan::event::now(), std::memory_order_relaxed);
+        }
         if (rt->ecps_gui.show_own_stream &&
           !decode_queue.push(std::vector<uint8_t>(encoded_data, encoded_data + encoded_size))) {
           rt->screen_encoder.encode_write_flags |= fan::graphics::codec_update_e::force_keyframe;

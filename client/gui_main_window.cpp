@@ -663,6 +663,7 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_details(
                       rt->screen_encoder.encode_write_flags |= codec_update_e::force_keyframe;
                     }
                     else {
+                      ecps_flick("picture cleared: own preview turned off");
                       rt->network_frame.set_image(engine.default_texture);
                     }
                   }
@@ -1122,6 +1123,9 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::process_no_stream_setti
 
       if (ecps_backend.channel_info.empty()) {
         if (auto rt = get_render_thread(); rt) {
+          if (rt->network_frame.get_image() != engine.default_texture) {
+            ecps_flick("picture cleared: in no channel");
+          }
           rt->network_frame.set_image(engine.default_texture);
         }
       }

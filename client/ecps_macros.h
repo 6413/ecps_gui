@@ -19,4 +19,38 @@
     } \
   } while (0)
 
+// "flick:" lines: what a viewer's picture and the buttons over it go through (keyframes asked and sent, the
+// watched sharer changing, frames held back or lost, the picture cleared or stalled, the toolbar shown and hidden),
+// to find why it flickers. Each line has the time in seconds; each call site says at most 10 lines a second and how
+// many more it had. Off with -Decps_flicker_debug=0
+#ifndef ecps_flicker_debug
+  #define ecps_flicker_debug 1
+#endif
+#if ecps_flicker_debug
+  #define ecps_flick(...) do { \
+      static std::chrono::steady_clock::time_point ecps_flick_window_{}; \
+      static int ecps_flick_count_ = 0; \
+      static int ecps_flick_skipped_ = 0; \
+      auto ecps_flick_now_ = std::chrono::steady_clock::now(); \
+      double ecps_flick_t_ = std::chrono::duration<double>(ecps_flick_now_.time_since_epoch()).count(); \
+      ecps_flick_t_ -= (double)((long long)(ecps_flick_t_ / 10000.0)) * 10000.0; \
+      if (ecps_flick_now_ - ecps_flick_window_ >= std::chrono::seconds(1)) { \
+        if (ecps_flick_skipped_ > 0) { \
+          fan::print(fan::format("flick: {:.3f} ({} more lines like the next were left out)", ecps_flick_t_, ecps_flick_skipped_)); \
+        } \
+        ecps_flick_window_ = ecps_flick_now_; \
+        ecps_flick_count_ = 0; \
+        ecps_flick_skipped_ = 0; \
+      } \
+      if (++ecps_flick_count_ <= 10) { \
+        fan::print(fan::format("flick: {:.3f} ", ecps_flick_t_) + fan::format(__VA_ARGS__)); \
+      } \
+      else { \
+        ++ecps_flick_skipped_; \
+      } \
+    } while (0)
+#else
+  #define ecps_flick(...) do {} while (0)
+#endif
+
 #define render_thread get_render_thread()

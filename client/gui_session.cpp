@@ -796,6 +796,8 @@ std::string render_thread_t::ecps_gui_t::session_label(ecps_backend_t::Protocol_
   }
 
 void render_thread_t::ecps_gui_t::set_watch(ecps_backend_t::Protocol_ChannelID_t channel_id, std::uint32_t source) {
+    ecps_flick("watching session {} in channel {} (before: {}session {} in channel {})", source, (int)channel_id.i,
+      watch_active ? "" : "nothing, ", watch_source, watch_channel);
     watch_active = true;
     watch_channel = (std::uint32_t)channel_id.i;
     watch_source = source;
@@ -823,6 +825,9 @@ void render_thread_t::ecps_gui_t::update_stale_picture() {
     auto now = std::chrono::steady_clock::now();
     std::uint64_t decoded = ecps_backend.view_frames_decoded.load();
     if (decoded != picture_frames_seen) {
+      if (picture_stalled) {
+        ecps_flick("picture moving again after {:.0f} ms", std::chrono::duration<double, std::milli>(now - picture_last_frame_at).count());
+      }
       picture_frames_seen = decoded;
       picture_last_frame_at = now;
       picture_stalled = false;
@@ -842,11 +847,16 @@ void render_thread_t::ecps_gui_t::update_stale_picture() {
     // A lag spike (here or at the sharer) keeps the last picture, frozen, instead of going black: it was cleared after
     // 2 s before, and the stream looked like it had stopped. Only a stream that ended, or nothing for 30 s, clears it
     if (!still_live || quiet > std::chrono::seconds(30)) {
+      ecps_flick("picture cleared: {}", !still_live ? "the one watched is not sharing any more" : "no frame for 30 s");
       rt->network_frame.set_image(owner->engine.default_texture);
       picture_stalled = false;
       return;
     }
+    bool was_stalled = picture_stalled;
     picture_stalled = quiet > std::chrono::milliseconds(1500);
+    if (picture_stalled != was_stalled) {
+      ecps_flick("picture {}", picture_stalled ? "stalled: no new frame for 1.5 s" : "moving again");
+    }
     // what comes after a gap refers to frames that never came: a keyframe to start from, asked again every 2 s
     if (picture_stalled && now - picture_stall_idr_at > std::chrono::seconds(2)) {
       picture_stall_idr_at = now;
@@ -940,6 +950,15 @@ void render_thread_t::ecps_gui_t::render_stream_top_overlay() {
       top_overlay_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < top_overlay_visible_until ? 1.f : 0.f;
+  #if ecps_flicker_debug
+    {
+      static f32_t last_target = -1.f;
+      if (target != last_target) {
+        ecps_flick("top picker {} (mouse near {}, picture {})", target > 0.f ? "shown" : "hiding", mouse_near, has_picture);
+        last_target = target;
+      }
+    }
+  #endif
     top_overlay_alpha += (target - top_overlay_alpha) * std::min(1.f, io.DeltaTime * 14.f);
     if (target == 0.f && top_overlay_alpha < 0.02f) {
       top_overlay_alpha = 0.f;

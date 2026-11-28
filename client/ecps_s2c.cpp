@@ -217,8 +217,13 @@ ecps_backend_t::ecps_backend_t() {
       static auto last_forced = std::chrono::steady_clock::time_point {};
       auto now = std::chrono::steady_clock::now();
       if (now - last_forced >= std::chrono::seconds(1)) {
+        ecps_flick("a viewer asked for a keyframe: sending one");
         last_forced = now;
         encoder_force_keyframe();
+      }
+      else {
+        ecps_flick("a viewer asked for a keyframe: not yet, one went {:.0f} ms ago",
+          std::chrono::duration<double, std::milli>(now - last_forced).count());
       }
     }
     co_return;
@@ -375,6 +380,17 @@ ecps_backend_t::ecps_backend_t() {
       streamers.push_back((std::uint32_t)msg->Streamers[i].i);
     }
     std::lock_guard<std::mutex> lock(backend.streamers_mutex);
+  #if ecps_flicker_debug
+    {
+      auto& old = backend.channel_streamers[(std::uint32_t)msg->ChannelID.i];
+      if (old != streamers) {
+        std::string from, to;
+        for (auto s : old) from += " " + std::to_string(s);
+        for (auto s : streamers) to += " " + std::to_string(s);
+        ecps_flick("sharers in channel {}: [{} ] -> [{} ]", (int)msg->ChannelID.i, from, to);
+      }
+    }
+  #endif
     backend.channel_streamers[(std::uint32_t)msg->ChannelID.i] = std::move(streamers);
     co_return;
   };

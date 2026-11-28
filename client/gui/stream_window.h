@@ -271,6 +271,16 @@
         fullscreen_toolbar_visible_until = now + std::chrono::milliseconds(1500);
       }
       f32_t target = now < fullscreen_toolbar_visible_until ? 1.f : 0.f;
+    #if ecps_flicker_debug
+      {
+        static f32_t last_target = -1.f;
+        if (target != last_target) {
+          ecps_flick("full screen toolbar {} (mouse near {}, picture {}, new unread {})", target > 0.f ? "shown" : "hiding",
+            mouse_near, has_picture, new_unread);
+          last_target = target;
+        }
+      }
+    #endif
       fullscreen_toolbar_alpha += (target - fullscreen_toolbar_alpha) * std::min(1.f, io.DeltaTime * 14.f);
       if (target == 0.f && fullscreen_toolbar_alpha < 0.02f) {
         fullscreen_toolbar_alpha = 0.f;

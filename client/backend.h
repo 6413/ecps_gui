@@ -160,7 +160,7 @@ inline struct ecps_backend_t {
       recovery_callback(std::move(request_data));
     }
 
-    void RequestKeyframe();
+    void RequestKeyframe(const char* why);
 
     // a whole frame from the assembler, on to the decoder
     void WriteFramePacket(const frame_assembler_t::frame_t& frame);
@@ -255,6 +255,8 @@ inline struct ecps_backend_t {
   std::atomic<uint64_t> view_keyframe_waits{0};
   // a keyframe wait timed out: the decode thread opens the decoder again on its next frame
   std::atomic<bool> view_decoder_reopen{false};
+  // when the last own frame went to the decoder for "Preview own stream", 0 never (fan::event::now time)
+  std::atomic<uint64_t> own_preview_pushed_at{0};
 
   fan::event::runv_t<bool> write_stream(
     uint16_t Current,
@@ -417,6 +419,7 @@ inline struct ecps_backend_t {
 
           // another streamer is being watched now, its numbering has nothing to do with the old one's
           if (view_resync.exchange(false)) {
+            ecps_flick("watch changed: the frames being put together are dropped, starting over");
             view.assembler.reset();
           }
 
@@ -436,8 +439,26 @@ inline struct ecps_backend_t {
           }
           // waiting for a keyframe and this frame is not one: ask at its first packet, not once all of it is here
           if (p.head && !p.keyframe && view_need_keyframe.load(std::memory_order_relaxed)) {
-            view.RequestKeyframe();
+            view.RequestKeyframe("still waiting for a keyframe, a new frame started");
           }
+        #if ecps_flicker_debug
+          // packets of two sharers mixed (a switch with packets still on the way, or the server sending another
+          // one) show as frame numbers that jump back or far ahead
+          if (p.head) {
+            static std::uint16_t last_head = 0;
+            static bool have_last = false;
+            std::int16_t step = (std::int16_t)(std::uint16_t)(p.sequence - last_head);
+            if (have_last && (step <= 0 || step > 30)) {
+              ecps_flick("frame number jumped from {} to {} ({}): two streams mixed, a restart, or a long gap",
+                last_head, p.sequence, (int)step);
+            }
+            if (p.keyframe) {
+              ecps_flick("keyframe {} arriving", p.sequence);
+            }
+            last_head = p.sequence;
+            have_last = true;
+          }
+        #endif
           p.data = stream_data + header_size;
           p.size = relative_size - header_size;
           view.assembler.set_rtt_ms(ping_ms);
@@ -1232,6 +1253,7 @@ inline struct ecps_backend_t {
   }
   // asks the streamer of every watched channel for a keyframe
   fan::event::task_t request_idr_reset() {
+    ecps_flick("asking every watched sharer for a keyframe");
     // the list can change while a write is suspended
     std::vector<Protocol_ChannelID_t> viewed;
     for (const auto& channel : channel_info) {

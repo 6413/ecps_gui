@@ -211,9 +211,11 @@ void ecps_backend_t::share_t::CalculateNetworkFlowBucket() {
 #endif
 }
 
-void ecps_backend_t::view_t::RequestKeyframe() {
+void ecps_backend_t::view_t::RequestKeyframe(const char* why) {
   // whatever broke the picture, the frames after it refer to what is missing: hold them back until the keyframe
-  ecps_backend.view_need_keyframe.store(true, std::memory_order_relaxed);
+  if (!ecps_backend.view_need_keyframe.exchange(true, std::memory_order_relaxed)) {
+    ecps_flick("holding frames back until a keyframe: {}", why);
+  }
   // keyframes are big, asking for one per lost frame makes the congestion worse
   static auto last_request = std::chrono::steady_clock::time_point{};
   auto now = std::chrono::steady_clock::now();
@@ -221,6 +223,7 @@ void ecps_backend_t::view_t::RequestKeyframe() {
     return;
   }
   last_request = now;
+  ecps_flick("keyframe asked for: {}", why);
 
   if (auto* rt = get_render_thread()) {
     rt->ecps_gui.request_idr_reset();
@@ -247,6 +250,7 @@ static bool is_displayable(const fan::graphics::screen_decode_t::decode_data_t& 
 void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
   // the viewer waited for a keyframe that never came: the decoder may be stuck (AV1 hardware decoders can be)
   if (ecps_backend.view_decoder_reopen.exchange(false)) {
+    ecps_flick("decoder opened again (no keyframe came for 3 s)");
     std::lock_guard<std::mutex> lock(rt->screen_decoder.mutex);
     rt->screen_decoder.update_flags |= codec_update_e::codec;
   }
@@ -258,7 +262,7 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
     // the stream changed codec: only the new codec's keyframe can start it
     if (std::exchange(rt->screen_decoder.decoder_.codec_switched_, false)) {
       fan::print("video: asking for a keyframe in the new codec");
-      ecps_backend.view.RequestKeyframe();
+      ecps_backend.view.RequestKeyframe("the stream changed codec");
     }
     if (frame.type == 1 && is_displayable(frame)) {
       without_picture = 0;
@@ -275,7 +279,7 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
         told_at = std::chrono::steady_clock::now();
         fan::print("video: 5 frames gave no picture, asking for a keyframe");
       }
-      ecps_backend.view.RequestKeyframe();
+      ecps_backend.view.RequestKeyframe("5 frames in a row gave no picture");
     }
     return false;
   });
@@ -289,6 +293,7 @@ void decode_frame(render_thread_t* rt, std::vector<uint8_t>& frame_data) {
   }
   ecps_backend.view_decode_failed.fetch_add(1, std::memory_order_relaxed);
   ecps_backend.view.m_stats.Frame_Drop++;
+  ecps_flick("a frame failed to decode ({} bytes)", frame_data.size());
 }
 
 void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& frame) {
@@ -309,7 +314,8 @@ void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& 
   // a frame before this one was dropped (its resends never came): decoding this one would show blocks until intra
   // refresh swept over them. A keyframe needs nothing before it
   if (frame.after_loss && !frame.keyframe) {
-    RequestKeyframe();
+    ecps_flick("frame {} came after one that was lost", frame.sequence);
+    RequestKeyframe("a frame before this one was lost");
   }
 
   // after a start or a loss only a keyframe can be decoded cleanly; the frames before it are held back (the last
@@ -318,6 +324,8 @@ void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& 
     uint64_t now = fan::event::now();
     if (frame.keyframe) {
       ecps_backend.view_need_keyframe.store(false, std::memory_order_relaxed);
+      ecps_flick("keyframe {} came, {:.0f} ms after the frames were held back", frame.sequence,
+        m_KeyFrameWaitSince ? (double)(now - m_KeyFrameWaitSince) / 1e6 : 0.0);
       m_KeyFrameWaitSince = 0;
       m_KeyFrameRetried = false;
     }
@@ -327,7 +335,7 @@ void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& 
       }
       if (now - m_KeyFrameWaitSince < 3000000000ull) {
         ecps_backend.view_keyframe_waits.fetch_add(1, std::memory_order_relaxed);
-        RequestKeyframe();
+        RequestKeyframe("waiting for a keyframe, a frame that is not one came");
         frame_index++;
         return;
       }
@@ -337,7 +345,7 @@ void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& 
         m_KeyFrameWaitSince = now;
         ecps_backend.view_decoder_reopen.store(true, std::memory_order_relaxed);
         ecps_backend.view_keyframe_waits.fetch_add(1, std::memory_order_relaxed);
-        RequestKeyframe();
+        RequestKeyframe("no keyframe for 3 s, the decoder is opened again");
         frame_index++;
         return;
       }
@@ -348,10 +356,22 @@ void ecps_backend_t::view_t::WriteFramePacket(const frame_assembler_t::frame_t& 
     }
   }
 
+  // With "Preview own stream" on while sharing, the own frames go to the decoder: the watched stream's frames
+  // put in between would make the picture jump between the two screens, and each stream's frames would be decoded
+  // on top of the other's. The preview wins while it gets frames
+  {
+    uint64_t own_at = ecps_backend.own_preview_pushed_at.load(std::memory_order_relaxed);
+    if (own_at && fan::event::now() - own_at < 1000000000ull) {
+      ecps_flick("watched frame {} not decoded: own preview is on and uses the picture", frame.sequence);
+      frame_index++;
+      return;
+    }
+  }
   if (!decode_queue.push(std::vector<uint8_t>(frame.data, frame.data + frame.size))) {
     this->m_stats.Frame_Drop++;
     ecps_backend.view_queue_full.fetch_add(1, std::memory_order_relaxed);
-    RequestKeyframe();
+    ecps_flick("decode queue full, frame {} thrown away", frame.sequence);
+    RequestKeyframe("the decode queue was full, a frame was thrown away");
   }
 
   frame_index++;
