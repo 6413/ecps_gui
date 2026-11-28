@@ -67,8 +67,6 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
 
     bool mouse_near = io.MousePos.x >= area_pos.x && io.MousePos.x <= area_pos.x + area_size.x &&
       io.MousePos.y >= area_pos.y + area_size.y - zone && io.MousePos.y <= area_pos.y + area_size.y;
-    auto* rt = get_render_thread();
-    bool has_picture = rt && rt->network_frame.get_image() != owner->engine.default_texture;
     auto now = std::chrono::steady_clock::now();
     // opening the side panel or a new unread message shows the bar for a moment, so its icons and the dot are seen,
     // but doesn't pin it: it goes away again after a while, and comes back when the mouse goes to the bottom
@@ -79,7 +77,8 @@ void render_thread_t::ecps_gui_t::render_stream_toolbar() {
     bool just_changed = (panel_open && !was_panel_open) || (unread && !was_unread);
     was_panel_open = panel_open;
     was_unread = unread;
-    if (mouse_near || !has_picture || just_changed || keep_stream_toolbar || mixer_requested || gui::is_popup_open("##stream_volume")) {
+    // with no picture it hides too, like over a stream: it stayed up the whole time over the empty area
+    if (mouse_near || just_changed || keep_stream_toolbar || mixer_requested || gui::is_popup_open("##stream_volume")) {
       toolbar_visible_until = now + std::chrono::milliseconds(1500);
     }
     f32_t target = now < toolbar_visible_until ? 1.f : 0.f;
@@ -371,8 +370,8 @@ void render_thread_t::ecps_gui_t::render_stream_empty_hint(fan::vec2 area) {
     }
     else if (!ecps_backend.channel_info.empty()) {
       title = "Nobody is sharing yet";
-      // the toolbar under it has the Share button, shown while there is no picture
-      detail = "Press Share below, or wait for someone else";
+      // the toolbar at the bottom has the Share button; it hides until the mouse goes there
+      detail = "Point at the bottom and press Share, or wait for someone else";
     }
     else if (!ecps_backend.connected) {
       title = "Not connected";
