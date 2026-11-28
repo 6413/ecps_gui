@@ -21,6 +21,18 @@
   // saved with the theme; the texture is made the first time it is drawn and whenever the path changes
   std::string background_image;
   f32_t background_image_dim = 0.35f;
+  // an outline around all light text, readable over a bright picture or video
+  bool text_outline = false;
+  // The picture's colours are as it looks (sRGB). With a renderer whose screen takes linear colour (Vulkan), a plain
+  // texture was taken as linear and brightened once more on the way out: washed out, whitish. An sRGB texture is
+  // turned back to linear when it is read, the picture comes out as in the file
+  fan::graphics::image_load_properties_t background_image_properties() const {
+    auto properties = smooth_image();
+    if (backdrop_linear) {
+      properties.format = fan::graphics::image_format_e::r8g8b8a8_srgb;
+    }
+    return properties;
+  }
   fan::graphics::image_t background_image_texture;
   std::string background_image_loaded;
   bool background_image_failed = false;
@@ -31,7 +43,8 @@
   std::size_t background_frame_index = 0;
   std::chrono::steady_clock::time_point background_frame_at;
 
-  // MP4/WebM/MKV backgrounds: one decoded frame at a time, not a copy of the whole video
+  // MP4/WebM/MKV backgrounds. A worker thread decodes a few frames ahead (a 4K 60 fps frame takes too long to
+  // decode on the render thread, the whole window would stutter); the render thread only uploads the one that is due
   struct background_video_t {
     fan::mp4_demuxer_t demuxer;
     fan::graphics::libav_decoder_t decoder;
@@ -40,9 +53,34 @@
     std::string codec_name;
     fan::vec2ui target_size;
     f32_t fps = 30.f;
+    // over 60 fps every n-th frame is shown, the video keeps its speed
+    int frame_step = 1;
     std::int64_t packet_pts = 0;
     std::chrono::steady_clock::time_point next_frame;
+
+    struct rgba_frame_t {
+      std::vector<std::uint8_t> pixels;
+      fan::vec2ui size;
+    };
+    std::thread worker;
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<rgba_frame_t> ready;
+    bool stop = false;
+    bool failed = false;
+
+    // the next frame as RGBA (looping at the end), false when the file gives nothing
+    bool decode_next(rgba_frame_t& out);
+    void start_worker();
     ~background_video_t() {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        stop = true;
+      }
+      wake.notify_all();
+      if (worker.joinable()) {
+        worker.join();
+      }
       decoder.close();
       demuxer.close();
     }
@@ -59,7 +97,7 @@
   void load_gif_background(const std::string& path);
   void show_background_frame(std::size_t index);
   void load_video_background(const std::string& path);
-  bool decode_video_frame();
+  void upload_background_frame(const background_video_t::rgba_frame_t& frame);
   void draw_background_image();
 
   // ---- the colours the user picks ---------------------------------------------------------------------------

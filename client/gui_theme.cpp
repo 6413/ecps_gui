@@ -96,6 +96,7 @@ void render_thread_t::ecps_gui_t::save_theme() {
     saved["contrast"] = theme.contrast;
     saved["background_image"] = background_image;
     saved["background_image_dim"] = background_image_dim;
+    saved["text_outline"] = text_outline;
     write_to_config("theme", saved);
   }
 
@@ -144,6 +145,7 @@ void render_thread_t::ecps_gui_t::load_theme(const fan::json& saved) {
     theme.contrast = std::clamp((f32_t)saved.value("contrast", (double)theme.contrast), 0.f, 1.f);
     background_image = saved.value("background_image", std::string());
     background_image_dim = std::clamp((f32_t)saved.value("background_image_dim", 0.35), 0.f, 0.9f);
+    text_outline = saved.value("text_outline", false);
   }
 
 void render_thread_t::ecps_gui_t::render_theme_tab() {
@@ -249,8 +251,12 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       }
     });
     if (!background_image.empty()) {
-      gui::settings_row("Image dim", [&] {
-        gui::slider("##theme_background_dim", &background_image_dim, 0.f, 0.9f, gui::slider_flags_always_clamp);
+      // how much of the picture shows: 100% is the file as it is, lower darkens it so the text reads better
+      gui::settings_row("Picture strength", [&] {
+        f32_t strength = 1.f - background_image_dim;
+        if (gui::slider("##theme_background_strength", &strength, 0.1f, 1.f, gui::slider_flags_always_clamp)) {
+          background_image_dim = std::clamp(1.f - strength, 0.f, 0.9f);
+        }
         if (gui::is_item_deactivated_after_edit()) {
           save_theme();
         }
@@ -258,6 +264,9 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       if (background_image_failed) {
         settings_warning("That picture could not be loaded");
       }
+    }
+    if (gui::settings_switch("Text outline", &text_outline, "A dark outline around text, readable over a bright picture or video")) {
+      save_theme();
     }
     gui::settings_row("Lightness", [&] {
       changed |= gui::slider("##theme_backdrop", &theme.background_brightness, 0.02f, 0.4f, gui::slider_flags_always_clamp);
@@ -295,10 +304,10 @@ void render_thread_t::ecps_gui_t::show_background_frame(std::size_t index) {
     info.size = fan::vec2i((int)frame.size.x, (int)frame.size.y);
     info.channels = frame.channels;
     if (background_image_texture.valid()) {
-      background_image_texture.reload(info, smooth_image());
+      background_image_texture.reload(info, background_image_properties());
     }
     else {
-      background_image_texture = owner->engine.image_load(info, smooth_image());
+      background_image_texture = owner->engine.image_load(info, background_image_properties());
     }
   }
 
@@ -385,15 +394,33 @@ void render_thread_t::ecps_gui_t::load_video_background(const std::string& path)
     if (source.x == 0 || source.y == 0) {
       source = fan::vec2ui(1280, 720);
     }
-    // a background is behind the panels and dimmed: 720p is enough, and the decoder does not have to make a 4K
-    // frame every tick
-    f32_t scale = std::min({ 1280.f / source.x, 720.f / source.y, 1.f });
-    video->target_size = fan::vec2ui(std::max(1u, (std::uint32_t)std::lround(source.x * scale)),
-      std::max(1u, (std::uint32_t)std::lround(source.y * scale)));
-    video->fps = std::clamp(video->demuxer.get_fps(), 5.f, 30.f);
+    // As sharp as the window can show it (up to 4K): the video covers the window, a frame bigger than the window
+    // would only be shrunk again. Never bigger than the file
+    fan::vec2 display = gui::get_io().DisplaySize;
+    fan::vec2 limit(std::clamp(display.x, 1280.f, 3840.f), std::clamp(display.y, 720.f, 2160.f));
+    // cover: the side that fills the window decides, the other one is cropped
+    f32_t scale = std::min(std::max(limit.x / source.x, limit.y / source.y), 1.f);
+    scale = std::min({ scale, 3840.f / source.x, 2160.f / source.y });
+    video->target_size = fan::vec2ui(std::max(2u, (std::uint32_t)std::lround(source.x * scale) & ~1u),
+      std::max(2u, (std::uint32_t)std::lround(source.y * scale) & ~1u));
+    f32_t source_fps = video->demuxer.get_fps();
+    if (!(source_fps > 1.f && source_fps < 1000.f)) {
+      source_fps = 30.f;
+    }
+    video->frame_step = std::max(1, (int)std::ceil(source_fps / 60.5f));
+    video->fps = source_fps / video->frame_step;
     video->next_frame = std::chrono::steady_clock::now();
     background_video = std::move(video);
-    bool decoded = decode_video_frame();
+    background_video_t::rgba_frame_t first;
+    bool decoded = background_video->decode_next(first);
+    if (decoded) {
+      upload_background_frame(first);
+      fan::print("background video: " + std::to_string(background_video->target_size.x) + "x" +
+        std::to_string(background_video->target_size.y) + " at " + std::to_string((int)std::lround(background_video->fps)) +
+        " fps, decoder " + background_video->decoder.codec_name_ +
+        (background_video->decoder.using_hardware_ ? " (graphics card)" : " (CPU)"));
+      background_video->start_worker();
+    }
     if (!decoded) {
       // which decoder gave nothing, so a failing file can be told apart (the graphics card can't do 10-bit H.264)
       fan::print("background video: decoder " + background_video->decoder.codec_name_ +
@@ -409,16 +436,27 @@ void render_thread_t::ecps_gui_t::load_video_background(const std::string& path)
     }
   }
 
-bool render_thread_t::ecps_gui_t::decode_video_frame() {
-    if (!background_video) {
-      return false;
-    }
-    auto& video = *background_video;
+bool render_thread_t::ecps_gui_t::background_video_t::decode_next(rgba_frame_t& out) {
+    auto& video = *this;
     auto read_packet = [&] {
       return video.demuxer.needs_annexb()
         ? video.demuxer.read_annexb_packet(video.packet, video.packet_pts)
         : video.demuxer.read_raw_packet(video.packet, video.packet_pts);
     };
+    // skipped frames over 60 fps: decoded (the next ones need them) but not shown
+    for (int skip = 1; skip < video.frame_step; ++skip) {
+      for (int attempts = 0; attempts < 256 && video.frames.empty(); ++attempts) {
+        if (!read_packet()) {
+          break;
+        }
+        auto decoded = video.decoder.decode_packet(video.packet.data(), video.packet.size(), video.codec_name,
+          true, video.target_size);
+        video.frames.insert(video.frames.end(), std::make_move_iterator(decoded.begin()), std::make_move_iterator(decoded.end()));
+      }
+      if (!video.frames.empty()) {
+        video.frames.erase(video.frames.begin());
+      }
+    }
     for (int attempts = 0; attempts < 256 && video.frames.empty(); ++attempts) {
       if (!read_packet()) {
         // loop: the background plays until another picture is chosen
@@ -442,20 +480,54 @@ bool render_thread_t::ecps_gui_t::decode_video_frame() {
       return false;
     }
     auto& frame = video.frames.front();
+    out.pixels.clear();
     if (frame.success && !frame.plane_data.empty()) {
-      fan::image::info_t info;
-      info.data = frame.plane_data[0].data();
-      info.size = fan::vec2i((int)frame.image_size.x, (int)frame.image_size.y);
-      info.channels = 4;
-      if (background_image_texture.valid()) {
-        background_image_texture.reload(info, smooth_image());
-      }
-      else {
-        background_image_texture = owner->engine.image_load(info, smooth_image());
-      }
+      out.pixels = std::move(frame.plane_data[0]);
+      out.size = frame.image_size;
     }
     video.frames.erase(video.frames.begin());
     return true;
+  }
+
+void render_thread_t::ecps_gui_t::background_video_t::start_worker() {
+    worker = std::thread([this] {
+      while (true) {
+        {
+          std::unique_lock<std::mutex> lock(mutex);
+          // three frames ahead: enough to ride over a slow one, little memory even at 4K
+          wake.wait(lock, [&] { return stop || ready.size() < 3; });
+          if (stop) {
+            return;
+          }
+        }
+        rgba_frame_t frame;
+        bool ok = decode_next(frame);
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!ok) {
+          failed = true;
+          return;
+        }
+        if (!frame.pixels.empty()) {
+          ready.push_back(std::move(frame));
+        }
+      }
+    });
+  }
+
+void render_thread_t::ecps_gui_t::upload_background_frame(const background_video_t::rgba_frame_t& frame) {
+    if (frame.pixels.empty() || frame.size.x == 0 || frame.size.y == 0) {
+      return;
+    }
+    fan::image::info_t info;
+    info.data = (void*)frame.pixels.data();
+    info.size = fan::vec2i((int)frame.size.x, (int)frame.size.y);
+    info.channels = 4;
+    if (background_image_texture.valid()) {
+      background_image_texture.reload(info, background_image_properties());
+    }
+    else {
+      background_image_texture = owner->engine.image_load(info, background_image_properties());
+    }
   }
 
 void render_thread_t::ecps_gui_t::refresh_background_image() {
@@ -498,7 +570,7 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
     info.data = loaded->data.get();
     info.size = fan::vec2i((int)loaded->size.x, (int)loaded->size.y);
     info.channels = loaded->channels;
-    background_image_texture = owner->engine.image_load(info, smooth_image());
+    background_image_texture = owner->engine.image_load(info, background_image_properties());
   }
 
 void render_thread_t::ecps_gui_t::draw_background_image() {
@@ -507,12 +579,26 @@ void render_thread_t::ecps_gui_t::draw_background_image() {
     bool animate = owner->engine.window.is_focused();
     if (background_video && animate) {
       auto now = std::chrono::steady_clock::now();
-      if (now >= background_video->next_frame) {
-        if (decode_video_frame()) {
-          background_video->next_frame = now + std::chrono::milliseconds((int)std::lround(1000.f / background_video->fps));
+      auto& video = *background_video;
+      if (now >= video.next_frame) {
+        std::optional<background_video_t::rgba_frame_t> frame;
+        {
+          std::lock_guard<std::mutex> lock(video.mutex);
+          if (!video.ready.empty()) {
+            frame = std::move(video.ready.front());
+            video.ready.pop_front();
+          }
         }
-        else {
-          background_video->next_frame = now + std::chrono::seconds(1);
+        if (frame) {
+          video.wake.notify_one();
+          upload_background_frame(*frame);
+          // on the video's own clock; after a pause (window in the background) or a slow stretch it starts from now
+          auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(1.0 / video.fps));
+          video.next_frame += interval;
+          if (now - video.next_frame > std::chrono::milliseconds(250)) {
+            video.next_frame = now + interval;
+          }
         }
       }
     }
@@ -622,7 +708,8 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
     };
     auto draw_all = [&] {
       draw_background_image();
-      if (glow_image.valid()) {
+      // the lights are for the plain backdrop: over a picture they lightened it, it looked whitish next to the file
+      if (glow_image.valid() && !background_image_texture.valid()) {
         draw_glows();
       }
     };
@@ -656,6 +743,7 @@ void render_thread_t::ecps_gui_t::render_backdrop() {
 void render_thread_t::ecps_gui_t::push_theme() {
     theme_colors_pushed = 0;
     theme_vars_pushed = 0;
+    gui::set_text_outline(text_outline ? 1.f : 0.f, fan::color(0.f, 0.f, 0.f, 0.85f));
     auto color = [this](gui::col_t index, fan::color value) {
       gui::push_style_color(index, value);
       ++theme_colors_pushed;
