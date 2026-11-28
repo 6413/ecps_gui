@@ -574,28 +574,30 @@ void render_thread_t::ecps_gui_t::refresh_background_image() {
   }
 
 void render_thread_t::ecps_gui_t::draw_background_image() {
-    // no decoding while the window is in the background: the picture stays where it is and starts again when the
-    // window comes back
-    bool animate = owner->engine.window.is_focused();
+    // plays also while another window has the focus; only a minimized window (nothing to see) stops it, it goes on
+    // when the window comes back
+    bool animate = !owner->engine.window.is_minimized();
     if (background_video && animate) {
       auto now = std::chrono::steady_clock::now();
       auto& video = *background_video;
       if (now >= video.next_frame) {
+        auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+          std::chrono::duration<double>(1.0 / video.fps));
         std::optional<background_video_t::rgba_frame_t> frame;
         {
+          // the window drawn less often than the video has frames: the ones already late are skipped, the video
+          // keeps its speed instead of playing slower
           std::lock_guard<std::mutex> lock(video.mutex);
-          if (!video.ready.empty()) {
+          while (!video.ready.empty() && now >= video.next_frame) {
             frame = std::move(video.ready.front());
             video.ready.pop_front();
+            video.next_frame += interval;
           }
         }
         if (frame) {
           video.wake.notify_one();
           upload_background_frame(*frame);
-          // on the video's own clock; after a pause (window in the background) or a slow stretch it starts from now
-          auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-            std::chrono::duration<double>(1.0 / video.fps));
-          video.next_frame += interval;
+          // on the video's own clock; after a pause (minimized) or a slow stretch it starts from now
           if (now - video.next_frame > std::chrono::milliseconds(250)) {
             video.next_frame = now + interval;
           }

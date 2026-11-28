@@ -177,16 +177,22 @@ void run_render_thread(std::promise<void>& render_thread_promise) {
       bool background = !render_thread_instance.engine.window.is_focused();
       pace_gpu_priority(ecps_backend.is_streaming_to_any_channel(), background);
       if (background) {
+        // a video background plays at its own rate also behind other windows (not while minimized)
+        f64_t least_fps = 20.0;
+        if (auto& video = render_thread_instance.ecps_gui.background_video;
+          video && !render_thread_instance.engine.window.is_minimized()) {
+          least_fps = std::clamp((f64_t)video->fps, 20.0, 60.0);
+        }
         f32_t stream_fps = render_thread_instance.ecps_gui.debug_sample.decoded_fps;
         if (stream_fps > 1.f) {
           // a stream playing: drawn when its next frame arrives, so exactly as often as it has frames (a fixed 1.25x
           // timer drew 80 times a second for 60 and showed each frame up to a tick late), and at least 20 times a
           // second for the rest of the window. Never more than 240, a burst of frames is shown as they come
           std::this_thread::sleep_until(last_draw + at_fps(240.0));
-          render_thread_instance.latest_frame.wait(last_draw + at_fps(20.0));
+          render_thread_instance.latest_frame.wait(last_draw + at_fps(least_fps));
         }
         else {
-          std::this_thread::sleep_until(last_draw + at_fps(30.0));
+          std::this_thread::sleep_until(last_draw + at_fps(std::max(30.0, least_fps)));
         }
       }
       last_draw = std::chrono::steady_clock::now();
