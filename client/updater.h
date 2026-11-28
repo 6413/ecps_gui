@@ -32,6 +32,10 @@
 
 #if !defined(_WIN32)
   #include <unistd.h>
+#else
+  #include <windows.h>
+  #include <dwmapi.h>
+  #pragma comment(lib, "dwmapi.lib")
 #endif
 
 #include "version_decl.h"
@@ -131,12 +135,74 @@ struct updater_t {
   std::chrono::steady_clock::time_point refocus_until;
   // when this version started after an update restart (zero otherwise)
   std::chrono::steady_clock::time_point restarted_at;
+  // this program's window, known from the first frame on (the restart saves whether it was in front)
+  std::uintptr_t own_hwnd = 0;
+  // the window was in front on its monitor before the update restart: the new one is put in front there again,
+  // without taking the focus (a game on another monitor keeps it)
+  bool raise_after_restart = false;
+  int raises_done = 0;
+
+#if defined(_WIN32)
+  // nothing else covers this window: no visible window above it in the stacking order overlaps it. Windows that
+  // stay on top of everything (the taskbar, overlays) and hidden ones (cloaked by Windows) don't count
+  static bool is_in_front_on_its_monitor(HWND own) {
+    if (!own || !IsWindowVisible(own) || IsIconic(own)) {
+      return false;
+    }
+    RECT own_rect;
+    if (!GetWindowRect(own, &own_rect)) {
+      return false;
+    }
+    for (HWND above = GetWindow(own, GW_HWNDPREV); above; above = GetWindow(above, GW_HWNDPREV)) {
+      if (!IsWindowVisible(above) || IsIconic(above)) {
+        continue;
+      }
+      LONG_PTR ex = GetWindowLongPtrW(above, GWL_EXSTYLE);
+      if (ex & WS_EX_TOPMOST) {
+        continue;
+      }
+      DWORD cloaked = 0;
+      if (SUCCEEDED(DwmGetWindowAttribute(above, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) {
+        continue;
+      }
+      RECT r, overlap;
+      if (GetWindowRect(above, &r) && IntersectRect(&overlap, &r, &own_rect) &&
+        (overlap.right - overlap.left) > 8 && (overlap.bottom - overlap.top) > 8) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // in front of the other normal windows, not activated: on top for a moment, then back to normal
+  static void raise_without_focus(HWND own) {
+    const UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    SetWindowPos(own, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    SetWindowPos(own, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+  }
+#endif
 
   // every frame, with this program's window: if the update's new window took the focus from the game, the game
   // gets it back, once. Clicking this window later keeps it
   void refocus_after_update(std::uintptr_t own_window) {
 #if defined(_WIN32)
+    own_hwnd = own_window;
     update_notice(); // reads the marker the old version left
+    // put in front again as it was, once it shows, and once more a second later (the start can stack it below)
+    if (raise_after_restart && raises_done < 2 && own_window) {
+      HWND own = (HWND)own_window;
+      auto since = std::chrono::steady_clock::now() - restarted_at;
+      bool due = raises_done == 0 || since > std::chrono::seconds(1);
+      if (since > std::chrono::seconds(5)) {
+        raise_after_restart = false;
+      }
+      else if (due && IsWindowVisible(own) && !IsIconic(own)) {
+        raise_without_focus(own);
+        if (++raises_done == 1) {
+          fan::print("update: the window was in front before the update, put in front again");
+        }
+      }
+    }
     // The new window sometimes came up minimized after an update. In the first seconds it is put back, shown
     // without taking the focus (a game in front keeps it). Later the user may minimize it themselves
     if (restarted_at != std::chrono::steady_clock::time_point{} && std::chrono::steady_clock::now() < restarted_at + std::chrono::seconds(3)) {
@@ -178,7 +244,10 @@ struct updater_t {
         // the window that was in front when the old version restarted (a game): it gets the focus back
         std::string front;
         std::getline(in, front);
+        std::string was_in_front;
+        std::getline(in, was_in_front);
         in.close();
+        raise_after_restart = was_in_front == "1";
         refocus_window = (std::uintptr_t)std::strtoull(front.c_str(), nullptr, 10);
         refocus_until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         restarted_at = std::chrono::steady_clock::now();
@@ -463,6 +532,8 @@ struct updater_t {
       marker << "v" << ecps_version << '\n';
       // an update restarts in the background, often during a game: the new version hands the focus back to it
       marker << (std::uintptr_t)GetForegroundWindow() << '\n';
+      // in front on its monitor (other windows behind it, a game on another monitor): the new one comes up in front
+      marker << (is_in_front_on_its_monitor((HWND)own_hwnd) ? "1" : "0") << '\n';
     }
     if (collect_state) {
       std::string state = collect_state();
