@@ -141,17 +141,16 @@ struct updater_t {
   // without taking the focus (a game on another monitor keeps it)
   bool raise_after_restart = false;
   int raises_done = 0;
+  std::chrono::steady_clock::time_point raised_at;
 
 #if defined(_WIN32)
   // nothing else covers this window: no visible window above it in the stacking order overlaps it. Windows that
   // stay on top of everything (the taskbar, overlays) and hidden ones (cloaked by Windows) don't count
-  static bool is_in_front_on_its_monitor(HWND own) {
-    if (!own || !IsWindowVisible(own) || IsIconic(own)) {
-      return false;
-    }
+  // the first window above this one that covers part of it, null when none does
+  static HWND covering_window(HWND own) {
     RECT own_rect;
-    if (!GetWindowRect(own, &own_rect)) {
-      return false;
+    if (!own || !GetWindowRect(own, &own_rect)) {
+      return nullptr;
     }
     for (HWND above = GetWindow(own, GW_HWNDPREV); above; above = GetWindow(above, GW_HWNDPREV)) {
       if (!IsWindowVisible(above) || IsIconic(above)) {
@@ -168,10 +167,23 @@ struct updater_t {
       RECT r, overlap;
       if (GetWindowRect(above, &r) && IntersectRect(&overlap, &r, &own_rect) &&
         (overlap.right - overlap.left) > 8 && (overlap.bottom - overlap.top) > 8) {
-        return false;
+        return above;
       }
     }
-    return true;
+    return nullptr;
+  }
+
+  static bool is_in_front_on_its_monitor(HWND own) {
+    return own && IsWindowVisible(own) && !IsIconic(own) && !covering_window(own);
+  }
+
+  // "class 'Chrome_WidgetWin_1', title 'x'": for the log, which window went over this one
+  static std::string describe_window(HWND window) {
+    char class_name[128] = {};
+    char title[128] = {};
+    GetClassNameA(window, class_name, sizeof(class_name));
+    GetWindowTextA(window, title, sizeof(title));
+    return std::string("class '") + class_name + "', title '" + title + "'";
   }
 
   // in front of the other normal windows, not activated: on top for a moment, then back to normal
@@ -188,18 +200,34 @@ struct updater_t {
 #if defined(_WIN32)
     own_hwnd = own_window;
     update_notice(); // reads the marker the old version left
-    // put in front again as it was, once it shows, and once more a second later (the start can stack it below)
-    if (raise_after_restart && raises_done < 2 && own_window) {
+    // Put in front again as it was. Raised once was not enough: the start (the focus going back to the game, the
+    // window showing for real) stacked it below again. For the first 8 s, whenever a window covers it, it goes in
+    // front again (at most every 200 ms). A mouse click means the user is arranging windows: it stops then
+    if (raise_after_restart && own_window) {
       HWND own = (HWND)own_window;
-      auto since = std::chrono::steady_clock::now() - restarted_at;
-      bool due = raises_done == 0 || since > std::chrono::seconds(1);
-      if (since > std::chrono::seconds(5)) {
+      auto now = std::chrono::steady_clock::now();
+      auto since = now - restarted_at;
+      bool clicked = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) || (GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+      if (since > std::chrono::seconds(8) || clicked || raises_done >= 40) {
         raise_after_restart = false;
+        fan::print("update: stopped keeping the window in front (" +
+          std::string(clicked ? "a mouse click" : raises_done >= 40 ? "raised 40 times" : "8 s passed") + ", raised " +
+          std::to_string(raises_done) + " times)");
       }
-      else if (due && IsWindowVisible(own) && !IsIconic(own)) {
-        raise_without_focus(own);
-        if (++raises_done == 1) {
-          fan::print("update: the window was in front before the update, put in front again");
+      else if (IsWindowVisible(own) && !IsIconic(own) && now - raised_at > std::chrono::milliseconds(200)) {
+        HWND cover = covering_window(own);
+        if (cover || raises_done == 0) {
+          raised_at = now;
+          raise_without_focus(own);
+          ++raises_done;
+          if (raises_done == 1) {
+            fan::print("update: the window was in front before the update, put in front again");
+          }
+          else if (cover && raises_done <= 6) {
+            HWND still = covering_window(own);
+            fan::print("update: " + describe_window(cover) + " went over the window, put in front again" +
+              (still ? std::string(" (still under ") + describe_window(still) + ")" : std::string()));
+          }
         }
       }
     }
