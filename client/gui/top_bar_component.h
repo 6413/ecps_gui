@@ -274,7 +274,7 @@ struct top_bar_t {
         for (const auto& text : release.lines) {
           // a drawn dot: the font has no bullet character, it showed as "?"
           fan::vec2 at = gui::get_cursor_screen_pos();
-          list->AddCircleFilled(ImVec2(at.x + indent * 0.4f, at.y + gui::get_font_size() * 0.55f), dot, gui::get_color_u32(gui::col_text_disabled));
+          list->AddCircleFilled(fan::vec2(at.x + indent * 0.4f, at.y + gui::get_font_size() * 0.55f), dot, gui::get_color_u32(gui::col_text_disabled));
           gui::set_cursor_pos_x(gui::get_cursor_pos_x() + indent);
           gui::push_text_wrap_pos(width - 16.f);
           gui::text(text);

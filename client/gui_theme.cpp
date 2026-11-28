@@ -395,21 +395,10 @@ void render_thread_t::ecps_gui_t::load_video_background(const std::string& path)
     video->next_frame = std::chrono::steady_clock::now();
     background_video = std::move(video);
     bool decoded = decode_video_frame();
-    if (!decoded && background_video->decoder.using_hardware_) {
-      // the graphics card gave no picture (busy with the stream, or slow to open): the file again from its start, on
-      // the CPU this time
-      fan::print("background video: no picture from the graphics card (" + background_video->decoder.codec_name_ +
-        "), decoding on the CPU");
-      auto& again = *background_video;
-      // close() keeps allow_hardware_, the codec opens on the CPU with the next packet
-      again.decoder.allow_hardware_ = false;
-      again.frames.clear();
-      again.packet.clear();
-      if (again.decoder.open() && again.demuxer.seek(0.f)) {
-        decoded = decode_video_frame();
-      }
-    }
     if (!decoded) {
+      // which decoder gave nothing, so a failing file can be told apart (the graphics card can't do 10-bit H.264)
+      fan::print("background video: decoder " + background_video->decoder.codec_name_ +
+        (background_video->decoder.using_hardware_ ? " (graphics card)" : " (CPU)") + ", codec " + background_video->codec_name);
       background_video.reset();
       background_image_failed = true;
       fan::print("background video: could not decode a frame from", path);
