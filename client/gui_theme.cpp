@@ -230,10 +230,9 @@ void render_thread_t::ecps_gui_t::render_theme_tab() {
       bool has_image = !background_image.empty();
       if (gui::button(has_image ? "Change...##theme_background_image" : "Choose...##theme_background_image")) {
         fan::graphics::open_file("png,jpg,jpeg,webp,bmp,gif,mp4,mov,webm,mkv,m4v", [this](std::string_view path) {
-          background_image = std::string(path);
-          background_image_loaded.clear();
-          refresh_background_image();
-          save_theme();
+          std::lock_guard<std::mutex> lock(picked_background_mutex);
+          picked_background = std::string(path);
+          background_was_picked = true;
         });
       }
       if (has_image) {
@@ -573,6 +572,22 @@ void render_thread_t::ecps_gui_t::setup_backdrop() {
   }
 
 void render_thread_t::ecps_gui_t::render_backdrop() {
+    {
+      std::string picked;
+      bool was_picked = false;
+      {
+        std::lock_guard<std::mutex> lock(picked_background_mutex);
+        was_picked = std::exchange(background_was_picked, false);
+        picked = std::move(picked_background);
+        picked_background.clear();
+      }
+      if (was_picked) {
+        background_image = std::move(picked);
+        background_image_loaded.clear();
+        refresh_background_image();
+        save_theme();
+      }
+    }
     refresh_background_image();
     if (!glow_image.valid() && !background_image_texture.valid()) {
       return;

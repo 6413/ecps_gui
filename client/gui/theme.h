@@ -48,6 +48,12 @@
     }
   };
   std::unique_ptr<background_video_t> background_video;
+  // The file picker answers on the main thread, the background lives on the render thread: loading it there freed
+  // the playing video's decoder while this thread was decoding with it (a crash on picking an MP4). The path waits
+  // here and the render thread takes it on its next frame
+  std::mutex picked_background_mutex;
+  std::string picked_background;
+  bool background_was_picked = false;
 
   void refresh_background_image();
   void load_gif_background(const std::string& path);
