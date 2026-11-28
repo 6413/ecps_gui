@@ -129,12 +129,23 @@ struct updater_t {
   // after an update restart: the window that was in front before it (a game), and until when it is given back
   std::uintptr_t refocus_window = 0;
   std::chrono::steady_clock::time_point refocus_until;
+  // when this version started after an update restart (zero otherwise)
+  std::chrono::steady_clock::time_point restarted_at;
 
   // every frame, with this program's window: if the update's new window took the focus from the game, the game
   // gets it back, once. Clicking this window later keeps it
   void refocus_after_update(std::uintptr_t own_window) {
 #if defined(_WIN32)
     update_notice(); // reads the marker the old version left
+    // The new window sometimes came up minimized after an update. In the first seconds it is put back, shown
+    // without taking the focus (a game in front keeps it). Later the user may minimize it themselves
+    if (restarted_at != std::chrono::steady_clock::time_point{} && std::chrono::steady_clock::now() < restarted_at + std::chrono::seconds(3)) {
+      HWND own = (HWND)own_window;
+      if (own && IsIconic(own)) {
+        ShowWindow(own, SW_SHOWNOACTIVATE);
+        fan::print("update: the window started minimized, shown again");
+      }
+    }
     if (!refocus_window || std::chrono::steady_clock::now() > refocus_until) {
       refocus_window = 0;
       return;
@@ -170,6 +181,7 @@ struct updater_t {
         in.close();
         refocus_window = (std::uintptr_t)std::strtoull(front.c_str(), nullptr, 10);
         refocus_until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        restarted_at = std::chrono::steady_clock::now();
         std::filesystem::remove(restarted_file, ec);
         std::string now_running = build_short();
         notice_text = "Updated";

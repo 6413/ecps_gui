@@ -136,9 +136,11 @@ void render_thread_t::ecps_gui_t::channel_list_window_t::render_channel_row(cons
       list->AddCircleFilled(fan::vec2(at.x + 14.f, at.y + row_height * 0.5f), dot, live_ns ? 0xff4040ffu : 0x40ffffffu, 12);
 
       // at the right: how many watch, and for how long it has been live
-      std::string right = std::to_string(std::max(viewers, 0)) + (viewers == 1 ? " viewer" : " viewers");
+      // a password channel shows nobody's count until its password is entered (joined) or it is your own
+      bool locked = channel.is_password_protected && !joined && !mine;
+      std::string right = locked ? std::string() : std::to_string(std::max(viewers, 0)) + (viewers == 1 ? " viewer" : " viewers");
       if (live_ns) {
-        right = channel_live_time(live_ns) + "   " + right;
+        right = channel_live_time(live_ns) + (right.empty() ? "" : "   ") + right;
       }
       f32_t right_width = gui::calc_text_size(right).x;
       f32_t name_x = at.x + 28.f;
